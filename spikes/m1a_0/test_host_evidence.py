@@ -42,20 +42,24 @@ def _cli_events(
     *,
     arguments: dict[str, object] = ARGUMENTS,
     include_shell: bool = False,
+    event_type: str = "item.completed",
+    status: str = "completed",
+    error: object = None,
+    result: object = RESULT,
 ) -> list[dict[str, object]]:
     events: list[dict[str, object]] = [
         {"type": "thread.started", "thread_id": "thread-platform-generated"},
         {
-            "type": "item.completed",
+            "type": event_type,
             "item": {
                 "id": "mcp-1",
                 "type": "mcp_tool_call",
                 "server": "modeling_spike",
                 "tool": "root_finding",
                 "arguments": arguments,
-                "result": RESULT,
-                "error": None,
-                "status": "completed",
+                "result": result,
+                "error": error,
+                "status": status,
             },
         },
     ]
@@ -222,6 +226,50 @@ def test_normalize_codex_cli_jsonl_and_verify(tmp_path: Path) -> None:
     assert report.residual == RESULT["structuredContent"]["residual"]
 
 
+@pytest.mark.parametrize(
+    "events",
+    [
+        _cli_events(
+            status="failed",
+            error={"message": "user cancelled MCP tool call"},
+            result=None,
+        ),
+        _cli_events(
+            status="cancelled",
+            error={"message": "cancelled"},
+            result=None,
+        ),
+        _cli_events(
+            status="completed",
+            error={"message": "tool returned an error"},
+        ),
+        _cli_events(
+            event_type="item.started",
+            status="in_progress",
+            result=None,
+        ),
+    ],
+)
+def test_cli_normalizer_rejects_non_successful_or_incomplete_call(
+    tmp_path: Path,
+    events: list[dict[str, object]],
+) -> None:
+    raw_path = _write_jsonl(tmp_path / "codex.jsonl", events)
+
+    with pytest.raises(ValueError, match="successful completed MCP call"):
+        normalize_codex_cli_jsonl(raw_path)
+
+
+def test_cli_normalizer_rejects_missing_structured_content(tmp_path: Path) -> None:
+    raw_path = _write_jsonl(
+        tmp_path / "codex.jsonl",
+        _cli_events(result={"content": []}),
+    )
+
+    with pytest.raises(ValueError, match="structuredContent"):
+        normalize_codex_cli_jsonl(raw_path)
+
+
 def test_normalize_codex_task_export_and_verify(tmp_path: Path) -> None:
     raw_path = tmp_path / "codex-task-export.json"
     _write_jsonl(raw_path, _task_export())
@@ -245,6 +293,28 @@ def test_normalize_codex_task_export_and_verify(tmp_path: Path) -> None:
     }
     assert report.calls == 1
     assert report.shell_calls == 0
+
+
+def test_current_m1a0_hard_gate_uses_only_remediation_evidence() -> None:
+    plan_path = Path(__file__).parents[2] / (
+        "docs/superpowers/plans/2026-07-17-math-modeling-mcp-m1.md"
+    )
+    plan = plan_path.read_text(encoding="utf-8")
+    gate = plan.split("## M1a-0 Hard Gate", 1)[1].split("\n---", 1)[0]
+
+    remediation = "build/feasibility/m1a-0/remediation-1/"
+    for evidence_file in (
+        "timebox.json",
+        "closure.json",
+        "evidence-manifest.json",
+        "host/normalized-host-evidence.json",
+        "task-report.md",
+    ):
+        assert remediation + evidence_file in gate
+    assert "generic-STDIO" in gate
+    assert "m1a0-host-evidence/1" in gate
+    assert "build/feasibility/m1a-0/timebox.json" not in gate
+    assert "172800" not in gate
 
 
 @pytest.mark.parametrize(

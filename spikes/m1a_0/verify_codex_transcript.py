@@ -48,18 +48,6 @@ def _jsonl_events(path: Path) -> list[dict[str, Any]]:
     return events
 
 
-def _completed_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for event in events:
-        if event.get("type") != "item.completed":
-            continue
-        item = event.get("item")
-        if not isinstance(item, dict):
-            raise ValueError("completed item is not an object")
-        items.append(item)
-    return items
-
-
 def _raw_evidence_sha256(path: Path) -> str:
     return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
 
@@ -132,18 +120,38 @@ def normalize_codex_cli_jsonl(path: Path) -> dict[str, Any]:
         for index, item in enumerate(all_items)
         if item.get("type") in SHELL_ITEM_TYPES
     }
-    calls = []
-    for item in _completed_items(events):
-        if item.get("type") != "mcp_tool_call":
-            continue
-        calls.append(
-            _canonical_call(
-                item.get("server"),
-                item.get("tool"),
-                item.get("arguments"),
-                _structured_content(item.get("result")),
-            )
+    mcp_events = [
+        (event.get("type"), event.get("item"))
+        for event in events
+        if str(event.get("type", "")).startswith("item.")
+        and isinstance(event.get("item"), dict)
+        and event["item"].get("type") == "mcp_tool_call"
+    ]
+    call_ids = {item.get("id") for _, item in mcp_events}
+    completed = [
+        item
+        for event_type, item in mcp_events
+        if event_type == "item.completed"
+    ]
+    if (
+        len(call_ids) != 1
+        or None in call_ids
+        or len(completed) != 1
+        or completed[0].get("status") not in {"completed", "succeeded"}
+        or completed[0].get("error") is not None
+    ):
+        raise ValueError(
+            "Codex CLI transcript must contain one successful completed MCP call"
         )
+    item = completed[0]
+    calls = [
+        _canonical_call(
+            item.get("server"),
+            item.get("tool"),
+            item.get("arguments"),
+            _structured_content(item.get("result")),
+        )
+    ]
     return _normalized_record(
         surface="cli",
         thread_or_run_id=thread_ids[0],

@@ -799,13 +799,13 @@ and stops without a commit.
 
 All of the following must be true before A1 starts:
 
-- `build/feasibility/m1a-0/timebox.json` validates elapsed seconds `<= 172800` and gate `PASS`;
-- direct and generic-STDIO tests pass with a real child process;
-- the Codex transcript contains exactly one allowed MCP call and a verified root/residual result, with no shell item;
-- the Spike commit exists and its completion record includes fresh test result, staged git diff summary and full commit hash;
+- `build/feasibility/m1a-0/remediation-1/timebox.json` validates elapsed seconds `<= 14400` and gate `PASS`, and `build/feasibility/m1a-0/remediation-1/closure.json` records the same PASS with the full baseline commit hash;
+- the generic-STDIO test independently passes through the official MCP client and a real child process, and the complete Spike regression suite passes;
+- `build/feasibility/m1a-0/remediation-1/evidence-manifest.json` hashes every raw host-evidence file, while `build/feasibility/m1a-0/remediation-1/host/normalized-host-evidence.json` is a verified `m1a0-host-evidence/1` record containing exactly one approved `modeling_spike/root_finding` call, exact arguments, zero shell/command calls, a finite result, equal recomputed residual and residual at most `1e-9`;
+- the first repository commit has subject `spike: prove Codex-hosted MCP root-finding round trip`, and `build/feasibility/m1a-0/remediation-1/task-report.md` contains fresh RED/GREEN tests, generic STDIO and host-evidence results, staged diff/check evidence and the full commit hash;
 - no Spike module is imported by, copied into or treated as an interface for the future formal packages.
 
-Failure blocks A1. The permitted response is to diagnose MCP/Codex feasibility within the remaining timebox or return the blocking evidence; it is not permission to couple the core to Codex, invent a private protocol or widen the Spike into production architecture.
+Failure of any current condition blocks A1 and closes M1a-0R as failed; it does not authorize another attempt or remediation. Failure is not permission to couple the core to Codex, invent a private protocol, weaken evidence verification or widen the Spike into production architecture.
 
 ---
 
