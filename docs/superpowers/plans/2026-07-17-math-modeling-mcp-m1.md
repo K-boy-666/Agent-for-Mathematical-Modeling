@@ -84,6 +84,7 @@
 | `pytest` | `>=8.4,<10` | 所有自动测试与临时目录夹具 |
 | `ruff` | `>=0.12,<1` | 单一跨平台 lint/format 门禁 |
 | `mypy` | `>=1.17,<2` | `src/` 严格静态类型门禁和 Facade/端口一致性 |
+| `editables` | `~=0.3` | 仅限 dev：Hatchling `dev-mode-exact` 生成的 editable loader 在 Python 3.11/Windows 非 ASCII checkout 下需要该运行时；它不进入 `[project].dependencies` 或生产 wheel |
 
 除上表外，M1 不增加生产或开发依赖。SQLite、CLI、哈希、UUID、时间、路径、进程、锁、原子替换、表达式 tokenizer/Pratt parser 和 Harness 编排均使用 Python 标准库。
 
@@ -896,8 +897,13 @@ Failure of any current condition blocks A1 and closes M1a-0R as failed; it does 
   modeling-mcp = "modeling_mcp.__main__:main"
 
   [dependency-groups]
-  dev = ["pytest>=8.4,<10", "ruff>=0.12,<1", "mypy>=1.17,<2"]
+  dev = ["editables~=0.3", "mypy>=1.17,<2", "pytest>=8.4,<10", "ruff>=0.12,<1"]
   ```
+
+  Windows/Python 3.11 非 ASCII checkout 必须启用 Hatchling
+  `dev-mode-exact = true`，使 `.pth` 只包含 ASCII loader import；Hatchling
+  动态生成的 loader 依赖 `editables~=0.3`，因此该包只加入 dev group，
+  不加入 `[project].dependencies`。
 
   Configure pytest paths as `tests`, Ruff target `py311`, and mypy `strict = true` over `src`. `verify.py` must parse `m1a|m1b`, print the selected milestone on the first line, and return exit 2 with diagnostic `verification checks are not registered` until A11 registers checks. `bootstrap` and `doctor` parsers may return exit 2 with `command not implemented in this increment`; help itself must succeed.
 
