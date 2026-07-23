@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/0.1.0/health_check.result.schema.json",
+  "title": "health_check result 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tool_contract_version", "correlation_id", "server_time", "status", "project_state", "ready_for_project_creation", "versions", "registry", "checks", "warnings"],
+  "properties": {
+    "tool_contract_version": {"const": "modeling-tools/0.1.0"},
+    "correlation_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"},
+    "server_time": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/timestamp"},
+    "status": {"enum": ["OK", "DEGRADED"]},
+    "project_state": {"enum": ["UNINITIALIZED", "STORAGE_READY", "READY", "DEGRADED"]},
+    "ready_for_project_creation": {"type": "boolean"},
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["application_version", "mcp_protocol_version", "tool_contract_version", "project_format_version", "database_schema_version", "capability_api_version", "error_schema_version", "result_schema_version", "validation_report_schema_version", "canonicalization_version", "root_finding_contract_version", "root_finding_canonical_input_version", "residual_policy_version"],
+      "properties": {
+        "application_version": {"const": "0.1.0"},
+        "mcp_protocol_version": {"const": "2025-11-25"},
+        "tool_contract_version": {"const": "modeling-tools/0.1.0"},
+        "project_format_version": {"const": "modeling-project/0.1.0"},
+        "database_schema_version": {"const": 1},
+        "capability_api_version": {"const": "modeling-capability/0.1.0"},
+        "error_schema_version": {"const": "modeling-error/0.1.0"},
+        "result_schema_version": {"const": "modeling-result/0.1.0"},
+        "validation_report_schema_version": {"const": "modeling-validation-report/0.1.0"},
+        "canonicalization_version": {"const": "canonical-json/0.1.0"},
+        "root_finding_contract_version": {"const": "numerical.root_finding/0.1.0"},
+        "root_finding_canonical_input_version": {"const": "numerical.root_finding.canonical-input/0.1.0"},
+        "residual_policy_version": {"const": "numerical.root_finding.residual/0.1.0"}
+      }
+    },
+    "registry": {
+      "type": "object", "additionalProperties": false, "required": ["sealed", "fingerprint", "capability_count"],
+      "properties": {"sealed": {"type": "boolean"}, "fingerprint": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/hash"}, "capability_count": {"type": "integer", "minimum": 0}}
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["name", "status", "code"],
+        "properties": {"name": {"type": "string"}, "status": {"enum": ["OK", "WARN", "FAIL"]}, "code": {"type": "string"}}
+      }
+    },
+    "warnings": {"type": "array", "items": {"$ref": "#/$defs/warning"}}
+  },
+  "$defs": {
+    "warning": {
+      "type": "object", "additionalProperties": false, "required": ["code", "message"],
+      "properties": {"code": {"type": "string", "minLength": 1}, "message": {"type": "string", "minLength": 1, "maxLength": 1024}}
+    }
+  }
+}

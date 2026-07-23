@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/0.1.0/health_check.error.schema.json",
+  "title": "health_check error 0.1.0",
+  "allOf": [
+    {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json"},
+    {"properties": {"code": {"enum": ["INVALID_REQUEST", "RESOURCE_LIMIT_EXCEEDED", "INTERNAL_ERROR"]}}}
+  ]
+}

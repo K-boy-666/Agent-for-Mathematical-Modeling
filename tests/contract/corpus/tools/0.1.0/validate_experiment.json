@@ -1,0 +1,26 @@
+[
+  {
+    "label": "valid_request", "kind": "request", "valid": true,
+    "instance": {
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000", "project_id": "223e4567-e89b-42d3-a456-426614174000",
+      "attempt_id": "323e4567-e89b-42d3-a456-426614174000", "expected_result_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "validator_id": "numerical.root_finding.residual", "policy_version": "0.1.0", "policy": {}
+    }
+  },
+  {
+    "label": "valid_result", "kind": "result", "valid": true,
+    "instance": {
+      "tool_contract_version": "modeling-tools/0.1.0", "correlation_id": "123e4567-e89b-42d3-a456-426614174000", "server_time": "2026-07-23T12:34:56.789Z",
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000", "replayed": false,
+      "validation_id": "223e4567-e89b-42d3-a456-426614174000", "attempt_id": "323e4567-e89b-42d3-a456-426614174000",
+      "result_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "validator_id": "numerical.root_finding.residual", "validator_implementation_id": "builtin.numerical.root_finding.residual",
+      "validator_implementation_version": "0.1.0", "policy_version": "0.1.0",
+      "policy_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "validation_status": "TIMED_OUT", "terminal_reason": "deadline_exceeded"
+    }
+  },
+  {"label": "valid_error", "kind": "error", "valid": true, "instance": {"error_schema_version": "modeling-error/0.1.0", "code": "INTEGRITY_FAILURE", "message": "hash mismatch", "retryable": false, "correlation_id": "123e4567-e89b-42d3-a456-426614174000", "details": {"subject": "result_hash", "expected_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "observed_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}},
+  {"label": "unknown_field", "kind": "request", "valid": false, "instance": {"operation_id": "123e4567-e89b-42d3-a456-426614174000", "project_id": "223e4567-e89b-42d3-a456-426614174000", "attempt_id": "323e4567-e89b-42d3-a456-426614174000", "expected_result_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "validator_id": "numerical.root_finding.residual", "policy_version": "0.1.0", "policy": {}, "report_artifact": {}}},
+  {"label": "invalid_type", "kind": "request", "valid": false, "instance": {"operation_id": "123e4567-e89b-42d3-a456-426614174000", "project_id": "223e4567-e89b-42d3-a456-426614174000", "attempt_id": "323e4567-e89b-42d3-a456-426614174000", "expected_result_hash": 1, "validator_id": "numerical.root_finding.residual", "policy_version": "0.1.0", "policy": {}}}
+]

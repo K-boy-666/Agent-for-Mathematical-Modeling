@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/0.1.0/health_check.request.schema.json",
+  "title": "health_check request 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}
