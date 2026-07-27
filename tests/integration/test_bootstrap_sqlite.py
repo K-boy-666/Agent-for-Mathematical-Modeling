@@ -158,6 +158,38 @@ def test_modeling_reparse_point_is_rejected_without_touching_its_target(
     assert marker.read_bytes() == b"external"
 
 
+def test_project_root_under_reparse_ancestor_is_rejected_before_target_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "target"
+    project = target / "project"
+    project.mkdir(parents=True)
+    marker = project / "marker.bin"
+    marker.write_bytes(b"target-must-remain-untouched")
+    ancestor = tmp_path / "ancestor"
+
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(ancestor), str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr or completed.stdout
+    else:
+        ancestor.symlink_to(target, target_is_directory=True)
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(StorageError) as captured:
+        bootstrap_storage(Path("ancestor") / "project", VersionSet.m1a())
+
+    assert captured.value.code == "SECURITY_VIOLATION"
+    assert captured.value.details == {"rule": "unsafe_reparse_point"}
+    assert marker.read_bytes() == b"target-must-remain-untouched"
+    assert not (project / ".modeling").exists()
+
+
 def test_project_lock_is_nonblocking_and_release_closes_the_handle(
     tmp_path: Path,
 ) -> None:

@@ -22,6 +22,22 @@ def is_reparse_point(path: Path) -> bool:
     )
 
 
+def _reject_reparse_components(path: Path) -> None:
+    if path.drive and not path.root:
+        raise ValueError("project root uses a drive-relative path")
+    bound = path if path.is_absolute() else Path.cwd() / path
+    if not bound.is_absolute() or not bound.anchor:
+        raise ValueError("project root cannot be bound to a filesystem root")
+
+    current = Path(bound.anchor)
+    if is_reparse_point(current):
+        raise ValueError("project root has a reparse-point ancestor")
+    for component in bound.parts[1:]:
+        current /= component
+        if is_reparse_point(current):
+            raise ValueError("project root has a reparse-point ancestor")
+
+
 @dataclass(frozen=True)
 class ProjectPaths:
     """The only storage paths A4 is allowed to create."""
@@ -37,10 +53,9 @@ class ProjectPaths:
         raw_root = Path(project_root)
         if "\x00" in str(raw_root):
             raise ValueError("project root contains NUL")
+        _reject_reparse_components(raw_root)
         if not raw_root.exists():
             raise FileNotFoundError("project root does not exist")
-        if is_reparse_point(raw_root):
-            raise ValueError("project root is a reparse point")
         root = raw_root.resolve(strict=True)
         if not root.is_dir():
             raise NotADirectoryError("project root is not a directory")

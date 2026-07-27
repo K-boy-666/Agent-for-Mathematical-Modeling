@@ -229,3 +229,77 @@ Pre-staging `git diff --check` exited `0`.
 A9 owns Project creation, idempotency transactions, experiment/attempt/result
 and validation persistence. A4 intentionally supplies only their schema and
 the structurally exact store boundary.
+
+## Review fix round 1 — reparse ancestors
+
+Baseline commit:
+
+```text
+878acf1058bea4e46e4168c000a5ac97a904d55a
+```
+
+Independent review found that `ProjectPaths.bind()` checked the leaf project
+root and `.modeling`, but resolved the path without checking its ancestors.
+Thus a normal leaf such as `ancestor/project` beneath a Windows junction (or
+POSIX symlink) could redirect bootstrap writes into the junction target.
+
+### RED
+
+A real Windows junction/POSIX symlink ancestor test was added. It passes the
+project root as a relative path, places a marker in the target project, and
+requires rejection before `.modeling` can be created in that target.
+
+```powershell
+uv run --locked --no-sync pytest tests/integration/test_bootstrap_sqlite.py::test_project_root_under_reparse_ancestor_is_rejected_before_target_write -q
+```
+
+Exit code: `1`.
+
+```text
+Failed: DID NOT RAISE StorageError
+1 failed in 0.29s
+```
+
+### Minimal fix
+
+Before `exists()`, `resolve()`, or any write, `ProjectPaths.bind()` now binds
+relative input to the current directory and walks from the filesystem
+drive/root through every user-path component using `lstat`. A symlink,
+junction, or other Windows reparse point at any existing component raises the
+existing fail-closed `SECURITY_VIOLATION/unsafe_reparse_point`. Drive-relative
+Windows paths are rejected because they do not provide an unambiguous rooted
+component chain. No new public abstraction was added.
+
+Focused GREEN:
+
+```powershell
+uv run --locked --no-sync pytest tests/integration/test_bootstrap_sqlite.py::test_project_root_under_reparse_ancestor_is_rejected_before_target_write -q
+```
+
+Exit code: `0`; `1 passed in 0.19s`.
+
+### Fix-round verification
+
+```powershell
+uv run --locked --no-sync pytest tests/contract/test_project_store.py tests/integration/test_bootstrap_sqlite.py -q
+```
+
+Exit code: `0`; `15 passed in 0.73s`.
+
+```powershell
+uv run --locked --no-sync ruff check src/modeling_infrastructure src/modeling_cli tests/contract/test_project_store.py tests/integration/test_bootstrap_sqlite.py
+```
+
+Exit code: `0`; `All checks passed!`
+
+```powershell
+uv run --locked --no-sync mypy src/modeling_infrastructure src/modeling_cli
+```
+
+Exit code: `0`; `Success: no issues found in 9 source files`.
+
+```powershell
+uv run --locked --no-sync pytest tests/unit/contracts tests/unit/domain tests/contract tests/integration/test_bootstrap_sqlite.py tests/architecture -q
+```
+
+Exit code: `0`; `165 passed in 3.40s`.
