@@ -297,6 +297,40 @@ def test_validation_trace_dto_enforces_terminal_output_matrix() -> None:
         )
 
 
+def test_validation_trace_dto_rejects_non_empty_m1a_policy() -> None:
+    entity = "123e4567-e89b-42d3-a456-426614174000"
+    timestamp = "2026-07-23T12:34:56.789Z"
+    digest = "sha256:" + "a" * 64
+    with pytest.raises(ValidationError, match="M1a residual policy must be empty"):
+        ValidationTrace.model_validate(
+            {
+                "record_type": "validation",
+                "validation_id": entity,
+                "attempt_id": entity,
+                "expected_result_hash": digest,
+                "result_hash": digest,
+                "validator_id": "numerical.root_finding.residual",
+                "validator_implementation_id": (
+                    "builtin.numerical.root_finding.residual"
+                ),
+                "validator_implementation_version": "0.1.0",
+                "policy_version": "0.1.0",
+                "policy": {"unexpected": True},
+                "policy_hash": digest,
+                "status": "PENDING",
+                "created_at": timestamp,
+                "started_at": None,
+                "finished_at": None,
+                "outcome": None,
+                "metrics": None,
+                "validation_report_hash": None,
+                "report_payload": None,
+                "operational_error": None,
+                "terminal_reason": None,
+            }
+        )
+
+
 def test_result_trace_dto_rejects_mismatched_result_kinds() -> None:
     entity = "123e4567-e89b-42d3-a456-426614174000"
     digest = "sha256:" + "a" * 64

@@ -571,6 +571,12 @@ class ValidationTrace(StrictModel):
     ] | None
 
     @model_validator(mode="after")
+    def validate_empty_m1a_policy(self) -> ValidationTrace:
+        if self.policy:
+            raise ValueError("M1a residual policy must be empty")
+        return self
+
+    @model_validator(mode="after")
     def validate_status_outputs(self) -> ValidationTrace:
         no_outputs = (
             self.outcome is None
