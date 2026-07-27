@@ -1,13 +1,24 @@
-"""Frozen domain records with executable terminal-state invariants."""
+"""Frozen domain records with executable contract and terminal-state invariants."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Annotated, Any, Literal, cast
 
-from modeling_core.contracts.common import EntityId, Hash, JsonObject, Warning
+from pydantic import Field, TypeAdapter
+
+from modeling_core.contracts.common import (
+    EntityId,
+    Hash,
+    JsonObject,
+    Version,
+    Warning,
+)
 from modeling_core.contracts.errors import ErrorResponse
 from modeling_core.contracts.tools import (
+    CanonicalRootFindingInput,
+    DataSnapshotReference,
     EnvironmentSummary,
     ExecutionOptions,
     NumericalFailureData,
@@ -24,13 +35,42 @@ from modeling_core.domain.states import (
 )
 
 
+DisplayName = Annotated[str, Field(min_length=1, max_length=128)]
+Seed = Annotated[int | None, Field(ge=-9007199254740991, le=9007199254740991)]
+def _validate(value: object, annotation: Any) -> Any:
+    return cast(Any, TypeAdapter(annotation).validate_python(value, strict=True))
+
+
+def _validate_timestamp(value: object) -> datetime:
+    if not isinstance(value, datetime):
+        raise ValueError("timestamp must be a datetime")
+    if value.tzinfo is None or value.utcoffset() != UTC.utcoffset(value):
+        raise ValueError("timestamp must be UTC")
+    if value.microsecond % 1000 != 0:
+        raise ValueError("timestamp must have millisecond precision")
+    return value
+
+
 @dataclass(frozen=True)
 class Project:
     project_id: EntityId
     storage_instance_id: EntityId
-    project_format_version: str
-    display_name: str
+    project_format_version: Literal["modeling-project/0.1.0"]
+    display_name: DisplayName
     created_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "project_id", _validate(self.project_id, EntityId))
+        object.__setattr__(
+            self, "storage_instance_id", _validate(self.storage_instance_id, EntityId)
+        )
+        object.__setattr__(
+            self,
+            "project_format_version",
+            _validate(self.project_format_version, Literal["modeling-project/0.1.0"]),
+        )
+        object.__setattr__(self, "display_name", _validate(self.display_name, DisplayName))
+        object.__setattr__(self, "created_at", _validate_timestamp(self.created_at))
 
 
 @dataclass(frozen=True)
@@ -38,15 +78,52 @@ class Experiment:
     experiment_id: EntityId
     project_id: EntityId
     capability_id: str
-    contract_version: str
-    canonical_input_schema_version: str
-    canonical_payload: JsonObject
+    contract_version: Version
+    canonical_input_schema_version: Literal[
+        "numerical.root_finding.canonical-input/0.1.0"
+    ]
+    canonical_payload: CanonicalRootFindingInput
     canonical_payload_hash: Hash
     model_snapshot_hash: Hash
-    data_snapshot_references: tuple[JsonObject, ...]
+    data_snapshot_references: tuple[DataSnapshotReference, ...]
     data_snapshot_set_hash: Hash
     execution_policy: ExecutionOptions
     created_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "experiment_id", _validate(self.experiment_id, EntityId))
+        object.__setattr__(self, "project_id", _validate(self.project_id, EntityId))
+        object.__setattr__(self, "capability_id", _validate(self.capability_id, str))
+        object.__setattr__(self, "contract_version", _validate(self.contract_version, Version))
+        object.__setattr__(
+            self,
+            "canonical_input_schema_version",
+            _validate(
+                self.canonical_input_schema_version,
+                Literal["numerical.root_finding.canonical-input/0.1.0"],
+            ),
+        )
+        object.__setattr__(
+            self,
+            "canonical_payload",
+            _validate(self.canonical_payload, CanonicalRootFindingInput),
+        )
+        object.__setattr__(
+            self, "canonical_payload_hash", _validate(self.canonical_payload_hash, Hash)
+        )
+        object.__setattr__(self, "model_snapshot_hash", _validate(self.model_snapshot_hash, Hash))
+        object.__setattr__(
+            self,
+            "data_snapshot_references",
+            _validate(self.data_snapshot_references, tuple[DataSnapshotReference, ...]),
+        )
+        object.__setattr__(
+            self, "data_snapshot_set_hash", _validate(self.data_snapshot_set_hash, Hash)
+        )
+        object.__setattr__(
+            self, "execution_policy", _validate(self.execution_policy, ExecutionOptions)
+        )
+        object.__setattr__(self, "created_at", _validate_timestamp(self.created_at))
 
 
 @dataclass(frozen=True)
@@ -54,9 +131,27 @@ class ResultSnapshot:
     result_snapshot_id: EntityId
     attempt_id: EntityId
     result_kind: ResultKind
-    result_schema_version: str
+    result_schema_version: Literal["modeling-result/0.1.0"]
     result_hash: Hash
     result_payload: ResultPayload
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "result_snapshot_id", _validate(self.result_snapshot_id, EntityId)
+        )
+        object.__setattr__(self, "attempt_id", _validate(self.attempt_id, EntityId))
+        object.__setattr__(self, "result_kind", _validate(self.result_kind, ResultKind))
+        object.__setattr__(
+            self,
+            "result_schema_version",
+            _validate(self.result_schema_version, Literal["modeling-result/0.1.0"]),
+        )
+        object.__setattr__(self, "result_hash", _validate(self.result_hash, Hash))
+        object.__setattr__(
+            self, "result_payload", _validate(self.result_payload, ResultPayload)
+        )
+        if self.result_payload.result_kind != self.result_kind.value:
+            raise ValueError("result snapshot kind must match its payload kind")
 
 
 @dataclass(frozen=True)
@@ -64,10 +159,10 @@ class Attempt:
     attempt_id: EntityId
     experiment_id: EntityId
     implementation_id: str
-    implementation_version: str
+    implementation_version: Version
     environment_summary: EnvironmentSummary
     randomness: str
-    seed: int | None
+    seed: Seed
     session_id: EntityId
     status: AttemptStatus
     created_at: datetime
@@ -80,6 +175,43 @@ class Attempt:
     terminal_reason: TerminalReason | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "attempt_id", _validate(self.attempt_id, EntityId))
+        object.__setattr__(self, "experiment_id", _validate(self.experiment_id, EntityId))
+        object.__setattr__(
+            self, "implementation_id", _validate(self.implementation_id, str)
+        )
+        object.__setattr__(
+            self, "implementation_version", _validate(self.implementation_version, Version)
+        )
+        object.__setattr__(
+            self, "environment_summary", _validate(self.environment_summary, EnvironmentSummary)
+        )
+        object.__setattr__(self, "randomness", _validate(self.randomness, str))
+        object.__setattr__(self, "seed", _validate(self.seed, Seed))
+        object.__setattr__(self, "session_id", _validate(self.session_id, EntityId))
+        object.__setattr__(self, "status", _validate(self.status, AttemptStatus))
+        object.__setattr__(self, "created_at", _validate_timestamp(self.created_at))
+        if self.started_at is not None:
+            object.__setattr__(self, "started_at", _validate_timestamp(self.started_at))
+        if self.finished_at is not None:
+            object.__setattr__(self, "finished_at", _validate_timestamp(self.finished_at))
+        object.__setattr__(self, "warnings", _validate(self.warnings, tuple[Warning, ...]))
+        if self.result is not None:
+            object.__setattr__(self, "result", _validate(self.result, ResultSnapshot))
+        if self.system_error is not None:
+            object.__setattr__(self, "system_error", _validate(self.system_error, ErrorResponse))
+        if self.numerical_failure is not None:
+            object.__setattr__(
+                self,
+                "numerical_failure",
+                _validate(self.numerical_failure, NumericalFailureData),
+            )
+        if self.terminal_reason is not None:
+            object.__setattr__(
+                self,
+                "terminal_reason",
+                _validate(self.terminal_reason, TerminalReason),
+            )
         if self.randomness == "not_used" and self.seed is not None:
             raise ValueError("randomness=not_used requires seed is None")
 
@@ -113,11 +245,12 @@ class Attempt:
                 or self.result is None
                 or self.result.result_kind is not ResultKind.NUMERICAL_FAILURE
                 or self.numerical_failure is None
+                or self.result.result_payload.data != self.numerical_failure
                 or self.system_error is not None
                 or self.terminal_reason is not None
             ):
                 raise ValueError(
-                    "NUMERICAL_FAILURE attempt requires one numerical failure result"
+                    "NUMERICAL_FAILURE attempt requires one matching failure result"
                 )
         elif self.status is AttemptStatus.ERRORED:
             if (
@@ -156,10 +289,10 @@ class Validation:
     attempt_id: EntityId
     expected_result_hash: Hash
     result_hash: Hash
-    validator_id: str
+    validator_id: Literal["numerical.root_finding.residual"]
     validator_implementation_id: str
-    validator_implementation_version: str
-    policy_version: str
+    validator_implementation_version: Version
+    policy_version: Literal["0.1.0"]
     policy: JsonObject
     policy_hash: Hash
     status: ValidationStatus
@@ -174,6 +307,65 @@ class Validation:
     terminal_reason: TerminalReason | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "validation_id", _validate(self.validation_id, EntityId))
+        object.__setattr__(self, "attempt_id", _validate(self.attempt_id, EntityId))
+        object.__setattr__(
+            self, "expected_result_hash", _validate(self.expected_result_hash, Hash)
+        )
+        object.__setattr__(self, "result_hash", _validate(self.result_hash, Hash))
+        object.__setattr__(
+            self,
+            "validator_id",
+            _validate(self.validator_id, Literal["numerical.root_finding.residual"]),
+        )
+        object.__setattr__(
+            self, "validator_implementation_id", _validate(self.validator_implementation_id, str)
+        )
+        object.__setattr__(
+            self,
+            "validator_implementation_version",
+            _validate(self.validator_implementation_version, Version),
+        )
+        object.__setattr__(self, "policy_version", _validate(self.policy_version, Literal["0.1.0"]))
+        object.__setattr__(self, "policy", _validate(self.policy, JsonObject))
+        object.__setattr__(self, "policy_hash", _validate(self.policy_hash, Hash))
+        object.__setattr__(self, "status", _validate(self.status, ValidationStatus))
+        object.__setattr__(self, "created_at", _validate_timestamp(self.created_at))
+        if self.started_at is not None:
+            object.__setattr__(self, "started_at", _validate_timestamp(self.started_at))
+        if self.finished_at is not None:
+            object.__setattr__(self, "finished_at", _validate_timestamp(self.finished_at))
+        if self.outcome is not None:
+            object.__setattr__(
+                self, "outcome", _validate(self.outcome, ValidationOutcome)
+            )
+        if self.metrics is not None:
+            object.__setattr__(self, "metrics", _validate(self.metrics, ValidationMetrics))
+        if self.validation_report_hash is not None:
+            object.__setattr__(
+                self,
+                "validation_report_hash",
+                _validate(self.validation_report_hash, Hash),
+            )
+        if self.report_payload is not None:
+            object.__setattr__(
+                self,
+                "report_payload",
+                _validate(self.report_payload, ValidationReportPayload),
+            )
+        if self.operational_error is not None:
+            object.__setattr__(
+                self,
+                "operational_error",
+                _validate(self.operational_error, ErrorResponse),
+            )
+        if self.terminal_reason is not None:
+            object.__setattr__(
+                self,
+                "terminal_reason",
+                _validate(self.terminal_reason, TerminalReason),
+            )
+
         no_outputs = (
             self.outcome is None
             and self.metrics is None
@@ -193,12 +385,18 @@ class Validation:
                 self.started_at is None
                 or self.finished_at is None
                 or self.outcome is None
+                or self.metrics is None
                 or self.validation_report_hash is None
                 or self.report_payload is None
+                or self.report_payload.outcome != self.outcome.value
+                or self.report_payload.metrics != self.metrics
+                or self.report_payload.result_hash != self.result_hash
                 or self.operational_error is not None
                 or self.terminal_reason is not None
             ):
-                raise ValueError("SUCCEEDED validation requires an outcome and report")
+                raise ValueError(
+                    "SUCCEEDED validation requires matching outcome, metrics, and report"
+                )
         elif self.status is ValidationStatus.ERRORED:
             if (
                 self.started_at is None
