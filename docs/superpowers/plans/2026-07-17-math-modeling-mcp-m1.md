@@ -16,7 +16,7 @@
 - 2026-07-23 批准的 `M1a-0R` 是 Attempt 1/2 之后唯一且最终的宿主证据补救；它只取代原 M1a-0 宿主证据门，并保留通用真实 STDIO 子进程测试为独立硬门。现行路线为 `M1a-0R → A1–A12/M1a Hard Gate → C1 → deferred M1b`，C1 以 2026-07-23 的 contest-vertical-slice 设计附录及实施计划为准。
 - M1a-0 恰有 1 个非生产 Feasibility Spike 任务，不计入设计规定的正式 M1a 预算；M1a 恰有 12 个顶层任务、4 个有序工作包；M1b 恰有 12 个顶层任务、4 个有序工作包。
 - 每个任务都遵循：先写失败测试，运行并观察指定失败，写满足该测试的最小实现，运行目标测试，运行相关回归，提交一次可独立审查的变更。
-- 每次执行命令前都位于仓库根。M1a-0 建立根锁文件后统一使用 `uv run --locked --no-sync`；只有依赖声明变化时才运行 `uv lock` 和 `uv sync --locked --group dev`。
+- 每次执行命令前都位于仓库根。M1a-0 建立根锁文件后统一使用 `uv run --locked --no-sync`；只有依赖声明变化时才运行 `uv lock` 和 `uv sync --locked --group dev`。当拥有任务在现有单一发行物下创建新的顶层包时，该任务必须更新 Hatchling 的显式 package 列表，并且可在目录存在后恰好运行一次 `uv sync --locked --group dev`；这只是 editable-install 刷新，不是依赖声明或 `uv lock` 变更。
 - 完成声明只接受新鲜命令输出。M1a 只能称为“可运行纵向切片”；A、B 两组证据全部成立后才能称为“M1 完成”或“可信发布基线”。
 - M1a 只承诺三个固定 hash 烟测向量、表达式空白/默认值的稳定 hash 和同环境重复执行一致；完整 RFC 8785 通用与项目符合性向量只由 B2/M1b 声明和验收。
 - 生产代码不得把 Built-in Capability 称为插件；`External Plugin` 只表示未来第三方安装单元。
@@ -1116,7 +1116,7 @@ Failure of any current condition blocks A1 and closes M1a-0R as failed; it does 
 - Create: `src/modeling_infrastructure/__init__.py`, `src/modeling_infrastructure/project_paths.py`, `src/modeling_infrastructure/project_lock.py`, `src/modeling_infrastructure/storage.py`
 - Create: `src/modeling_infrastructure/sqlite/__init__.py`, `src/modeling_infrastructure/sqlite/schema_v1.sql`, `src/modeling_infrastructure/sqlite/store.py`
 - Create: `src/modeling_core/contracts/schemas/common/0.1.0/modeling-project.schema.json`
-- Modify: `src/modeling_cli/main.py`
+- Modify: `pyproject.toml`, `src/modeling_cli/main.py`
 - Create: `tests/contract/test_project_store.py`, `tests/integration/test_bootstrap_sqlite.py`
 
 **Interfaces consumed:** `ProjectStore`, `Clock`, `IdGenerator`, `VersionSet.m1a()`.
@@ -1147,6 +1147,8 @@ Failure of any current condition blocks A1 and closes M1a-0R as failed; it does 
   Expected: collection fails with missing `modeling_infrastructure`.
 
 - [ ] **Step 3: Implement schema and atomic bootstrap**
+
+  Add `src/modeling_infrastructure` to Hatchling's explicit wheel package list in `pyproject.toml`. After the directory exists, run the one permitted `uv sync --locked --group dev` editable-install refresh before the prescribed `--no-sync` GREEN gates. `uv.lock` and all dependency declarations must remain byte-identical; generated editable-loader or `PYTHONPATH` hacks are prohibited.
 
   `schema_v1.sql` must create `metadata`, `projects`, `experiments`, `attempts`, `result_snapshots`, `validations`, and `idempotency_records` with foreign keys and unique `(scope_id, tool_name, operation_id)`. JSON payload columns are UTF-8 text; all entity IDs and hashes have CHECK constraints for length/prefix; timestamps remain RFC 3339 text.
 
@@ -1188,7 +1190,7 @@ Failure of any current condition blocks A1 and closes M1a-0R as failed; it does 
 - [ ] **Step 6: Commit**
 
   ```powershell
-  git add src/modeling_infrastructure src/modeling_cli/main.py src/modeling_core/contracts/schemas/common/0.1.0/modeling-project.schema.json tests/contract/test_project_store.py tests/integration/test_bootstrap_sqlite.py
+  git add pyproject.toml src/modeling_infrastructure src/modeling_cli/main.py src/modeling_core/contracts/schemas/common/0.1.0/modeling-project.schema.json tests/contract/test_project_store.py tests/integration/test_bootstrap_sqlite.py
   git commit -m "feat: add atomic SQLite project storage"
   ```
 
