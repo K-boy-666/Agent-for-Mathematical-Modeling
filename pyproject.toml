@@ -34,7 +34,12 @@ include = ["README.md", "pyproject.toml", "src", "tests"]
 exclude = ["spikes"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/modeling_cli", "src/modeling_core", "src/modeling_harness"]
+packages = [
+    "src/modeling_cli",
+    "src/modeling_core",
+    "src/modeling_harness",
+    "src/modeling_infrastructure",
+]
 exclude = ["spikes"]
 dev-mode-exact = true
 
