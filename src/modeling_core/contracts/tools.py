@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import Field
+from pydantic import Discriminator, Field, Tag, model_validator
 
 from modeling_core.contracts.common import (
     EntityId,
@@ -46,9 +47,18 @@ class GetProjectStatusExperimentRequest(StrictModel):
     experiment_id: EntityId
 
 
+def _get_project_status_view(value: object) -> str | None:
+    if isinstance(value, Mapping):
+        view = value.get("view", "summary")
+        return view if isinstance(view, str) else None
+    view = getattr(value, "view", None)
+    return view if isinstance(view, str) else None
+
+
 GetProjectStatusRequest: TypeAlias = Annotated[
-    GetProjectStatusSummaryRequest | GetProjectStatusExperimentRequest,
-    Field(discriminator="view"),
+    Annotated[GetProjectStatusSummaryRequest, Tag("summary")]
+    | Annotated[GetProjectStatusExperimentRequest, Tag("experiment")],
+    Discriminator(_get_project_status_view),
 ]
 
 
@@ -64,9 +74,18 @@ class ListCapabilitiesContractRequest(StrictModel):
     contract_version: str
 
 
+def _list_capabilities_detail(value: object) -> str | None:
+    if isinstance(value, Mapping):
+        detail = value.get("detail", "summary")
+        return detail if isinstance(detail, str) else None
+    detail = getattr(value, "detail", None)
+    return detail if isinstance(detail, str) else None
+
+
 ListCapabilitiesRequest: TypeAlias = Annotated[
-    ListCapabilitiesSummaryRequest | ListCapabilitiesContractRequest,
-    Field(discriminator="detail"),
+    Annotated[ListCapabilitiesSummaryRequest, Tag("summary")]
+    | Annotated[ListCapabilitiesContractRequest, Tag("contract")],
+    Discriminator(_list_capabilities_detail),
 ]
 
 
@@ -363,6 +382,12 @@ class ResultTrace(StrictModel):
     result_hash: Hash
     result_payload: ResultPayload
 
+    @model_validator(mode="after")
+    def validate_matching_result_kind(self) -> ResultTrace:
+        if self.result_kind != self.result_payload.result_kind:
+            raise ValueError("result trace kind must match its payload kind")
+        return self
+
 
 class EnvironmentSummary(StrictModel):
     python_version: str
@@ -400,6 +425,80 @@ class AttemptTrace(StrictModel):
         "deadline_exceeded", "host_cancelled", "server_recovery"
     ] | None
 
+    @model_validator(mode="after")
+    def validate_status_outputs(self) -> AttemptTrace:
+        no_outputs = (
+            self.result is None
+            and self.system_error is None
+            and self.numerical_failure is None
+            and self.terminal_reason is None
+        )
+        if self.status == "PENDING":
+            if self.started_at is not None or self.finished_at is not None or not no_outputs:
+                raise ValueError("PENDING attempt has no timestamps or outputs")
+        elif self.status == "RUNNING":
+            if self.started_at is None or self.finished_at is not None or not no_outputs:
+                raise ValueError("RUNNING attempt requires only started_at")
+        elif self.status == "SUCCEEDED":
+            if (
+                self.started_at is None
+                or self.finished_at is None
+                or self.result is None
+                or self.result.result_kind != "success"
+                or self.system_error is not None
+                or self.numerical_failure is not None
+                or self.terminal_reason is not None
+            ):
+                raise ValueError("SUCCEEDED attempt requires only a success result")
+        elif self.status == "NUMERICAL_FAILURE":
+            failure_payload = (
+                self.result.result_payload.data
+                if self.result is not None
+                and self.result.result_kind == "numerical_failure"
+                else None
+            )
+            if (
+                self.started_at is None
+                or self.finished_at is None
+                or failure_payload is None
+                or self.numerical_failure is None
+                or failure_payload != self.numerical_failure
+                or self.system_error is not None
+                or self.terminal_reason is not None
+            ):
+                raise ValueError(
+                    "NUMERICAL_FAILURE attempt requires one matching failure result"
+                )
+        elif self.status == "ERRORED":
+            if (
+                self.started_at is None
+                or self.finished_at is None
+                or self.result is not None
+                or self.system_error is None
+                or self.numerical_failure is not None
+                or self.terminal_reason is not None
+            ):
+                raise ValueError("ERRORED attempt requires only system_error")
+        elif self.status == "TIMED_OUT":
+            if (
+                self.started_at is None
+                or self.finished_at is None
+                or self.result is not None
+                or self.system_error is not None
+                or self.numerical_failure is not None
+                or self.terminal_reason != "deadline_exceeded"
+            ):
+                raise ValueError("TIMED_OUT attempt requires deadline_exceeded")
+        elif (
+            self.finished_at is None
+            or self.result is not None
+            or self.system_error is not None
+            or self.numerical_failure is not None
+            or self.terminal_reason not in {"host_cancelled", "server_recovery"}
+        ):
+            raise ValueError("ABANDONED attempt requires only a terminal reason")
+        return self
+
 
 class ValidationMetrics(StrictModel):
     root_within_interval: bool
@@ -418,6 +517,30 @@ class ValidationMetrics(StrictModel):
         ],
         ...,
     ]
+
+
+class ValidationReportPayload(StrictModel):
+    report_schema_version: Literal["modeling-validation-report/0.1.0"]
+    validator_id: Literal["numerical.root_finding.residual"]
+    validator_implementation_id: str
+    validator_implementation_version: str
+    policy_version: Literal["0.1.0"]
+    policy: JsonObject
+    policy_hash: Hash
+    capability_id: Literal["numerical.root_finding"]
+    contract_version: Literal["0.1.0"]
+    canonical_payload_hash: Hash
+    model_snapshot_hash: Hash
+    data_snapshot_set_hash: Hash
+    result_hash: Hash
+    outcome: Literal["PASSED", "FAILED", "INCONCLUSIVE"]
+    metrics: ValidationMetrics
+
+    @model_validator(mode="after")
+    def validate_empty_m1a_policy(self) -> ValidationReportPayload:
+        if self.policy:
+            raise ValueError("M1a residual policy must be empty")
+        return self
 
 
 class ValidationTrace(StrictModel):
@@ -441,11 +564,80 @@ class ValidationTrace(StrictModel):
     outcome: Literal["PASSED", "FAILED", "INCONCLUSIVE"] | None
     metrics: ValidationMetrics | None
     validation_report_hash: Hash | None
-    report_payload: JsonObject | None
+    report_payload: ValidationReportPayload | None
     operational_error: ErrorResponse | None
     terminal_reason: Literal[
         "deadline_exceeded", "host_cancelled", "server_recovery"
     ] | None
+
+    @model_validator(mode="after")
+    def validate_status_outputs(self) -> ValidationTrace:
+        no_outputs = (
+            self.outcome is None
+            and self.metrics is None
+            and self.validation_report_hash is None
+            and self.report_payload is None
+            and self.operational_error is None
+            and self.terminal_reason is None
+        )
+        if self.status == "PENDING":
+            if self.started_at is not None or self.finished_at is not None or not no_outputs:
+                raise ValueError("PENDING validation has no timestamps or outputs")
+        elif self.status == "RUNNING":
+            if self.started_at is None or self.finished_at is not None or not no_outputs:
+                raise ValueError("RUNNING validation requires only started_at")
+        elif self.status == "SUCCEEDED":
+            if (
+                self.started_at is None
+                or self.finished_at is None
+                or self.outcome is None
+                or self.metrics is None
+                or self.validation_report_hash is None
+                or self.report_payload is None
+                or self.report_payload.outcome != self.outcome
+                or self.report_payload.metrics != self.metrics
+                or self.report_payload.result_hash != self.result_hash
+                or self.operational_error is not None
+                or self.terminal_reason is not None
+            ):
+                raise ValueError(
+                    "SUCCEEDED validation requires one consistent report payload"
+                )
+        elif self.status == "ERRORED":
+            if (
+                self.started_at is None
+                or self.finished_at is None
+                or self.outcome is not None
+                or self.metrics is not None
+                or self.validation_report_hash is not None
+                or self.report_payload is not None
+                or self.operational_error is None
+                or self.terminal_reason is not None
+            ):
+                raise ValueError("ERRORED validation requires only operational_error")
+        elif self.status == "TIMED_OUT":
+            if (
+                self.started_at is None
+                or self.finished_at is None
+                or self.outcome is not None
+                or self.metrics is not None
+                or self.validation_report_hash is not None
+                or self.report_payload is not None
+                or self.operational_error is not None
+                or self.terminal_reason != "deadline_exceeded"
+            ):
+                raise ValueError("TIMED_OUT validation requires deadline_exceeded")
+        elif (
+            self.finished_at is None
+            or self.outcome is not None
+            or self.metrics is not None
+            or self.validation_report_hash is not None
+            or self.report_payload is not None
+            or self.operational_error is not None
+            or self.terminal_reason not in {"host_cancelled", "server_recovery"}
+        ):
+            raise ValueError("ABANDONED validation requires only a terminal reason")
+        return self
 
 
 TraceRecord: TypeAlias = Annotated[

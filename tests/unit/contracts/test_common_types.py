@@ -21,6 +21,17 @@ from modeling_core.contracts.common import (
     Timestamp,
 )
 from modeling_core.contracts.versions import VersionSet
+from modeling_core.contracts.tools import (
+    AttemptTrace,
+    GetProjectStatusRequest,
+    GetProjectStatusSummaryRequest,
+    ListCapabilitiesRequest,
+    ListCapabilitiesSummaryRequest,
+    ResultTrace,
+    UnaryNode,
+    ValidateExperimentRequest,
+    ValidationTrace,
+)
 
 
 class _StrictProbe(StrictModel):
@@ -169,3 +180,163 @@ def test_m1a_version_axes_are_exact() -> None:
         ),
         "residual_policy_version": "numerical.root_finding.residual/0.1.0",
     }
+
+
+def test_recursive_json_payload_is_fully_resolved_and_validated() -> None:
+    request = ValidateExperimentRequest.model_validate(
+        {
+            "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+            "project_id": "223e4567-e89b-42d3-a456-426614174000",
+            "attempt_id": "323e4567-e89b-42d3-a456-426614174000",
+            "expected_result_hash": "sha256:" + "a" * 64,
+            "validator_id": "numerical.root_finding.residual",
+            "policy_version": "0.1.0",
+            "policy": {"nested": [None, True, 2, 3.5, "value", {"leaf": "ok"}]},
+        }
+    )
+    assert request.policy["nested"][-1] == {"leaf": "ok"}
+    invalid = request.model_dump()
+    invalid["policy"] = {"value": nan}
+    with pytest.raises(ValidationError):
+        ValidateExperimentRequest.model_validate(invalid)
+
+
+def test_omitted_summary_discriminators_apply_documented_defaults() -> None:
+    project = TypeAdapter(GetProjectStatusRequest).validate_python(
+        {"project_id": "123e4567-e89b-42d3-a456-426614174000"}
+    )
+    capabilities = TypeAdapter(ListCapabilitiesRequest).validate_python({})
+    assert isinstance(project, GetProjectStatusSummaryRequest)
+    assert project.view == "summary"
+    assert isinstance(capabilities, ListCapabilitiesSummaryRequest)
+    assert capabilities.detail == "summary"
+
+
+def test_attempt_trace_dto_enforces_terminal_output_matrix() -> None:
+    entity = "123e4567-e89b-42d3-a456-426614174000"
+    timestamp = "2026-07-23T12:34:56.789Z"
+    digest = "sha256:" + "a" * 64
+    with pytest.raises(ValidationError):
+        AttemptTrace.model_validate(
+            {
+                "record_type": "attempt",
+                "attempt_id": entity,
+                "experiment_id": entity,
+                "implementation_id": "builtin.numerical.root_finding.bisection",
+                "implementation_version": "0.1.0",
+                "environment_summary": {
+                    "python_version": "3.11.14",
+                    "application_version": "0.1.0",
+                    "lock_hash": digest,
+                },
+                "randomness": "not_used",
+                "seed": None,
+                "session_id": entity,
+                "status": "PENDING",
+                "created_at": timestamp,
+                "started_at": None,
+                "finished_at": None,
+                "warnings": (),
+                "result": {
+                    "result_snapshot_id": entity,
+                    "result_kind": "success",
+                    "result_schema_version": "modeling-result/0.1.0",
+                    "result_hash": digest,
+                    "result_payload": {
+                        "result_schema_version": "modeling-result/0.1.0",
+                        "capability_id": "numerical.root_finding",
+                        "contract_version": "0.1.0",
+                        "result_kind": "success",
+                        "data": {
+                            "root": 0.0,
+                            "function_value": 0.0,
+                            "iterations": 0,
+                            "evaluations": 1,
+                            "termination_reason": "endpoint_root",
+                        },
+                    },
+                },
+                "system_error": None,
+                "numerical_failure": None,
+                "terminal_reason": None,
+            }
+        )
+
+
+def test_validation_trace_dto_enforces_terminal_output_matrix() -> None:
+    entity = "123e4567-e89b-42d3-a456-426614174000"
+    timestamp = "2026-07-23T12:34:56.789Z"
+    digest = "sha256:" + "a" * 64
+    with pytest.raises(ValidationError):
+        ValidationTrace.model_validate(
+            {
+                "record_type": "validation",
+                "validation_id": entity,
+                "attempt_id": entity,
+                "expected_result_hash": digest,
+                "result_hash": digest,
+                "validator_id": "numerical.root_finding.residual",
+                "validator_implementation_id": (
+                    "builtin.numerical.root_finding.residual"
+                ),
+                "validator_implementation_version": "0.1.0",
+                "policy_version": "0.1.0",
+                "policy": {},
+                "policy_hash": digest,
+                "status": "SUCCEEDED",
+                "created_at": timestamp,
+                "started_at": timestamp,
+                "finished_at": timestamp,
+                "outcome": None,
+                "metrics": None,
+                "validation_report_hash": None,
+                "report_payload": None,
+                "operational_error": None,
+                "terminal_reason": None,
+            }
+        )
+
+
+def test_result_trace_dto_rejects_mismatched_result_kinds() -> None:
+    entity = "123e4567-e89b-42d3-a456-426614174000"
+    digest = "sha256:" + "a" * 64
+    with pytest.raises(ValidationError):
+        ResultTrace.model_validate(
+            {
+                "result_snapshot_id": entity,
+                "result_kind": "success",
+                "result_schema_version": "modeling-result/0.1.0",
+                "result_hash": digest,
+                "result_payload": {
+                    "result_schema_version": "modeling-result/0.1.0",
+                    "capability_id": "numerical.root_finding",
+                    "contract_version": "0.1.0",
+                    "result_kind": "numerical_failure",
+                    "data": {
+                        "failure_code": "no_sign_change",
+                        "iterations": 0,
+                        "evaluations": 2,
+                    },
+                },
+            }
+        )
+
+
+def test_recursive_expression_ast_models_are_fully_resolved() -> None:
+    value = UnaryNode.model_validate(
+        {
+            "kind": "unary",
+            "op": "negative",
+            "operand": {
+                "kind": "binary",
+                "op": "add",
+                "left": {"kind": "variable", "name": "x"},
+                "right": {
+                    "kind": "call",
+                    "name": "sin",
+                    "argument": {"kind": "number", "value": 1.0},
+                },
+            },
+        }
+    )
+    assert value.operand.kind == "binary"

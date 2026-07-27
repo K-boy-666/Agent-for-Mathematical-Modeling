@@ -80,7 +80,7 @@ class SchemaCatalog:
         return cls(
             tool_schemas=tool_schemas,
             common_schemas=common_schemas,
-            fingerprint=sha256_json(fingerprint_input),  # type: ignore[arg-type]
+            fingerprint=sha256_json(fingerprint_input),
             _registry=registry,
         )
 

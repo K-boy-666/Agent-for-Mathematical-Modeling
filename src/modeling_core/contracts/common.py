@@ -2,13 +2,25 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Annotated, TypeAlias
+from typing import Annotated, Dict, List, TypeAlias, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from typing_extensions import TypeAliasType
 
 JsonScalar: TypeAlias = None | bool | int | float | str
-JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
-JsonObject: TypeAlias = dict[str, JsonValue]
+JsonValue = TypeAliasType(  # type: ignore[misc]  # Recursive runtime alias.
+    "JsonValue",
+    Union[
+        Dict[str, "JsonValue"],  # type: ignore[misc]  # Self-reference.
+        List["JsonValue"],  # type: ignore[misc]  # Self-reference.
+        str,
+        int,
+        float,
+        bool,
+        None,
+    ],
+)
+JsonObject: TypeAlias = dict[str, JsonValue]  # type: ignore[misc]
 
 EntityId = Annotated[
     str,
