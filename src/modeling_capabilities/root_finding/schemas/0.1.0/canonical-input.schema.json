@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/capabilities/root-finding/0.1.0/canonical-input.schema.json",
+  "title": "numerical.root_finding canonical input 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "canonical_input_schema_version",
+    "expression_ast",
+    "lower",
+    "upper",
+    "absolute_tolerance",
+    "relative_tolerance",
+    "function_tolerance",
+    "max_iterations"
+  ],
+  "properties": {
+    "canonical_input_schema_version": {
+      "const": "numerical.root_finding.canonical-input/0.1.0"
+    },
+    "expression_ast": {"$ref": "#/$defs/expressionNode"},
+    "lower": {"type": "number"},
+    "upper": {"type": "number"},
+    "absolute_tolerance": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1
+    },
+    "relative_tolerance": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1
+    },
+    "function_tolerance": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1
+    },
+    "max_iterations": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    }
+  },
+  "$defs": {
+    "expressionNode": {
+      "oneOf": [
+        {"$ref": "#/$defs/numberNode"},
+        {"$ref": "#/$defs/variableNode"},
+        {"$ref": "#/$defs/constantNode"},
+        {"$ref": "#/$defs/unaryNode"},
+        {"$ref": "#/$defs/binaryNode"},
+        {"$ref": "#/$defs/callNode"}
+      ]
+    },
+    "numberNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {"const": "number"},
+        "value": {"type": "number"}
+      }
+    },
+    "variableNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": {"const": "variable"},
+        "name": {"const": "x"}
+      }
+    },
+    "constantNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": {"const": "constant"},
+        "name": {"enum": ["pi", "e"]}
+      }
+    },
+    "unaryNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "op", "operand"],
+      "properties": {
+        "kind": {"const": "unary"},
+        "op": {"enum": ["positive", "negative"]},
+        "operand": {"$ref": "#/$defs/expressionNode"}
+      }
+    },
+    "binaryNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "op", "left", "right"],
+      "properties": {
+        "kind": {"const": "binary"},
+        "op": {
+          "enum": ["add", "subtract", "multiply", "divide", "power"]
+        },
+        "left": {"$ref": "#/$defs/expressionNode"},
+        "right": {"$ref": "#/$defs/expressionNode"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["op"],
+            "properties": {"op": {"const": "power"}}
+          },
+          "then": {
+            "properties": {
+              "right": {"$ref": "#/$defs/exponentNode"}
+            }
+          }
+        }
+      ]
+    },
+    "exponentNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {"const": "number"},
+        "value": {
+          "type": "number",
+          "minimum": -1024,
+          "maximum": 1024
+        }
+      }
+    },
+    "callNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "argument"],
+      "properties": {
+        "kind": {"const": "call"},
+        "name": {
+          "enum": ["abs", "sqrt", "exp", "log", "sin", "cos", "tan"]
+        },
+        "argument": {"$ref": "#/$defs/expressionNode"}
+      }
+    }
+  }
+}

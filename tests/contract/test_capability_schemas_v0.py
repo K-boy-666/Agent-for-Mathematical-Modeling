@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+from importlib.resources import files
+from pathlib import Path
+from typing import cast
+
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 import pytest
 
@@ -144,3 +149,43 @@ def test_descriptor_schemas_reject_non_object_references_and_non_m1a_artifacts()
         ("artifact_roles",),
         ("input_schema", "schema", "type"),
     }
+
+
+def test_root_finding_contract_corpus_matches_the_packaged_strict_schemas() -> None:
+    package_root = files("modeling_capabilities.root_finding")
+    schema_root = package_root.joinpath("schemas", "0.1.0")
+    schemas = {
+        "input": cast(
+            JsonObject,
+            json.loads(
+                schema_root.joinpath("input.schema.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
+        ),
+        "canonical-input": cast(
+            JsonObject,
+            json.loads(
+                schema_root.joinpath("canonical-input.schema.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
+        ),
+    }
+    corpus_path = (
+        Path(__file__).parent / "corpus" / "root-finding" / "0.1.0.json"
+    )
+    corpus = cast(
+        list[dict[str, object]],
+        json.loads(corpus_path.read_text(encoding="utf-8")),
+    )
+
+    for schema in schemas.values():
+        Draft202012Validator.check_schema(schema)
+        assert schema["type"] == "object"
+        assert schema["additionalProperties"] is False
+
+    for vector in corpus:
+        validator = Draft202012Validator(schemas[cast(str, vector["kind"])])
+        errors = list(validator.iter_errors(vector["instance"]))
+        assert bool(errors) is not cast(bool, vector["valid"]), vector["label"]
