@@ -122,6 +122,23 @@ def validator_descriptor(
     )
 
 
+def advertised_validator(descriptor: ValidatorDescriptor) -> ValidatorSummary:
+    return ValidatorSummary(
+        validator_id=descriptor.validator_id,
+        policies=(
+            PolicyContract(
+                policy_version=descriptor.policy_version,
+                policy_schema=descriptor.policy_schema.schema,
+                policy_schema_hash=descriptor.policy_schema.schema_hash,
+            ),
+        ),
+        report_schema_version=descriptor.report_schema.schema_version,
+        report_schema=descriptor.report_schema.schema,
+        report_schema_hash=descriptor.report_schema.schema_hash,
+        summary=descriptor.summary,
+    )
+
+
 @dataclass(frozen=True)
 class FakeCapability:
     descriptor: CapabilityDescriptor
@@ -138,6 +155,41 @@ class FakeCapability:
 @dataclass(frozen=True)
 class FakeValidator:
     descriptor: ValidatorDescriptor
+
+    def validate(
+        self,
+        canonical_input: CanonicalInputRecord,
+        result_snapshot: ResultSnapshotView,
+        policy: JsonObject,
+        context: ValidationContext,
+    ) -> ValidationReport:
+        raise NotImplementedError
+
+
+@dataclass
+class MutableCapability:
+    current_descriptor: CapabilityDescriptor
+
+    @property
+    def descriptor(self) -> CapabilityDescriptor:
+        return self.current_descriptor
+
+    def normalize_and_validate(self, raw_payload: JsonObject) -> CanonicalInputRecord:
+        raise NotImplementedError
+
+    def execute(
+        self, canonical_input: CanonicalInputRecord, context: ExecutionContext
+    ) -> ExecutionOutcome:
+        raise NotImplementedError
+
+
+@dataclass
+class MutableValidator:
+    current_descriptor: ValidatorDescriptor
+
+    @property
+    def descriptor(self) -> ValidatorDescriptor:
+        return self.current_descriptor
 
     def validate(
         self,
@@ -174,8 +226,12 @@ def test_protocols_accept_structural_implementations() -> None:
 
 def test_capability_and_compatible_validator_register_before_seal() -> None:
     catalog = registry()
-    capability = FakeCapability(capability_descriptor())
     validator = FakeValidator(validator_descriptor())
+    capability = FakeCapability(
+        capability_descriptor(
+            validators=(advertised_validator(validator.descriptor),)
+        )
+    )
 
     catalog.register_capability(capability)
     catalog.register_validator(validator)
@@ -273,10 +329,17 @@ def test_incompatible_capability_api_is_unsupported() -> None:
 
 def test_incompatible_validator_contract_range_is_unsupported() -> None:
     catalog = registry()
-    catalog.register_capability(FakeCapability(capability_descriptor()))
-    catalog.register_validator(
-        FakeValidator(validator_descriptor(minimum="0.2.0", maximum="0.3.0"))
+    validator = FakeValidator(
+        validator_descriptor(minimum="0.2.0", maximum="0.3.0")
     )
+    catalog.register_capability(
+        FakeCapability(
+            capability_descriptor(
+                validators=(advertised_validator(validator.descriptor),)
+            )
+        )
+    )
+    catalog.register_validator(validator)
 
     with pytest.raises(RegistryError) as captured:
         catalog.seal(frozenset({_ROOT_KEY}))
@@ -301,7 +364,11 @@ def test_every_declared_validator_contract_range_must_be_compatible() -> None:
         }
     )
     catalog = registry()
-    catalog.register_capability(FakeCapability(capability_descriptor()))
+    catalog.register_capability(
+        FakeCapability(
+            capability_descriptor(validators=(advertised_validator(descriptor),))
+        )
+    )
     catalog.register_validator(FakeValidator(descriptor))
 
     with pytest.raises(RegistryError) as captured:
@@ -418,8 +485,9 @@ def test_seal_sorts_lists_and_exact_resolve_does_not_choose_latest() -> None:
 
 
 def test_fingerprint_is_the_ordered_versioned_hash_projection() -> None:
-    descriptor = capability_descriptor()
     validator = validator_descriptor()
+    validator_summary = advertised_validator(validator)
+    descriptor = capability_descriptor(validators=(validator_summary,))
     catalog = registry()
     catalog.register_validator(FakeValidator(validator))
     catalog.register_capability(FakeCapability(descriptor))
@@ -453,7 +521,27 @@ def test_fingerprint_is_the_ordered_versioned_hash_projection() -> None:
                             "schema_version": descriptor.success_schema.schema_version,
                         },
                     },
-                    "validators": [],
+                    "validators": [
+                        {
+                            "policies": [
+                                {
+                                    "policy_schema_hash": (
+                                        validator_summary.policies[
+                                            0
+                                        ].policy_schema_hash
+                                    ),
+                                    "policy_version": "0.1.0",
+                                }
+                            ],
+                            "report_schema_hash": (
+                                validator_summary.report_schema_hash
+                            ),
+                            "report_schema_version": (
+                                validator_summary.report_schema_version
+                            ),
+                            "validator_id": validator_summary.validator_id,
+                        }
+                    ],
                 }
             ],
             "validators": [
@@ -485,29 +573,17 @@ def test_fingerprint_is_the_ordered_versioned_hash_projection() -> None:
 
 
 def test_fingerprint_includes_capability_validator_summary_versions_and_hashes() -> None:
-    policy = schema("residual.policy")
-    report = schema("residual.report")
-    validator_summary = ValidatorSummary(
-        validator_id="numerical.root_finding.residual",
-        policies=(
-            PolicyContract(
-                policy_version="0.1.0",
-                policy_schema=policy,
-                policy_schema_hash=sha256_json(policy),
-            ),
-        ),
-        report_schema_version="modeling-validation-report/0.1.0",
-        report_schema=report,
-        report_schema_hash=sha256_json(report),
-        summary="Independent residual validation.",
-    )
+    matching_descriptor = validator_descriptor()
+    validator_summary = advertised_validator(matching_descriptor)
     without_summary = registry()
     without_summary.register_capability(FakeCapability(capability_descriptor()))
     first = without_summary.seal(frozenset({_ROOT_KEY}))
     with_summary = registry()
+    matching_validator = FakeValidator(matching_descriptor)
     with_summary.register_capability(
         FakeCapability(capability_descriptor(validators=(validator_summary,)))
     )
+    with_summary.register_validator(matching_validator)
     second = with_summary.seal(frozenset({_ROOT_KEY}))
 
     assert first.fingerprint != second.fingerprint
@@ -589,3 +665,197 @@ def test_descriptor_nested_schemas_and_validator_summaries_are_deeply_immutable(
     assert "title" not in descriptor.input_schema.schema
     assert "title" not in descriptor.validators[0].policies[0].policy_schema
     assert "title" not in descriptor.validators[0].report_schema
+
+
+def test_registry_snapshots_descriptors_at_registration() -> None:
+    original_validator = validator_descriptor()
+    original_capability = capability_descriptor(
+        validators=(advertised_validator(original_validator),)
+    )
+    capability = MutableCapability(original_capability)
+    validator = MutableValidator(original_validator)
+    catalog = registry()
+    catalog.register_capability(capability)
+    catalog.register_validator(validator)
+
+    capability.current_descriptor = capability_descriptor(
+        capability_id="numerical.changed",
+        implementation_id="builtin.numerical.changed",
+    )
+    validator.current_descriptor = validator_descriptor(
+        validator_id="numerical.changed.validator",
+        implementation_id="builtin.numerical.changed.validator",
+        minimum="0.2.0",
+        maximum="0.3.0",
+    )
+    sealed = catalog.seal(frozenset({_ROOT_KEY}))
+    listed = catalog.list_summaries(None, None)
+
+    capability.current_descriptor = capability_descriptor(
+        capability_id="numerical.changed_again",
+        implementation_id="builtin.numerical.changed_again",
+    )
+    validator.current_descriptor = validator_descriptor(
+        validator_id="numerical.changed_again.validator",
+        implementation_id="builtin.numerical.changed_again.validator",
+    )
+
+    assert catalog.seal(frozenset({_ROOT_KEY})).fingerprint == sealed.fingerprint
+    assert [(item.capability_id, item.title) for item in listed] == [
+        ("numerical.root_finding", "Bisection root finding")
+    ]
+    assert [
+        (item.capability_id, item.title)
+        for item in catalog.list_summaries(None, None)
+    ] == [("numerical.root_finding", "Bisection root finding")]
+    assert catalog.resolve(*_ROOT_KEY) is capability
+    assert (
+        catalog.resolve_validator(
+            original_validator.validator_id,
+            *_ROOT_KEY,
+            original_validator.policy_version,
+        )
+        is validator
+    )
+
+
+def test_advertised_validator_requires_a_registered_match() -> None:
+    descriptor = validator_descriptor()
+    catalog = registry()
+    catalog.register_capability(
+        FakeCapability(
+            capability_descriptor(validators=(advertised_validator(descriptor),))
+        )
+    )
+
+    with pytest.raises(RegistryError) as captured:
+        catalog.seal(frozenset({_ROOT_KEY}))
+
+    assert captured.value.code == "INTEGRITY_FAILURE"
+
+
+def test_registered_validator_must_be_advertised_by_supported_capability() -> None:
+    catalog = registry()
+    catalog.register_capability(FakeCapability(capability_descriptor()))
+    catalog.register_validator(FakeValidator(validator_descriptor()))
+
+    with pytest.raises(RegistryError) as captured:
+        catalog.seal(frozenset({_ROOT_KEY}))
+
+    assert captured.value.code == "INTEGRITY_FAILURE"
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ["policy-version", "policy-hash", "report-version", "report-hash"],
+)
+def test_advertised_validator_contract_must_exactly_match_registration(
+    mismatch: str,
+) -> None:
+    descriptor = validator_descriptor()
+    summary = advertised_validator(descriptor)
+    if mismatch == "policy-version":
+        summary = summary.model_copy(
+            update={
+                "policies": (
+                    summary.policies[0].model_copy(
+                        update={"policy_version": "0.2.0"}
+                    ),
+                )
+            }
+        )
+    elif mismatch == "policy-hash":
+        different_policy = schema("different.policy")
+        summary = summary.model_copy(
+            update={
+                "policies": (
+                    PolicyContract(
+                        policy_version="0.1.0",
+                        policy_schema=different_policy,
+                        policy_schema_hash=sha256_json(different_policy),
+                    ),
+                )
+            }
+        )
+    elif mismatch == "report-version":
+        summary = summary.model_copy(
+            update={"report_schema_version": "different-report/0.1.0"}
+        )
+    else:
+        different_report = schema("different.report")
+        summary = summary.model_copy(
+            update={
+                "report_schema": different_report,
+                "report_schema_hash": sha256_json(different_report),
+            }
+        )
+    catalog = registry()
+    catalog.register_capability(
+        FakeCapability(capability_descriptor(validators=(summary,)))
+    )
+    catalog.register_validator(FakeValidator(descriptor))
+
+    with pytest.raises(RegistryError) as captured:
+        catalog.seal(frozenset({_ROOT_KEY}))
+
+    assert captured.value.code == "INTEGRITY_FAILURE"
+
+
+@pytest.mark.parametrize("duplicate", ["summary", "policy"])
+def test_duplicate_advertised_validator_mapping_is_a_conflict(
+    duplicate: str,
+) -> None:
+    descriptor = validator_descriptor()
+    summary = advertised_validator(descriptor)
+    if duplicate == "summary":
+        summaries = (summary, summary)
+    else:
+        summary = summary.model_copy(
+            update={"policies": (summary.policies[0], summary.policies[0])}
+        )
+        summaries = (summary,)
+    catalog = registry()
+    catalog.register_capability(
+        FakeCapability(capability_descriptor(validators=summaries))
+    )
+    catalog.register_validator(FakeValidator(descriptor))
+
+    with pytest.raises(RegistryError) as captured:
+        catalog.seal(frozenset({_ROOT_KEY}))
+
+    assert_registry_error(
+        captured, "CONFLICT", "conflict_type", "duplicate_registration"
+    )
+
+
+def test_overlapping_registered_ranges_are_an_ambiguous_conflict() -> None:
+    descriptor = validator_descriptor().model_copy(
+        update={
+            "supported_capabilities": (
+                SupportedCapabilityRange(
+                    capability_id="numerical.root_finding",
+                    minimum_contract_version="0.1.0",
+                    maximum_contract_version="0.1.0",
+                ),
+                SupportedCapabilityRange(
+                    capability_id="numerical.root_finding",
+                    minimum_contract_version="0.1.0",
+                    maximum_contract_version="0.2.0",
+                ),
+            )
+        }
+    )
+    catalog = registry()
+    catalog.register_capability(
+        FakeCapability(
+            capability_descriptor(validators=(advertised_validator(descriptor),))
+        )
+    )
+    catalog.register_validator(FakeValidator(descriptor))
+
+    with pytest.raises(RegistryError) as captured:
+        catalog.seal(frozenset({_ROOT_KEY}))
+
+    assert_registry_error(
+        captured, "CONFLICT", "conflict_type", "duplicate_registration"
+    )

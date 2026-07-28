@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import NoReturn
 
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
@@ -201,13 +202,37 @@ def _validator_summary_projection(summary: ValidatorSummary) -> JsonObject:
     }
 
 
+@dataclass(frozen=True)
+class _CapabilityRegistration:
+    implementation: BuiltInCapability
+    descriptor: CapabilityDescriptor
+
+
+@dataclass(frozen=True)
+class _ValidatorRegistration:
+    implementation: CapabilityValidator
+    descriptor: ValidatorDescriptor
+
+
+def _snapshot_capability_descriptor(
+    descriptor: CapabilityDescriptor,
+) -> CapabilityDescriptor:
+    return descriptor.model_copy(deep=True)
+
+
+def _snapshot_validator_descriptor(
+    descriptor: ValidatorDescriptor,
+) -> ValidatorDescriptor:
+    return descriptor.model_copy(deep=True)
+
+
 class CapabilityRegistry:
     """Two-dictionary registry that becomes read-only after one validated seal."""
 
     def __init__(self, versions: VersionSet) -> None:
         self._versions = versions
-        self._capabilities: dict[CapabilityKey, BuiltInCapability] = {}
-        self._validators: dict[ValidatorKey, CapabilityValidator] = {}
+        self._capabilities: dict[CapabilityKey, _CapabilityRegistration] = {}
+        self._validators: dict[ValidatorKey, _ValidatorRegistration] = {}
         self._sealed = False
 
     @property
@@ -224,22 +249,22 @@ class CapabilityRegistry:
         identity = (implementation_id, implementation_version)
         capability_identities = (
             (
-                item.descriptor.implementation_id,
-                item.descriptor.implementation_version,
+                registration.descriptor.implementation_id,
+                registration.descriptor.implementation_version,
             )
-            for item in self._capabilities.values()
+            for registration in self._capabilities.values()
         )
         validator_identities = (
             (
-                item.descriptor.implementation_id,
-                item.descriptor.implementation_version,
+                registration.descriptor.implementation_id,
+                registration.descriptor.implementation_version,
             )
-            for item in self._validators.values()
+            for registration in self._validators.values()
         )
         return identity in capability_identities or identity in validator_identities
 
     def register_capability(self, capability: BuiltInCapability) -> None:
-        descriptor = capability.descriptor
+        descriptor = _snapshot_capability_descriptor(capability.descriptor)
         key = (descriptor.capability_id, descriptor.contract_version)
         self._require_open("/".join(key))
         if descriptor.capability_api_version != self._versions.capability_api_version:
@@ -252,17 +277,17 @@ class CapabilityRegistry:
             descriptor.implementation_id, descriptor.implementation_version
         ):
             _duplicate("/".join(key))
-        self._capabilities[key] = capability
+        self._capabilities[key] = _CapabilityRegistration(capability, descriptor)
 
     def register_validator(self, validator: CapabilityValidator) -> None:
-        descriptor = validator.descriptor
+        descriptor = _snapshot_validator_descriptor(validator.descriptor)
         key = (descriptor.validator_id, descriptor.policy_version)
         self._require_open("/".join(key))
         if key in self._validators or self._implementation_identity_exists(
             descriptor.implementation_id, descriptor.implementation_version
         ):
             _duplicate("/".join(key))
-        self._validators[key] = validator
+        self._validators[key] = _ValidatorRegistration(validator, descriptor)
 
     def _fingerprint_projection(self) -> JsonObject:
         capabilities: list[JsonObject] = []
@@ -323,8 +348,8 @@ class CapabilityRegistry:
         )
 
     def _validate_validator_ranges(self) -> None:
-        for validator in self._validators.values():
-            descriptor = validator.descriptor
+        for registration in self._validators.values():
+            descriptor = registration.descriptor
             for supported in descriptor.supported_capabilities:
                 versions = sorted(
                     contract_version
@@ -341,6 +366,116 @@ class CapabilityRegistry:
                             f"..{supported.maximum_contract_version}",
                         ),
                     )
+
+    def _supporting_ranges(
+        self,
+        descriptor: ValidatorDescriptor,
+        capability_key: CapabilityKey,
+    ) -> tuple[SupportedCapabilityRange, ...]:
+        capability_id, contract_version = capability_key
+        return tuple(
+            item
+            for item in descriptor.supported_capabilities
+            if item.capability_id == capability_id
+            and item.includes(contract_version)
+        )
+
+    def _reconcile_capability_validators(self) -> None:
+        for capability_key, capability_registration in self._capabilities.items():
+            summaries = capability_registration.descriptor.validators
+            advertised_ids = [summary.validator_id for summary in summaries]
+            if len(set(advertised_ids)) != len(advertised_ids):
+                _duplicate(
+                    f"{'/'.join(capability_key)}/advertised-validator-summary"
+                )
+            advertised_by_id = {
+                summary.validator_id: summary for summary in summaries
+            }
+            for summary in summaries:
+                policy_versions = [
+                    policy.policy_version for policy in summary.policies
+                ]
+                if len(set(policy_versions)) != len(policy_versions):
+                    _duplicate(
+                        f"{'/'.join(capability_key)}/{summary.validator_id}"
+                        "/advertised-policy"
+                    )
+
+            registered_by_id: dict[str, dict[str, ValidatorDescriptor]] = {}
+            for registration in self._validators.values():
+                descriptor = registration.descriptor
+                matching_ranges = self._supporting_ranges(
+                    descriptor, capability_key
+                )
+                if len(matching_ranges) > 1:
+                    _duplicate(
+                        f"{'/'.join(capability_key)}/{descriptor.validator_id}"
+                        f"/{descriptor.policy_version}/supported-range"
+                    )
+                if not matching_ranges:
+                    continue
+                policies = registered_by_id.setdefault(
+                    descriptor.validator_id, {}
+                )
+                if descriptor.policy_version in policies:
+                    _duplicate(
+                        f"{'/'.join(capability_key)}/{descriptor.validator_id}"
+                        f"/{descriptor.policy_version}"
+                    )
+                policies[descriptor.policy_version] = descriptor
+
+            advertised_id_set = set(advertised_by_id)
+            registered_id_set = set(registered_by_id)
+            missing_ids = sorted(advertised_id_set - registered_id_set)
+            orphan_ids = sorted(registered_id_set - advertised_id_set)
+            if missing_ids:
+                _integrity(
+                    "registry_validator_mapping",
+                    "advertised validators are not registered for "
+                    f"{'/'.join(capability_key)}: {missing_ids}",
+                )
+            if orphan_ids:
+                _integrity(
+                    "registry_validator_mapping",
+                    "registered validators are not advertised for "
+                    f"{'/'.join(capability_key)}: {orphan_ids}",
+                )
+
+            for validator_id in sorted(advertised_id_set):
+                summary = advertised_by_id[validator_id]
+                registered_policies = registered_by_id[validator_id]
+                advertised_policies = {
+                    policy.policy_version: policy for policy in summary.policies
+                }
+                if set(advertised_policies) != set(registered_policies):
+                    _integrity(
+                        "registry_validator_mapping",
+                        "advertised and registered policy versions differ for "
+                        f"{'/'.join(capability_key)}/{validator_id}",
+                    )
+                for policy_version, policy in advertised_policies.items():
+                    descriptor = registered_policies[policy_version]
+                    if (
+                        policy.policy_schema_hash
+                        != descriptor.policy_schema.schema_hash
+                    ):
+                        _integrity(
+                            "registry_validator_mapping",
+                            "advertised and registered policy Schema hashes "
+                            f"differ for {'/'.join(capability_key)}/"
+                            f"{validator_id}/{policy_version}",
+                        )
+                    if (
+                        summary.report_schema_version
+                        != descriptor.report_schema.schema_version
+                        or summary.report_schema_hash
+                        != descriptor.report_schema.schema_hash
+                    ):
+                        _integrity(
+                            "registry_validator_mapping",
+                            "advertised and registered report contracts differ "
+                            f"for {'/'.join(capability_key)}/{validator_id}",
+                        )
 
     def seal(
         self, required_capabilities: frozenset[CapabilityKey]
@@ -371,11 +506,16 @@ class CapabilityRegistry:
                 "packaged registry descriptor Schemas are unavailable",
                 details={"subject": "registry_descriptor"},
             ) from error
-        for capability in self._capabilities.values():
-            _validate_descriptor(capability.descriptor, capability_schema)
-        for validator in self._validators.values():
-            _validate_descriptor(validator.descriptor, validator_schema)
+        for capability_registration in self._capabilities.values():
+            _validate_descriptor(
+                capability_registration.descriptor, capability_schema
+            )
+        for validator_registration in self._validators.values():
+            _validate_descriptor(
+                validator_registration.descriptor, validator_schema
+            )
         self._validate_validator_ranges()
+        self._reconcile_capability_validators()
         self._sealed = True
         return self._summary()
 
@@ -430,7 +570,7 @@ class CapabilityRegistry:
         self._require_sealed()
         key = (capability_id, contract_version)
         try:
-            return self._capabilities[key]
+            return self._capabilities[key].implementation
         except KeyError as error:
             raise RegistryError(
                 "NOT_FOUND",
@@ -451,7 +591,7 @@ class CapabilityRegistry:
         self.resolve(capability_id, contract_version)
         key = (validator_id, policy_version)
         try:
-            validator = self._validators[key]
+            registration = self._validators[key]
         except KeyError as error:
             raise RegistryError(
                 "NOT_FOUND",
@@ -463,18 +603,18 @@ class CapabilityRegistry:
             ) from error
         if not any(
             item.capability_id == capability_id and item.includes(contract_version)
-            for item in validator.descriptor.supported_capabilities
+            for item in registration.descriptor.supported_capabilities
         ):
             _unsupported(
                 f"validator_contract_range:{validator_id}",
                 contract_version,
                 (
                     f"{item.minimum_contract_version}..{item.maximum_contract_version}"
-                    for item in validator.descriptor.supported_capabilities
+                    for item in registration.descriptor.supported_capabilities
                     if item.capability_id == capability_id
                 ),
             )
-        return validator
+        return registration.implementation
 
 
 __all__ = ["CapabilityRegistry", "RegistryError"]

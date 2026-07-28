@@ -180,3 +180,101 @@ Exit code: `0`; `All checks passed!`
 A6 and later tasks own expression/canonical-input behavior, concrete
 root-finding and validator implementations, composition, application
 orchestration, MCP exposure, and future Artifact support.
+
+## Independent review fix round 1 — descriptor snapshots and validator mapping
+
+Baseline commit:
+
+```text
+0b5ca4c6d9801a9f5f459c2a4403fabc662fb265
+```
+
+Independent review found two seal-integrity defects:
+
+1. the registry stored live structural implementations and reread their
+   descriptor properties, so a provider could replace metadata after
+   registration or sealing;
+2. capability-advertised validator summaries were individually validated but
+   not reconciled 1:1 with independently registered validator descriptors.
+
+### RED
+
+Real mutable structural providers and mapping fixtures were added before the
+production fix. The exact focused command:
+
+```powershell
+uv run --locked --no-sync pytest tests/unit/test_registry.py tests/contract/test_capability_schemas_v0.py -q
+```
+
+Exited `1` with `10 failed, 23 passed in 5.87s`. The failures were:
+
+- one live descriptor replacement changed seal-time validator metadata;
+- advertised-but-missing and registered-but-unadvertised validators sealed;
+- policy version/hash and report version/hash mismatches sealed;
+- duplicate advertised summaries and policies sealed;
+- overlapping ranges produced an ambiguous mapping that sealed.
+
+### Minimal fix
+
+The approved two registry dictionaries remain the only registration storage.
+Each value now captures a frozen pair: the original implementation object and
+a deep immutable descriptor snapshot taken from the single property read at
+registration. Keys, API and implementation uniqueness, Schema validation,
+range checks, summaries, fingerprinting, and validator support checks use
+only these snapshots. Exact resolve methods return the original
+implementations.
+
+Seal now reconciles validators independently for every exact registered
+capability:
+
+- each registered validator range must cover a real registered capability;
+- each capability's advertised validator IDs and policy versions are unique;
+- every advertised policy version/hash has exactly one registered match;
+- report Schema version/hash matches every registered policy implementation;
+- a registered supporting validator must be advertised, and every advertised
+  validator must be registered;
+- overlapping ranges for the same exact mapping fail as
+  `CONFLICT/duplicate_registration`;
+- missing, orphaned, and mismatched mappings fail as `INTEGRITY_FAILURE`.
+
+The mutable-provider regression replaces capability and validator descriptors
+both before and after seal and proves fingerprint, capability summaries,
+exact capability resolution, and validator selection remain captured and
+stable.
+
+### Fix-round verification
+
+Focused:
+
+```powershell
+uv run --locked --no-sync pytest tests/unit/test_registry.py tests/contract/test_capability_schemas_v0.py -q
+```
+
+Exit code: `0`; `33 passed in 5.40s`.
+
+Types:
+
+```powershell
+uv run --locked --no-sync mypy src/modeling_core src/modeling_capabilities
+```
+
+Exit code: `0`; `Success: no issues found in 22 source files`.
+
+Lint:
+
+```powershell
+uv run --locked --no-sync ruff check src/modeling_core src/modeling_capabilities tests/unit/test_registry.py tests/contract/test_capability_schemas_v0.py
+```
+
+Exit code: `0`; `All checks passed!`
+
+Regression:
+
+```powershell
+uv run --locked --no-sync pytest tests/unit/contracts tests/unit/domain tests/unit/test_registry.py tests/contract/test_capability_schemas_v0.py tests/architecture/test_dependency_boundaries.py -q
+```
+
+Exit code: `0`; `166 passed in 6.48s`.
+
+No dependency declaration, `pyproject.toml`, packaged Schema, `uv.lock`, or
+A6+ file changed in this fix round.
