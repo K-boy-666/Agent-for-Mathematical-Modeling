@@ -10,8 +10,15 @@ from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from pydantic import ValidationError
 
 from modeling_capabilities.root_finding.contracts import (
+    EvaluationBudget,
     InputValidationError,
     normalize_root_finding_input,
+)
+from modeling_capabilities.root_finding.expression.solver_evaluator import (
+    SolverEvaluator,
+)
+from modeling_capabilities.root_finding.expression.syntax import (
+    ast_from_canonical_json,
 )
 from modeling_core.contracts.canonical_json import canonical_json_bytes, sha256_json
 from modeling_core.contracts.common import JsonObject
@@ -42,6 +49,16 @@ def _load_schema(name: str) -> JsonObject:
         "schemas", "0.1.0", name
     )
     return cast(JsonObject, json.loads(asset.read_text(encoding="utf-8")))
+
+
+class _Clock:
+    def monotonic(self) -> float:
+        return 0.0
+
+
+class _NeverCancelled:
+    def is_cancelled(self) -> bool:
+        return False
 
 
 def test_expression_whitespace_produces_identical_ast_bytes_and_hashes() -> None:
@@ -100,6 +117,27 @@ def test_canonical_root_has_exactly_eight_fields_and_no_raw_expression() -> None
     assert set(record.canonical_payload) == _CANONICAL_FIELDS
     assert "expression" not in record.canonical_payload
     assert b'" x "' not in canonical_json_bytes(record.model_dump(mode="json"))
+
+
+def test_normalized_record_reconstructs_and_evaluates_without_raw_text() -> None:
+    record = normalize_root_finding_input(_raw_payload("x*x-2"))
+    assert "expression" not in record.canonical_payload
+    expression_ast = cast(
+        JsonObject, record.canonical_payload["expression_ast"]
+    )
+
+    reconstructed = ast_from_canonical_json(expression_ast)
+    value = SolverEvaluator().evaluate(
+        reconstructed,
+        2.0,
+        EvaluationBudget(
+            deadline=10.0,
+            clock=_Clock(),
+            cancellation=_NeverCancelled(),
+        ),
+    )
+
+    assert value == 2.0
 
 
 def test_negative_zero_is_numeric_zero_everywhere() -> None:

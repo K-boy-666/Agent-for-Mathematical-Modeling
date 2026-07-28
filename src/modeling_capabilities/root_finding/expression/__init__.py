@@ -11,6 +11,7 @@ from modeling_capabilities.root_finding.expression.syntax import (
     NumberNode,
     UnaryNode,
     VariableNode,
+    ast_from_canonical_json,
     ast_to_canonical_json,
     parse_expression,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "NumberNode",
     "UnaryNode",
     "VariableNode",
+    "ast_from_canonical_json",
     "ast_to_canonical_json",
     "parse_expression",
 ]

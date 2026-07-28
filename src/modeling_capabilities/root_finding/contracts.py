@@ -25,6 +25,7 @@ CANONICAL_INPUT_SCHEMA_VERSION = (
 )
 MAX_FUNCTION_EVALUATIONS = 20_000
 MAX_AST_NODES_PER_EVALUATION = 256
+MAX_AST_DEPTH_PER_EVALUATION = 32
 
 
 class InputValidationError(ValueError):
@@ -98,7 +99,7 @@ class EvaluationBudget:
         self._evaluations_used += 1
         self._nodes_visited = 0
 
-    def check_node(self) -> None:
+    def check_node(self, depth: int) -> None:
         if self.cancellation.is_cancelled():
             raise EvaluationCancelled("evaluation cancelled")
         if self.clock.monotonic() >= self.deadline:
@@ -107,6 +108,10 @@ class EvaluationBudget:
         if self._nodes_visited > MAX_AST_NODES_PER_EVALUATION:
             raise EvaluationBudgetExceeded(
                 "ast_nodes", MAX_AST_NODES_PER_EVALUATION
+            )
+        if depth > MAX_AST_DEPTH_PER_EVALUATION:
+            raise EvaluationBudgetExceeded(
+                "ast_depth", MAX_AST_DEPTH_PER_EVALUATION
             )
 
 

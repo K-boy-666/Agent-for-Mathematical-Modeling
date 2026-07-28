@@ -14,6 +14,7 @@ from modeling_core.contracts.canonical_json import (
     sha256_json,
     strict_json_loads,
 )
+from modeling_core.contracts.capability import CanonicalInputRecord
 from modeling_core.contracts.common import (
     EntityId,
     Hash,
@@ -374,3 +375,86 @@ def test_recursive_expression_ast_models_are_fully_resolved() -> None:
         }
     )
     assert value.operand.kind == "binary"
+
+
+def test_canonical_input_record_deeply_seals_payload_and_data_references() -> None:
+    digest = "sha256:" + "a" * 64
+    payload: dict[str, object] = {
+        "canonical_input_schema_version": (
+            "numerical.root_finding.canonical-input/0.1.0"
+        ),
+        "expression_ast": {"kind": "variable", "name": "x"},
+        "lower": -1.0,
+        "upper": 1.0,
+        "absolute_tolerance": 1e-10,
+        "relative_tolerance": 1e-10,
+        "function_tolerance": 1e-10,
+        "max_iterations": 100,
+    }
+    data_reference: dict[str, object] = {
+        "snapshot_id": "123e4567-e89b-42d3-a456-426614174000",
+        "sha256": digest,
+    }
+    expected_payload_bytes = canonical_json_bytes(payload)  # type: ignore[arg-type]
+    expected_reference_bytes = canonical_json_bytes(  # type: ignore[arg-type]
+        data_reference
+    )
+    expected_payload_hash = sha256_json(payload)  # type: ignore[arg-type]
+    expected_data_hash = sha256_json([data_reference])  # type: ignore[list-item]
+
+    record = CanonicalInputRecord(
+        canonical_input_schema_version=(
+            "numerical.root_finding.canonical-input/0.1.0"
+        ),
+        canonical_payload=payload,  # type: ignore[arg-type]
+        canonical_payload_hash=expected_payload_hash,
+        model_snapshot_hash=digest,
+        data_snapshot_references=(data_reference,),  # type: ignore[arg-type]
+        data_snapshot_set_hash=expected_data_hash,
+    )
+
+    payload["lower"] = -999.0
+    original_ast = payload["expression_ast"]
+    assert isinstance(original_ast, dict)
+    original_ast["name"] = "changed"
+    data_reference["sha256"] = "sha256:" + "b" * 64
+
+    exposed_payload = record.canonical_payload
+    exposed_payload["upper"] = 999.0
+    exposed_ast = exposed_payload["expression_ast"]
+    assert isinstance(exposed_ast, dict)
+    exposed_ast["name"] = "changed-again"
+    exposed_reference = record.data_snapshot_references[0]
+    exposed_reference["sha256"] = "sha256:" + "c" * 64
+
+    assert canonical_json_bytes(record.canonical_payload) == expected_payload_bytes
+    assert (
+        canonical_json_bytes(record.data_snapshot_references[0])
+        == expected_reference_bytes
+    )
+    assert record.canonical_payload_hash == expected_payload_hash
+    assert record.data_snapshot_set_hash == expected_data_hash
+    assert record.canonical_payload is not record.canonical_payload
+    assert (
+        record.data_snapshot_references[0]
+        is not record.data_snapshot_references[0]
+    )
+
+    dumped = record.model_dump(mode="json")
+    assert set(dumped) == {
+        "canonical_input_schema_version",
+        "canonical_payload",
+        "canonical_payload_hash",
+        "model_snapshot_hash",
+        "data_snapshot_references",
+        "data_snapshot_set_hash",
+    }
+    assert dumped["canonical_payload"] == strict_json_loads(
+        expected_payload_bytes
+    )
+    assert dumped["data_snapshot_references"] == [
+        strict_json_loads(expected_reference_bytes)
+    ]
+    assert CanonicalInputRecord.model_validate(dumped).model_dump(
+        mode="json"
+    ) == dumped

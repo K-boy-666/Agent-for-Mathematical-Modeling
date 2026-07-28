@@ -12,6 +12,7 @@ from pydantic import (
     ConfigDict,
     Field,
     TypeAdapter,
+    ValidationError,
     field_serializer,
     field_validator,
     model_validator,
@@ -29,6 +30,7 @@ from modeling_core.contracts.common import (
 )
 from modeling_core.contracts.tools import (
     CapabilityLimits,
+    CanonicalRootFindingInput,
     ResultPayload,
     ValidationReportPayload,
     ValidatorSummary,
@@ -302,12 +304,104 @@ class ValidatorDescriptor(StrictModel):
 class CanonicalInputRecord(StrictModel):
     """Frozen canonical input snapshot handed to a Built-in Capability."""
 
+    model_config = ConfigDict(
+        strict=True,
+        extra="forbid",
+        frozen=True,
+        allow_inf_nan=False,
+        serialize_by_alias=True,
+    )
+
     canonical_input_schema_version: str
-    canonical_payload: JsonObject
+    canonical_payload_bytes: bytes = Field(
+        alias="canonical_payload", repr=False
+    )
     canonical_payload_hash: Hash
     model_snapshot_hash: Hash
-    data_snapshot_references: tuple[JsonObject, ...] = ()
+    data_snapshot_reference_bytes: tuple[bytes, ...] = Field(
+        default=(), alias="data_snapshot_references", repr=False
+    )
     data_snapshot_set_hash: Hash
+
+    def __init__(
+        self,
+        *,
+        canonical_input_schema_version: str,
+        canonical_payload: JsonObject,
+        canonical_payload_hash: str,
+        model_snapshot_hash: str,
+        data_snapshot_references: tuple[JsonObject, ...] = (),
+        data_snapshot_set_hash: str,
+    ) -> None:
+        BaseModel.__init__(
+            self,
+            canonical_input_schema_version=canonical_input_schema_version,
+            canonical_payload=canonical_payload,
+            canonical_payload_hash=canonical_payload_hash,
+            model_snapshot_hash=model_snapshot_hash,
+            data_snapshot_references=data_snapshot_references,
+            data_snapshot_set_hash=data_snapshot_set_hash,
+        )
+
+    @property
+    def canonical_payload(self) -> JsonObject:
+        return self._decode_canonical_payload(self.canonical_payload_bytes)
+
+    def _decode_canonical_payload(self, value: bytes) -> JsonObject:
+        decoded = cast(JsonObject, strict_json_loads(value))
+        if self.canonical_input_schema_version != (
+            "numerical.root_finding.canonical-input/0.1.0"
+        ):
+            return decoded
+        try:
+            typed = CanonicalRootFindingInput.model_validate(decoded)
+        except ValidationError:
+            return decoded
+        return cast(JsonObject, typed.model_dump(mode="json"))
+
+    @property
+    def data_snapshot_references(
+        self,
+    ) -> tuple[JsonObject, ...]:
+        return tuple(
+            cast(JsonObject, strict_json_loads(item))
+            for item in self.data_snapshot_reference_bytes
+        )
+
+    @field_validator("canonical_payload_bytes", mode="before")
+    @classmethod
+    def store_immutable_canonical_payload(cls, value: object) -> bytes:
+        if not isinstance(value, dict):
+            raise ValueError("canonical_payload must be a JSON object")
+        return canonical_json_bytes(cast(JsonObject, value))
+
+    @field_serializer("canonical_payload_bytes")
+    def serialize_canonical_payload(self, value: bytes) -> JsonObject:
+        return self._decode_canonical_payload(value)
+
+    @field_validator("data_snapshot_reference_bytes", mode="before")
+    @classmethod
+    def store_immutable_data_snapshot_references(
+        cls, value: object
+    ) -> tuple[bytes, ...]:
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("data_snapshot_references must be an array")
+        result: list[bytes] = []
+        for item in value:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "data snapshot reference must be a JSON object"
+                )
+            result.append(canonical_json_bytes(cast(JsonObject, item)))
+        return tuple(result)
+
+    @field_serializer("data_snapshot_reference_bytes")
+    def serialize_data_snapshot_references(
+        self, value: tuple[bytes, ...]
+    ) -> list[JsonObject]:
+        return [
+            cast(JsonObject, strict_json_loads(item)) for item in value
+        ]
 
 
 class ExecutionOutcome(StrictModel):

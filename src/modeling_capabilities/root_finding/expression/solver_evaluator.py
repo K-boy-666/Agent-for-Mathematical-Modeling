@@ -100,9 +100,12 @@ def _apply_call(name: str, argument: float) -> float:
 
 
 def _evaluate_node(
-    ast: ExpressionAst, x: float, budget: EvaluationBudget
+    ast: ExpressionAst,
+    x: float,
+    budget: EvaluationBudget,
+    depth: int,
 ) -> float:
-    budget.check_node()
+    budget.check_node(depth)
     if isinstance(ast, NumberNode):
         return ast.value
     if isinstance(ast, VariableNode):
@@ -110,7 +113,9 @@ def _evaluate_node(
     if isinstance(ast, ConstantNode):
         return _PI if ast.name == "pi" else _E
     if isinstance(ast, UnaryNode):
-        return _apply_unary(ast.op, _evaluate_node(ast.operand, x, budget))
+        return _apply_unary(
+            ast.op, _evaluate_node(ast.operand, x, budget, depth + 1)
+        )
     if isinstance(ast, BinaryNode):
         if ast.op == "power" and (
             not isinstance(ast.right, NumberNode)
@@ -119,12 +124,13 @@ def _evaluate_node(
             raise EvaluationDomainError(
                 "solver evaluator rejected an unsafe exponent"
             )
-        left = _evaluate_node(ast.left, x, budget)
-        right = _evaluate_node(ast.right, x, budget)
+        left = _evaluate_node(ast.left, x, budget, depth + 1)
+        right = _evaluate_node(ast.right, x, budget, depth + 1)
         return _apply_binary(ast.op, left, right)
     if isinstance(ast, CallNode):
         return _apply_call(
-            ast.name, _evaluate_node(ast.argument, x, budget)
+            ast.name,
+            _evaluate_node(ast.argument, x, budget, depth + 1),
         )
     raise EvaluationDomainError(
         "solver evaluator received an unknown AST node"
@@ -146,7 +152,7 @@ class SolverEvaluator:
             raise EvaluationNonFiniteError(
                 "solver x must be finite binary64"
             )
-        return _evaluate_node(ast, float(x), budget)
+        return _evaluate_node(ast, float(x), budget, 1)
 
 
 __all__ = ["SolverEvaluator"]

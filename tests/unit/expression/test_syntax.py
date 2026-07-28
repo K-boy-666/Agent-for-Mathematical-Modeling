@@ -30,6 +30,7 @@ from modeling_capabilities.root_finding.expression.syntax import (
     NumberNode,
     UnaryNode,
     VariableNode,
+    ast_from_canonical_json,
     ast_to_canonical_json,
     parse_expression,
 )
@@ -367,6 +368,151 @@ def test_parser_returns_immutable_ast_nodes() -> None:
         setattr(ast, "name", "y")
 
 
+@pytest.mark.parametrize(
+    "source",
+    ["2.5", "x", "pi", "-x", "x + 2", "sin(x)"],
+)
+def test_canonical_ast_decoder_round_trips_all_six_node_kinds(
+    source: str,
+) -> None:
+    canonical = ast_to_canonical_json(
+        parse_expression(source, ExpressionLimits())
+    )
+
+    assert ast_to_canonical_json(
+        ast_from_canonical_json(canonical)
+    ) == canonical
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        True,
+        [],
+        {},
+        {"kind": "unknown"},
+        {"kind": "number"},
+        {"kind": "number", "value": True},
+        {"kind": "number", "value": float("nan")},
+        {"kind": "number", "value": float("inf")},
+        {"kind": "number", "value": 9_007_199_254_740_993},
+        {"kind": "number", "value": 10**400},
+        {"kind": "number", "value": 1.0, "extra": False},
+        {"kind": "variable", "name": "y"},
+        {"kind": "constant", "name": "tau"},
+        {
+            "kind": "unary",
+            "op": "invert",
+            "operand": {"kind": "variable", "name": "x"},
+        },
+        {
+            "kind": "binary",
+            "op": "modulo",
+            "left": {"kind": "variable", "name": "x"},
+            "right": {"kind": "number", "value": 2.0},
+        },
+        {
+            "kind": "call",
+            "name": "asin",
+            "argument": {"kind": "variable", "name": "x"},
+        },
+    ],
+)
+def test_canonical_ast_decoder_rejects_forged_shapes_and_values(
+    value: object,
+) -> None:
+    with pytest.raises(ExpressionSyntaxError):
+        ast_from_canonical_json(value)  # type: ignore[arg-type]
+
+
+def test_canonical_ast_decoder_normalizes_numbers_to_binary64_and_zero() -> None:
+    integer = ast_from_canonical_json({"kind": "number", "value": 2})
+    negative_zero = ast_from_canonical_json(
+        {"kind": "number", "value": -0.0}
+    )
+
+    assert ast_to_canonical_json(integer) == {
+        "kind": "number",
+        "value": 2.0,
+    }
+    assert ast_to_canonical_json(negative_zero) == {
+        "kind": "number",
+        "value": 0.0,
+    }
+    assert math.copysign(
+        1.0, ast_to_canonical_json(negative_zero)["value"]
+    ) == 1.0
+
+
+def _balanced_ast_json(leaf_count: int) -> dict[str, object]:
+    if leaf_count == 1:
+        return {"kind": "variable", "name": "x"}
+    left_count = leaf_count // 2
+    return {
+        "kind": "binary",
+        "op": "add",
+        "left": _balanced_ast_json(left_count),
+        "right": _balanced_ast_json(leaf_count - left_count),
+    }
+
+
+def test_canonical_ast_decoder_enforces_exact_node_and_depth_limits() -> None:
+    exact_256 = {
+        "kind": "unary",
+        "op": "positive",
+        "operand": _balanced_ast_json(128),
+    }
+    ast_from_canonical_json(exact_256)
+
+    with pytest.raises(ExpressionLimitError, match="ast_nodes"):
+        ast_from_canonical_json(_balanced_ast_json(129))
+
+    depth_32: dict[str, object] = {"kind": "variable", "name": "x"}
+    for _ in range(31):
+        depth_32 = {
+            "kind": "unary",
+            "op": "positive",
+            "operand": depth_32,
+        }
+    ast_from_canonical_json(depth_32)
+
+    depth_33 = {
+        "kind": "unary",
+        "op": "positive",
+        "operand": depth_32,
+    }
+    with pytest.raises(ExpressionLimitError, match="ast_depth"):
+        ast_from_canonical_json(depth_33)
+
+
+@pytest.mark.parametrize(
+    "right",
+    [
+        {
+            "kind": "binary",
+            "op": "power",
+            "left": {"kind": "number", "value": 2.0},
+            "right": {"kind": "number", "value": 3.0},
+        },
+        {"kind": "number", "value": -1025.0},
+        {"kind": "number", "value": 1025.0},
+    ],
+)
+def test_canonical_ast_decoder_rejects_nested_or_out_of_range_power(
+    right: dict[str, object],
+) -> None:
+    with pytest.raises(ExpressionSyntaxError):
+        ast_from_canonical_json(
+            {
+                "kind": "binary",
+                "op": "power",
+                "left": {"kind": "variable", "name": "x"},
+                "right": right,
+            }
+        )
+
+
 @pytest.mark.parametrize("evaluator_type", [SolverEvaluator, ValidatorEvaluator])
 def test_evaluators_traverse_the_shared_ast_in_operand_order(
     evaluator_type: type[SolverEvaluator] | type[ValidatorEvaluator],
@@ -430,14 +576,39 @@ def test_evaluators_reject_nonfinite_variable_values(
 def test_evaluators_enforce_node_limit_on_ast_that_bypasses_parser(
     evaluator_type: type[SolverEvaluator] | type[ValidatorEvaluator],
 ) -> None:
-    ast: ExpressionAst = VariableNode()
-    for _ in range(255):
-        ast = UnaryNode(op="positive", operand=ast)
-    assert evaluator_type().evaluate(ast, 1.0, _budget()) == 1.0
+    ast = _balanced_ast(128)
+    exact_256 = UnaryNode(op="positive", operand=ast)
+    assert evaluator_type().evaluate(exact_256, 1.0, _budget()) == 128.0
 
-    oversized_ast = UnaryNode(op="positive", operand=ast)
+    oversized_ast = UnaryNode(op="positive", operand=exact_256)
     with pytest.raises(EvaluationBudgetExceeded):
         evaluator_type().evaluate(oversized_ast, 1.0, _budget())
+
+
+def _balanced_ast(leaf_count: int) -> ExpressionAst:
+    if leaf_count == 1:
+        return VariableNode()
+    left_count = leaf_count // 2
+    return BinaryNode(
+        op="add",
+        left=_balanced_ast(left_count),
+        right=_balanced_ast(leaf_count - left_count),
+    )
+
+
+@pytest.mark.parametrize("evaluator_type", [SolverEvaluator, ValidatorEvaluator])
+def test_evaluators_enforce_depth_limit_on_ast_that_bypasses_parser(
+    evaluator_type: type[SolverEvaluator] | type[ValidatorEvaluator],
+) -> None:
+    depth_32: ExpressionAst = VariableNode()
+    for _ in range(31):
+        depth_32 = UnaryNode(op="positive", operand=depth_32)
+    assert evaluator_type().evaluate(depth_32, 1.0, _budget()) == 1.0
+
+    depth_33 = UnaryNode(op="positive", operand=depth_32)
+    with pytest.raises(EvaluationBudgetExceeded) as error:
+        evaluator_type().evaluate(depth_33, 1.0, _budget())
+    assert error.value.resource == "ast_depth"
 
 
 @pytest.mark.parametrize("evaluator_type", [SolverEvaluator, ValidatorEvaluator])

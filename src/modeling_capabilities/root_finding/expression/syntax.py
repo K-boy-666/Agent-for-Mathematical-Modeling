@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import ClassVar, Literal, TypeAlias
+from typing import ClassVar, Literal, TypeAlias, cast
 
 from modeling_core.contracts.common import JsonObject
 
@@ -544,6 +544,163 @@ def ast_to_canonical_json(ast: ExpressionAst) -> JsonObject:
     raise TypeError("unknown expression AST node")
 
 
+def _decoded_node(
+    node: ExpressionAst,
+    nodes: int,
+    depth: int,
+    limits: ExpressionLimits,
+) -> _Parsed:
+    if nodes > limits.max_ast_nodes:
+        raise ExpressionLimitError("ast_nodes", limits.max_ast_nodes, nodes)
+    if depth > limits.max_ast_depth:
+        raise ExpressionLimitError("ast_depth", limits.max_ast_depth, depth)
+    return _Parsed(node=node, nodes=nodes, depth=depth)
+
+
+def _require_node_fields(
+    document: dict[str, object], expected: frozenset[str]
+) -> None:
+    if set(document) != expected:
+        raise ExpressionSyntaxError(
+            "canonical AST node has missing or unknown fields"
+        )
+
+
+def _decode_canonical_node(
+    value: object, limits: ExpressionLimits
+) -> _Parsed:
+    if type(value) is not dict:
+        raise ExpressionSyntaxError("canonical AST node must be an object")
+    document = cast(dict[str, object], value)
+    if any(type(key) is not str for key in document):
+        raise ExpressionSyntaxError("canonical AST keys must be strings")
+    kind = document.get("kind")
+    if type(kind) is not str:
+        raise ExpressionSyntaxError("canonical AST kind must be a string")
+
+    if kind == "number":
+        _require_node_fields(document, frozenset({"kind", "value"}))
+        raw_number = document["value"]
+        if isinstance(raw_number, bool) or type(raw_number) not in {
+            int,
+            float,
+        }:
+            raise ExpressionSyntaxError(
+                "canonical number must be finite binary64"
+            )
+        try:
+            number = float(cast(int | float, raw_number))
+        except (OverflowError, TypeError, ValueError) as error:
+            raise ExpressionSyntaxError(
+                "canonical number must be finite binary64"
+            ) from error
+        if not math.isfinite(number):
+            raise ExpressionSyntaxError(
+                "canonical number must be finite binary64"
+            )
+        if type(raw_number) is int and int(number) != raw_number:
+            raise ExpressionSyntaxError(
+                "canonical integer is not exactly representable as binary64"
+            )
+        return _decoded_node(NumberNode(number), 1, 1, limits)
+
+    if kind == "variable":
+        _require_node_fields(document, frozenset({"kind", "name"}))
+        if document["name"] != "x" or type(document["name"]) is not str:
+            raise ExpressionSyntaxError("unknown canonical variable")
+        return _decoded_node(VariableNode(), 1, 1, limits)
+
+    if kind == "constant":
+        _require_node_fields(document, frozenset({"kind", "name"}))
+        name = document["name"]
+        if type(name) is not str or name not in {"pi", "e"}:
+            raise ExpressionSyntaxError("unknown canonical constant")
+        return _decoded_node(
+            ConstantNode(name=cast(ConstantName, name)), 1, 1, limits
+        )
+
+    if kind == "unary":
+        _require_node_fields(
+            document, frozenset({"kind", "op", "operand"})
+        )
+        op = document["op"]
+        if type(op) is not str or op not in {"positive", "negative"}:
+            raise ExpressionSyntaxError("unknown canonical unary operator")
+        operand = _decode_canonical_node(document["operand"], limits)
+        return _decoded_node(
+            UnaryNode(op=cast(UnaryOperator, op), operand=operand.node),
+            operand.nodes + 1,
+            operand.depth + 1,
+            limits,
+        )
+
+    if kind == "binary":
+        _require_node_fields(
+            document, frozenset({"kind", "op", "left", "right"})
+        )
+        op = document["op"]
+        allowed_binary = {
+            "add",
+            "subtract",
+            "multiply",
+            "divide",
+            "power",
+        }
+        if type(op) is not str or op not in allowed_binary:
+            raise ExpressionSyntaxError("unknown canonical binary operator")
+        left = _decode_canonical_node(document["left"], limits)
+        right = _decode_canonical_node(document["right"], limits)
+        if op == "power" and (
+            not isinstance(right.node, NumberNode)
+            or not -1024.0 <= right.node.value <= 1024.0
+        ):
+            raise ExpressionSyntaxError(
+                "power exponent must be a number from -1024 through 1024"
+            )
+        return _decoded_node(
+            BinaryNode(
+                op=cast(BinaryOperator, op),
+                left=left.node,
+                right=right.node,
+            ),
+            left.nodes + right.nodes + 1,
+            max(left.depth, right.depth) + 1,
+            limits,
+        )
+
+    if kind == "call":
+        _require_node_fields(
+            document, frozenset({"kind", "name", "argument"})
+        )
+        name = document["name"]
+        if type(name) is not str or name not in _FUNCTIONS:
+            raise ExpressionSyntaxError("unknown canonical function")
+        argument = _decode_canonical_node(document["argument"], limits)
+        return _decoded_node(
+            CallNode(
+                name=cast(FunctionName, name), argument=argument.node
+            ),
+            argument.nodes + 1,
+            argument.depth + 1,
+            limits,
+        )
+
+    raise ExpressionSyntaxError("unknown canonical AST kind")
+
+
+def ast_from_canonical_json(
+    value: JsonObject, limits: ExpressionLimits = ExpressionLimits()
+) -> ExpressionAst:
+    """Reconstruct a bounded immutable AST from its strict JSON shape."""
+
+    try:
+        return _decode_canonical_node(value, limits).node
+    except RecursionError as error:
+        raise ExpressionLimitError(
+            "ast_depth", limits.max_ast_depth
+        ) from error
+
+
 __all__ = [
     "BinaryNode",
     "CallNode",
@@ -555,6 +712,7 @@ __all__ = [
     "NumberNode",
     "UnaryNode",
     "VariableNode",
+    "ast_from_canonical_json",
     "ast_to_canonical_json",
     "parse_expression",
 ]
