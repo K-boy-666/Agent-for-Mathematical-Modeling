@@ -169,23 +169,30 @@ class FakeValidator:
 @dataclass
 class MutableCapability:
     current_descriptor: CapabilityDescriptor
+    normalized_sentinel: object | None = None
+    execution_sentinel: object | None = None
 
     @property
     def descriptor(self) -> CapabilityDescriptor:
         return self.current_descriptor
 
     def normalize_and_validate(self, raw_payload: JsonObject) -> CanonicalInputRecord:
-        raise NotImplementedError
+        if self.normalized_sentinel is None:
+            raise NotImplementedError
+        return cast(CanonicalInputRecord, self.normalized_sentinel)
 
     def execute(
         self, canonical_input: CanonicalInputRecord, context: ExecutionContext
     ) -> ExecutionOutcome:
-        raise NotImplementedError
+        if self.execution_sentinel is None:
+            raise NotImplementedError
+        return cast(ExecutionOutcome, self.execution_sentinel)
 
 
 @dataclass
 class MutableValidator:
     current_descriptor: ValidatorDescriptor
+    validation_sentinel: object | None = None
 
     @property
     def descriptor(self) -> ValidatorDescriptor:
@@ -198,7 +205,9 @@ class MutableValidator:
         policy: JsonObject,
         context: ValidationContext,
     ) -> ValidationReport:
-        raise NotImplementedError
+        if self.validation_sentinel is None:
+            raise NotImplementedError
+        return cast(ValidationReport, self.validation_sentinel)
 
 
 def registry() -> CapabilityRegistry:
@@ -239,15 +248,12 @@ def test_capability_and_compatible_validator_register_before_seal() -> None:
 
     assert summary.sealed is True
     assert summary.capability_count == 1
-    assert catalog.resolve(*_ROOT_KEY) is capability
-    assert (
-        catalog.resolve_validator(
-            "numerical.root_finding.residual",
-            *_ROOT_KEY,
-            "0.1.0",
-        )
-        is validator
-    )
+    assert catalog.resolve(*_ROOT_KEY).descriptor == capability.descriptor
+    assert catalog.resolve_validator(
+        "numerical.root_finding.residual",
+        *_ROOT_KEY,
+        "0.1.0",
+    ).descriptor == validator.descriptor
 
 
 @pytest.mark.parametrize(
@@ -672,8 +678,18 @@ def test_registry_snapshots_descriptors_at_registration() -> None:
     original_capability = capability_descriptor(
         validators=(advertised_validator(original_validator),)
     )
-    capability = MutableCapability(original_capability)
-    validator = MutableValidator(original_validator)
+    normalized_sentinel = object()
+    execution_sentinel = object()
+    validation_sentinel = object()
+    capability = MutableCapability(
+        original_capability,
+        normalized_sentinel=normalized_sentinel,
+        execution_sentinel=execution_sentinel,
+    )
+    validator = MutableValidator(
+        original_validator,
+        validation_sentinel=validation_sentinel,
+    )
     catalog = registry()
     catalog.register_capability(capability)
     catalog.register_validator(validator)
@@ -708,14 +724,32 @@ def test_registry_snapshots_descriptors_at_registration() -> None:
         (item.capability_id, item.title)
         for item in catalog.list_summaries(None, None)
     ] == [("numerical.root_finding", "Bisection root finding")]
-    assert catalog.resolve(*_ROOT_KEY) is capability
+    resolved_capability = catalog.resolve(*_ROOT_KEY)
+    resolved_validator = catalog.resolve_validator(
+        original_validator.validator_id,
+        *_ROOT_KEY,
+        original_validator.policy_version,
+    )
+    canonical_input = cast(CanonicalInputRecord, object())
+    execution_context = cast(ExecutionContext, object())
+    result_snapshot = cast(ResultSnapshotView, object())
+    validation_context = cast(ValidationContext, object())
+
+    assert resolved_capability.descriptor == original_capability
+    assert resolved_validator.descriptor == original_validator
+    assert resolved_capability.normalize_and_validate({}) is normalized_sentinel
     assert (
-        catalog.resolve_validator(
-            original_validator.validator_id,
-            *_ROOT_KEY,
-            original_validator.policy_version,
+        resolved_capability.execute(canonical_input, execution_context)
+        is execution_sentinel
+    )
+    assert (
+        resolved_validator.validate(
+            canonical_input,
+            result_snapshot,
+            {},
+            validation_context,
         )
-        is validator
+        is validation_sentinel
     )
 
 
@@ -747,7 +781,13 @@ def test_registered_validator_must_be_advertised_by_supported_capability() -> No
 
 @pytest.mark.parametrize(
     "mismatch",
-    ["policy-version", "policy-hash", "report-version", "report-hash"],
+    [
+        "policy-version",
+        "policy-hash",
+        "report-version",
+        "report-hash",
+        "summary",
+    ],
 )
 def test_advertised_validator_contract_must_exactly_match_registration(
     mismatch: str,
@@ -781,7 +821,7 @@ def test_advertised_validator_contract_must_exactly_match_registration(
         summary = summary.model_copy(
             update={"report_schema_version": "different-report/0.1.0"}
         )
-    else:
+    elif mismatch == "report-hash":
         different_report = schema("different.report")
         summary = summary.model_copy(
             update={
@@ -789,6 +829,8 @@ def test_advertised_validator_contract_must_exactly_match_registration(
                 "report_schema_hash": sha256_json(different_report),
             }
         )
+    else:
+        summary = summary.model_copy(update={"summary": "Different summary."})
     catalog = registry()
     catalog.register_capability(
         FakeCapability(capability_descriptor(validators=(summary,)))

@@ -278,3 +278,89 @@ Exit code: `0`; `166 passed in 6.48s`.
 
 No dependency declaration, `pyproject.toml`, packaged Schema, `uv.lock`, or
 A6+ file changed in this fix round.
+
+## Independent review fix round 2 — snapshot-exposing resolve adapters
+
+Baseline commit:
+
+```text
+4f04cd126368f39d7c3ebad4d828897c85e750a3
+```
+
+Independent review found that registry validation and metadata used snapshots,
+but exact resolve still returned the original mutable owner. A caller could
+therefore observe a descriptor inconsistent with the sealed key, summaries,
+and fingerprint. Review also noted that advertised and registered validator
+summary text was not reconciled.
+
+### RED
+
+The mutable-provider regression was extended before production changes. It
+now requires resolved objects to expose the original captured capability and
+validator descriptors after the owners replace their descriptors, while
+returning distinct sentinels from delegated normalization, execution, and
+validation behavior. The validator mismatch table gained a summary-text case.
+
+Focused RED:
+
+```powershell
+uv run --locked --no-sync pytest tests/unit/test_registry.py::test_registry_snapshots_descriptors_at_registration 'tests/unit/test_registry.py::test_advertised_validator_contract_must_exactly_match_registration[summary]' -q
+```
+
+Exit code: `1`; `2 failed in 0.72s`.
+
+The resolved capability exposed the owner's changed descriptor, and a
+different advertised summary still sealed.
+
+### Minimal fix
+
+The existing private frozen `_CapabilityRegistration` and
+`_ValidatorRegistration` records now directly satisfy their respective
+protocols. Their `descriptor` fields remain the registration-time immutable
+snapshots. Capability normalization/execution and validator validation
+delegate only to the original implementation objects. Exact resolve returns
+these private snapshot-exposing adapters, so metadata stays sealed without
+disconnecting behavior from the registered owner. No public abstraction or
+third registration collection was added.
+
+Validator reconciliation now also requires
+`ValidatorSummary.summary == ValidatorDescriptor.summary`.
+
+Targeted GREEN: `2 passed in 0.65s`.
+
+### Fix-round verification
+
+Focused:
+
+```powershell
+uv run --locked --no-sync pytest tests/unit/test_registry.py tests/contract/test_capability_schemas_v0.py -q
+```
+
+Exit code: `0`; `34 passed in 5.73s`.
+
+Types:
+
+```powershell
+uv run --locked --no-sync mypy src/modeling_core src/modeling_capabilities
+```
+
+Exit code: `0`; `Success: no issues found in 22 source files`.
+
+Lint:
+
+```powershell
+uv run --locked --no-sync ruff check src/modeling_core src/modeling_capabilities tests/unit/test_registry.py tests/contract/test_capability_schemas_v0.py
+```
+
+Exit code: `0`; `All checks passed!`
+
+Regression:
+
+```powershell
+uv run --locked --no-sync pytest tests/unit/contracts tests/unit/domain tests/unit/test_registry.py tests/contract/test_capability_schemas_v0.py tests/architecture/test_dependency_boundaries.py -q
+```
+
+Exit code: `0`; `167 passed in 6.09s`.
+
+Only the registry, its unit regression, and this A5 report changed. No
+dependency, lock, packaging, Schema, or A6+ file changed.

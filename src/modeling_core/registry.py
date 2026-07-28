@@ -18,8 +18,14 @@ from modeling_core.contracts.capability import (
     CapabilityDescriptor,
     CapabilityKey,
     CapabilityValidator,
+    CanonicalInputRecord,
+    ExecutionContext,
+    ExecutionOutcome,
+    ResultSnapshotView,
     SchemaReference,
     SupportedCapabilityRange,
+    ValidationContext,
+    ValidationReport,
     ValidatorDescriptor,
     ValidatorKey,
 )
@@ -207,11 +213,37 @@ class _CapabilityRegistration:
     implementation: BuiltInCapability
     descriptor: CapabilityDescriptor
 
+    def normalize_and_validate(
+        self, raw_payload: JsonObject
+    ) -> CanonicalInputRecord:
+        return self.implementation.normalize_and_validate(raw_payload)
+
+    def execute(
+        self,
+        canonical_input: CanonicalInputRecord,
+        context: ExecutionContext,
+    ) -> ExecutionOutcome:
+        return self.implementation.execute(canonical_input, context)
+
 
 @dataclass(frozen=True)
 class _ValidatorRegistration:
     implementation: CapabilityValidator
     descriptor: ValidatorDescriptor
+
+    def validate(
+        self,
+        canonical_input: CanonicalInputRecord,
+        result_snapshot: ResultSnapshotView,
+        policy: JsonObject,
+        context: ValidationContext,
+    ) -> ValidationReport:
+        return self.implementation.validate(
+            canonical_input,
+            result_snapshot,
+            policy,
+            context,
+        )
 
 
 def _snapshot_capability_descriptor(
@@ -476,6 +508,13 @@ class CapabilityRegistry:
                             "advertised and registered report contracts differ "
                             f"for {'/'.join(capability_key)}/{validator_id}",
                         )
+                    if summary.summary != descriptor.summary:
+                        _integrity(
+                            "registry_validator_mapping",
+                            "advertised and registered validator summaries "
+                            f"differ for {'/'.join(capability_key)}/"
+                            f"{validator_id}",
+                        )
 
     def seal(
         self, required_capabilities: frozenset[CapabilityKey]
@@ -570,7 +609,7 @@ class CapabilityRegistry:
         self._require_sealed()
         key = (capability_id, contract_version)
         try:
-            return self._capabilities[key].implementation
+            return self._capabilities[key]
         except KeyError as error:
             raise RegistryError(
                 "NOT_FOUND",
@@ -614,7 +653,7 @@ class CapabilityRegistry:
                     if item.capability_id == capability_id
                 ),
             )
-        return registration.implementation
+        return registration
 
 
 __all__ = ["CapabilityRegistry", "RegistryError"]
