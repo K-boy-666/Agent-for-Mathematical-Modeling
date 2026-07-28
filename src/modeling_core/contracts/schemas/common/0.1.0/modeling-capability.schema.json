@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-capability.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "capability_api_version",
+    "capability_id",
+    "contract_version",
+    "implementation_id",
+    "implementation_version",
+    "title",
+    "summary",
+    "category",
+    "tags",
+    "determinism",
+    "randomness",
+    "input_schema",
+    "canonical_input_schema",
+    "success_schema",
+    "failure_schema",
+    "default_limits",
+    "maximum_limits",
+    "artifact_roles",
+    "validators",
+    "context_ref"
+  ],
+  "properties": {
+    "kind": {"const": "built_in"},
+    "capability_api_version": {"const": "modeling-capability/0.1.0"},
+    "capability_id": {"type": "string", "minLength": 1},
+    "contract_version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+    "implementation_id": {"type": "string", "minLength": 1},
+    "implementation_version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+    "title": {"type": "string", "minLength": 1},
+    "summary": {"type": "string", "minLength": 1},
+    "category": {"type": "string", "minLength": 1},
+    "tags": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "determinism": {"type": "string", "minLength": 1},
+    "randomness": {"type": "string", "minLength": 1},
+    "input_schema": {"$ref": "#/$defs/schemaReference"},
+    "canonical_input_schema": {"$ref": "#/$defs/schemaReference"},
+    "success_schema": {"$ref": "#/$defs/schemaReference"},
+    "failure_schema": {"$ref": "#/$defs/schemaReference"},
+    "default_limits": {"$ref": "#/$defs/limits"},
+    "maximum_limits": {"$ref": "#/$defs/limits"},
+    "artifact_roles": {"type": "array", "maxItems": 0},
+    "validators": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/validatorSummary"}
+    },
+    "context_ref": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "schemaReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "schema", "schema_hash"],
+      "properties": {
+        "schema_version": {"type": "string", "minLength": 1},
+        "schema": {"$ref": "#/$defs/rootObjectSchema"},
+        "schema_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "rootObjectSchema": {
+      "type": "object",
+      "required": ["$schema", "$id", "type", "additionalProperties"],
+      "properties": {
+        "$schema": {"const": "https://json-schema.org/draft/2020-12/schema"},
+        "$id": {"type": "string", "minLength": 1},
+        "type": {"const": "object"},
+        "additionalProperties": {"const": false}
+      }
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeout_ms", "max_iterations", "max_evaluations"],
+      "properties": {
+        "timeout_ms": {"type": "integer", "minimum": 0},
+        "max_iterations": {"type": "integer", "minimum": 0},
+        "max_evaluations": {"type": "integer", "minimum": 0}
+      }
+    },
+    "policyContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_version", "policy_schema", "policy_schema_hash"],
+      "properties": {
+        "policy_version": {"type": "string", "minLength": 1},
+        "policy_schema": {"$ref": "#/$defs/rootObjectSchema"},
+        "policy_schema_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "validatorSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validator_id",
+        "policies",
+        "report_schema_version",
+        "report_schema",
+        "report_schema_hash",
+        "summary"
+      ],
+      "properties": {
+        "validator_id": {"type": "string", "minLength": 1},
+        "policies": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/policyContract"}
+        },
+        "report_schema_version": {"type": "string", "minLength": 1},
+        "report_schema": {"$ref": "#/$defs/rootObjectSchema"},
+        "report_schema_hash": {"$ref": "#/$defs/hash"},
+        "summary": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
