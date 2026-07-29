@@ -294,8 +294,23 @@ def test_adjacent_binary64_midpoint_collapse_is_non_convergence() -> None:
 
     assert outcome.result_kind == "numerical_failure"
     assert data.failure_code == "non_convergence"
-    assert data.iterations == 0
-    assert data.evaluations == 2
+    assert data.iterations == 1
+    assert data.evaluations == 3
+
+
+def test_midpoint_collapse_still_checks_interval_tolerance_after_evaluation() -> None:
+    lower = math.pi / 2.0
+    upper = math.nextafter(lower, math.inf)
+
+    outcome = _execute("tan(x)", lower, upper)
+    data = outcome.result_payload.data
+
+    assert outcome.result_kind == "success"
+    assert data.root == lower
+    assert data.function_value == math.tan(lower)
+    assert data.iterations == 1
+    assert data.evaluations == 3
+    assert data.termination_reason == "interval_tolerance"
 
 
 def test_opposite_coordinate_signs_use_overflow_safe_midpoint() -> None:

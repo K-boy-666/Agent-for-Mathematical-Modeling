@@ -227,13 +227,7 @@ class BisectionRootFindingCapability:
         for _ in range(typed.max_iterations):
             _check_control(context)
             midpoint, half_width = _midpoint_and_half_width(lower, upper)
-            if midpoint == lower or midpoint == upper:
-                return _failure(
-                    context,
-                    failure_code="non_convergence",
-                    iterations=iterations,
-                    evaluations=budget.evaluations_used,
-                )
+            collapsed = midpoint == lower or midpoint == upper
 
             _check_control(context)
             iterations += 1
@@ -284,6 +278,13 @@ class BisectionRootFindingCapability:
                     iterations=iterations,
                     evaluations=budget.evaluations_used,
                     termination_reason="interval_tolerance",
+                )
+            if collapsed:
+                return _failure(
+                    context,
+                    failure_code="non_convergence",
+                    iterations=iterations,
+                    evaluations=budget.evaluations_used,
                 )
 
         return _failure(
