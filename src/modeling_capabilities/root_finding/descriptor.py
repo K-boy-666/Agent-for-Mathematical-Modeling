@@ -10,9 +10,19 @@ from modeling_core.contracts.canonical_json import sha256_json
 from modeling_core.contracts.capability import (
     CapabilityDescriptor,
     SchemaReference,
+    SupportedCapabilityRange,
+    ValidatorDescriptor,
 )
 from modeling_core.contracts.common import JsonObject
-from modeling_core.contracts.tools import CapabilityLimits
+from modeling_core.contracts.tools import (
+    CapabilityLimits,
+    PolicyContract,
+    ValidatorSummary,
+)
+
+_VALIDATOR_SUMMARY = (
+    "Independently recompute the reported root residual."
+)
 
 
 def _packaged_schema(name: str, schema_version: str) -> SchemaReference:
@@ -72,9 +82,64 @@ def build_root_finding_descriptor() -> CapabilityDescriptor:
             max_evaluations=20_000,
         ),
         artifact_roles=(),
-        validators=(),
+        validators=cast(
+            tuple[bytes, ...],
+            (build_residual_validator_summary(),),
+        ),
         context_ref="modeling://capabilities/numerical.root_finding/context",
     )
 
 
-__all__ = ["build_root_finding_descriptor"]
+def build_residual_validator_descriptor() -> ValidatorDescriptor:
+    """Build the independent residual validator's immutable descriptor."""
+
+    return ValidatorDescriptor(
+        kind="built_in",
+        validator_id="numerical.root_finding.residual",
+        supported_capabilities=(
+            SupportedCapabilityRange(
+                capability_id="numerical.root_finding",
+                minimum_contract_version="0.1.0",
+                maximum_contract_version="0.1.0",
+            ),
+        ),
+        implementation_id="builtin.numerical.root_finding.residual",
+        implementation_version="0.1.0",
+        policy_version="0.1.0",
+        policy_schema=_packaged_schema(
+            "policy.schema.json",
+            "0.1.0",
+        ),
+        report_schema=_packaged_schema(
+            "report.schema.json",
+            "modeling-validation-report/0.1.0",
+        ),
+        summary=_VALIDATOR_SUMMARY,
+    )
+
+
+def build_residual_validator_summary() -> ValidatorSummary:
+    """Project the descriptor contract advertised by the capability."""
+
+    descriptor = build_residual_validator_descriptor()
+    return ValidatorSummary(
+        validator_id=descriptor.validator_id,
+        policies=(
+            PolicyContract(
+                policy_version=descriptor.policy_version,
+                policy_schema=descriptor.policy_schema.schema,
+                policy_schema_hash=descriptor.policy_schema.schema_hash,
+            ),
+        ),
+        report_schema_version=descriptor.report_schema.schema_version,
+        report_schema=descriptor.report_schema.schema,
+        report_schema_hash=descriptor.report_schema.schema_hash,
+        summary=descriptor.summary,
+    )
+
+
+__all__ = [
+    "build_residual_validator_descriptor",
+    "build_residual_validator_summary",
+    "build_root_finding_descriptor",
+]

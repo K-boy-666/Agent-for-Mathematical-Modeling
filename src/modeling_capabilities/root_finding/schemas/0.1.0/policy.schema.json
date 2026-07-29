@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/capabilities/root-finding/0.1.0/policy.schema.json",
+  "title": "numerical.root_finding residual policy 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "maxProperties": 0,
+  "properties": {}
+}

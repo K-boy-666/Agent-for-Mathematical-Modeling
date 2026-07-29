@@ -21,6 +21,9 @@ from modeling_capabilities.root_finding.expression.solver_evaluator import (
 from modeling_capabilities.root_finding.solver import (
     BisectionRootFindingCapability,
 )
+from modeling_capabilities.root_finding.validator import (
+    ResidualRootFindingValidator,
+)
 from modeling_core.contracts.capability import (
     BuiltInCapability,
     CancellationSignal,
@@ -766,7 +769,16 @@ def test_descriptor_has_fixed_identity_limits_and_packaged_schema_hashes() -> No
         "max_evaluations": 20_000,
     }
     assert descriptor.artifact_roles == ()
-    assert descriptor.validators == ()
+    assert len(descriptor.validators) == 1
+    validator = descriptor.validators[0]
+    assert validator.validator_id == "numerical.root_finding.residual"
+    assert tuple(policy.policy_version for policy in validator.policies) == (
+        "0.1.0",
+    )
+    assert (
+        validator.report_schema_version
+        == "modeling-validation-report/0.1.0"
+    )
     for reference, name in (
         (descriptor.input_schema, "input.schema.json"),
         (descriptor.canonical_input_schema, "canonical-input.schema.json"),
@@ -785,6 +797,7 @@ def test_test_local_registry_resolves_only_exact_capability_version() -> None:
     capability = BisectionRootFindingCapability()
     registry = CapabilityRegistry(VersionSet.m1a())
     registry.register_capability(capability)
+    registry.register_validator(ResidualRootFindingValidator())
     registry.seal(frozenset({("numerical.root_finding", "0.1.0")}))
 
     resolved = registry.resolve("numerical.root_finding", "0.1.0")
