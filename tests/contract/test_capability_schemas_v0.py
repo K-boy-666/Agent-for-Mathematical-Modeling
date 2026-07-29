@@ -17,6 +17,12 @@ from modeling_core.contracts.capability import (
 )
 from modeling_core.contracts.common import JsonObject
 from modeling_core.contracts.schema_catalog import SchemaCatalog
+from modeling_core.contracts.tools import (
+    FailureResultPayload,
+    NumericalFailureData,
+    ResultSuccessData,
+    SuccessResultPayload,
+)
 
 
 _DRAFT = "https://json-schema.org/draft/2020-12/schema"
@@ -171,6 +177,22 @@ def test_root_finding_contract_corpus_matches_the_packaged_strict_schemas() -> N
                 )
             ),
         ),
+        "success-data": cast(
+            JsonObject,
+            json.loads(
+                schema_root.joinpath("success-data.schema.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
+        ),
+        "failure-data": cast(
+            JsonObject,
+            json.loads(
+                schema_root.joinpath("failure-data.schema.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
+        ),
     }
     corpus_path = (
         Path(__file__).parent / "corpus" / "root-finding" / "0.1.0.json"
@@ -186,6 +208,238 @@ def test_root_finding_contract_corpus_matches_the_packaged_strict_schemas() -> N
         assert schema["additionalProperties"] is False
 
     for vector in corpus:
+        if vector["kind"] not in {"input", "canonical-input"}:
+            continue
         validator = Draft202012Validator(schemas[cast(str, vector["kind"])])
         errors = list(validator.iter_errors(vector["instance"]))
         assert bool(errors) is not cast(bool, vector["valid"]), vector["label"]
+
+
+def test_root_finding_result_data_and_common_result_schemas_are_strict() -> None:
+    capability_root = files("modeling_capabilities.root_finding").joinpath(
+        "schemas", "0.1.0"
+    )
+    core_root = files("modeling_core.contracts").joinpath(
+        "schemas", "common", "0.1.0"
+    )
+    success_schema = cast(
+        JsonObject,
+        json.loads(
+            capability_root.joinpath("success-data.schema.json").read_text(
+                encoding="utf-8"
+            )
+        ),
+    )
+    failure_schema = cast(
+        JsonObject,
+        json.loads(
+            capability_root.joinpath("failure-data.schema.json").read_text(
+                encoding="utf-8"
+            )
+        ),
+    )
+    result_schema = cast(
+        JsonObject,
+        json.loads(
+            core_root.joinpath("modeling-result.schema.json").read_text(
+                encoding="utf-8"
+            )
+        ),
+    )
+    success_data: JsonObject = {
+        "root": 1.4142135623730951,
+        "function_value": 4.440892098500626e-16,
+        "iterations": 38,
+        "evaluations": 40,
+        "termination_reason": "residual_tolerance",
+    }
+    failure_data: JsonObject = {
+        "failure_code": "no_sign_change",
+        "iterations": 0,
+        "evaluations": 2,
+    }
+    success_payload: JsonObject = {
+        "result_schema_version": "modeling-result/0.1.0",
+        "capability_id": "numerical.root_finding",
+        "contract_version": "0.1.0",
+        "result_kind": "success",
+        "data": success_data,
+    }
+    failure_payload: JsonObject = {
+        "result_schema_version": "modeling-result/0.1.0",
+        "capability_id": "numerical.root_finding",
+        "contract_version": "0.1.0",
+        "result_kind": "numerical_failure",
+        "data": failure_data,
+    }
+
+    for schema_value in (success_schema, failure_schema, result_schema):
+        Draft202012Validator.check_schema(schema_value)
+        assert schema_value["type"] == "object"
+        assert schema_value["additionalProperties"] is False
+    Draft202012Validator(success_schema).validate(success_data)
+    Draft202012Validator(failure_schema).validate(failure_data)
+    result_validator = Draft202012Validator(result_schema)
+    result_validator.validate(success_payload)
+    result_validator.validate(failure_payload)
+
+    invalid_success = dict(success_data)
+    invalid_success["unexpected"] = True
+    assert list(
+        Draft202012Validator(success_schema).iter_errors(invalid_success)
+    )
+    invalid_payload = dict(success_payload)
+    invalid_payload["unexpected"] = True
+    assert list(result_validator.iter_errors(invalid_payload))
+
+
+@pytest.mark.parametrize(
+    "termination_reason",
+    ["endpoint_root", "residual_tolerance", "interval_tolerance"],
+)
+def test_success_schema_accepts_every_declared_termination_reason(
+    termination_reason: str,
+) -> None:
+    schema_root = files("modeling_capabilities.root_finding").joinpath(
+        "schemas", "0.1.0"
+    )
+    success_schema = json.loads(
+        schema_root.joinpath("success-data.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    result_schema = json.loads(
+        files("modeling_core.contracts")
+        .joinpath(
+            "schemas",
+            "common",
+            "0.1.0",
+            "modeling-result.schema.json",
+        )
+        .read_text(encoding="utf-8")
+    )
+    payload = SuccessResultPayload(
+        result_schema_version="modeling-result/0.1.0",
+        capability_id="numerical.root_finding",
+        contract_version="0.1.0",
+        result_kind="success",
+        data=ResultSuccessData(
+            root=1.0,
+            function_value=0.0,
+            iterations=1,
+            evaluations=3,
+            termination_reason=termination_reason,
+        ),
+    ).model_dump(mode="json")
+
+    Draft202012Validator(success_schema).validate(payload["data"])
+    Draft202012Validator(result_schema).validate(payload)
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    [
+        "no_sign_change",
+        "non_convergence",
+        "domain_error",
+        "non_finite_evaluation",
+    ],
+)
+def test_failure_schema_accepts_every_declared_failure_code(
+    failure_code: str,
+) -> None:
+    schema_root = files("modeling_capabilities.root_finding").joinpath(
+        "schemas", "0.1.0"
+    )
+    failure_schema = json.loads(
+        schema_root.joinpath("failure-data.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    result_schema = json.loads(
+        files("modeling_core.contracts")
+        .joinpath(
+            "schemas",
+            "common",
+            "0.1.0",
+            "modeling-result.schema.json",
+        )
+        .read_text(encoding="utf-8")
+    )
+    payload = FailureResultPayload(
+        result_schema_version="modeling-result/0.1.0",
+        capability_id="numerical.root_finding",
+        contract_version="0.1.0",
+        result_kind="numerical_failure",
+        data=NumericalFailureData(
+            failure_code=failure_code,
+            iterations=0,
+            evaluations=2,
+        ),
+    ).model_dump(mode="json")
+
+    Draft202012Validator(failure_schema).validate(payload["data"])
+    Draft202012Validator(result_schema).validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("schema_name", "invalid_data"),
+    [
+        (
+            "success-data.schema.json",
+            {
+                "root": 1.0,
+                "function_value": 0.0,
+                "iterations": 1,
+                "evaluations": 3,
+                "termination_reason": "unknown",
+            },
+        ),
+        (
+            "failure-data.schema.json",
+            {
+                "failure_code": "unknown",
+                "iterations": 0,
+                "evaluations": 2,
+            },
+        ),
+    ],
+)
+def test_result_data_schemas_reject_unknown_enums(
+    schema_name: str, invalid_data: JsonObject
+) -> None:
+    schema_root = files("modeling_capabilities.root_finding").joinpath(
+        "schemas", "0.1.0"
+    )
+    packaged_schema = json.loads(
+        schema_root.joinpath(schema_name).read_text(encoding="utf-8")
+    )
+    result_schema = json.loads(
+        files("modeling_core.contracts")
+        .joinpath(
+            "schemas",
+            "common",
+            "0.1.0",
+            "modeling-result.schema.json",
+        )
+        .read_text(encoding="utf-8")
+    )
+
+    assert list(
+        Draft202012Validator(packaged_schema).iter_errors(invalid_data)
+    )
+    result_kind = (
+        "success"
+        if schema_name.startswith("success")
+        else "numerical_failure"
+    )
+    invalid_payload: JsonObject = {
+        "result_schema_version": "modeling-result/0.1.0",
+        "capability_id": "numerical.root_finding",
+        "contract_version": "0.1.0",
+        "result_kind": result_kind,
+        "data": invalid_data,
+    }
+    assert list(
+        Draft202012Validator(result_schema).iter_errors(invalid_payload)
+    )

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/capabilities/root-finding/0.1.0/failure-data.schema.json",
+  "title": "numerical.root_finding failure data 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["failure_code", "iterations", "evaluations"],
+  "properties": {
+    "failure_code": {
+      "enum": [
+        "no_sign_change",
+        "non_convergence",
+        "domain_error",
+        "non_finite_evaluation"
+      ]
+    },
+    "iterations": {"type": "integer", "minimum": 0, "maximum": 10000},
+    "evaluations": {"type": "integer", "minimum": 0, "maximum": 20000}
+  }
+}
