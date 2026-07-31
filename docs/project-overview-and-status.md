@@ -1,57 +1,29 @@
-# Math Modeling MCP：设计、计划与实施状态总览
+# Math Modeling MCP锛氳璁°€佽鍒掍笌瀹炴柦鐘舵€佹€昏
 
-> 更新日期：2026-07-31  
-> 当前分支：`codex/m1a`  
-> 当前已提交基线：`7719f2937d640ec90bc8b96cf8b1a6d007b3e459`  
-> 状态口径：只有已经提交、通过规定测试并完成独立审查的任务才标记为“完成”。
+> 鏇存柊鏃ユ湡锛?026-07-31
+> 褰撳墠鍒嗘敮锛歚codex/m1a`
+> 褰撳墠宸叉彁浜ゅ熀绾匡細`7719f2937d640ec90bc8b96cf8b1a6d007b3e459`
+> 鐘舵€佸彛寰勶細鍙湁宸茬粡鎻愪氦銆侀€氳繃瑙勫畾娴嬭瘯骞跺畬鎴愮嫭绔嬪鏌ョ殑浠诲姟鎵嶆爣璁颁负鈥滃畬鎴愨€濄€?
+## 1. Phase 0 璁捐
 
-## 1. Phase 0 设计
+Phase 0 鐨勬潈濞佽璁℃枃妗ｆ槸
+[2026-07-16-math-modeling-mcp-design.md](superpowers/specs/2026-07-16-math-modeling-mcp-design.md)銆?
+### 1.1 浜у搧瀹氫綅
 
-Phase 0 的权威设计文档是
-[2026-07-16-math-modeling-mcp-design.md](superpowers/specs/2026-07-16-math-modeling-mcp-design.md)。
-
-### 1.1 产品定位
-
-本项目不是一个依靠长提示词直接生成国赛论文的聊天机器人，而是：
-
-> 一个本地运行、宿主无关、可扩展、可验证、可追溯的数学建模计算核心。
-
-Codex 是第一个宿主。后续 Claude Code、TRAE 等宿主通过薄适配层连接同一核心，
-不重复实现数学求解、项目状态、实验记录和验证逻辑。
-
+鏈」鐩笉鏄竴涓緷闈犻暱鎻愮ず璇嶇洿鎺ョ敓鎴愬浗璧涜鏂囩殑鑱婂ぉ鏈哄櫒浜猴紝鑰屾槸锛?
+> 涓€涓湰鍦拌繍琛屻€佸涓绘棤鍏炽€佸彲鎵╁睍銆佸彲楠岃瘉銆佸彲杩芥函鐨勬暟瀛﹀缓妯¤绠楁牳蹇冦€?
+Codex 鏄涓€涓涓汇€傚悗缁?Claude Code銆乀RAE 绛夊涓婚€氳繃钖勯€傞厤灞傝繛鎺ュ悓涓€鏍稿績锛?涓嶉噸澶嶅疄鐜版暟瀛︽眰瑙ｃ€侀」鐩姸鎬併€佸疄楠岃褰曞拰楠岃瘉閫昏緫銆?
 ```text
 Codex / Claude Code / TRAE
-             ↓
-        宿主薄适配层
-             ↓
-      本地 STDIO MCP
-             ↓
-     Application Facade
-             ↓
-稳定核心 + 能力注册表 + 验证器
-             ↓
- SQLite / 制品 / 数值执行环境
-```
+             鈫?        瀹夸富钖勯€傞厤灞?             鈫?      鏈湴 STDIO MCP
+             鈫?     Application Facade
+             鈫?绋冲畾鏍稿績 + 鑳藉姏娉ㄥ唽琛?+ 楠岃瘉鍣?             鈫? SQLite / 鍒跺搧 / 鏁板€兼墽琛岀幆澧?```
 
-### 1.2 核心架构决策
+### 1.2 鏍稿績鏋舵瀯鍐崇瓥
 
-- 采用单仓库、单 Python 发行物的模块化单体，不在 M1 提前引入微服务。
-- `modeling_core` 不依赖 MCP、SQLite、Codex 或任何具体数学能力。
-- MCP 层只完成协议转换，不实现数学算法或直接访问 SQLite。
-- 数学能力以显式注册的 **Built-in Capability** 提供；未来可安装的第三方单元才称为
-  **External Plugin**。
-- 所有数值结论必须来自真实程序执行，不能由大模型在文字中生成。
-- 求解器与验证器相互独立；验证器不能复用求解器的搜索或数值判定实现。
-- 项目、Experiment、Attempt、ResultSnapshot、Validation 和报告形成可查询的溯源链。
-- 写操作采用 `operation_id + canonical_request_hash` 实现幂等；数学执行期间不保持长
-  SQLite 事务。
-- 原始赛题附件只读；生成数据、结果和报告必须版本化并可追溯。
-- M2.5 在 ODE、优化等重计算能力前引入短生命周期 worker 和硬超时。
-
-### 1.3 M1 的六个公共工具
-
-M1 对宿主只暴露以下六个工具：
-
+- 閲囩敤鍗曚粨搴撱€佸崟 Python 鍙戣鐗╃殑妯″潡鍖栧崟浣擄紝涓嶅湪 M1 鎻愬墠寮曞叆寰湇鍔°€?- `modeling_core` 涓嶄緷璧?MCP銆丼QLite銆丆odex 鎴栦换浣曞叿浣撴暟瀛﹁兘鍔涖€?- MCP 灞傚彧瀹屾垚鍗忚杞崲锛屼笉瀹炵幇鏁板绠楁硶鎴栫洿鎺ヨ闂?SQLite銆?- 鏁板鑳藉姏浠ユ樉寮忔敞鍐岀殑 **Built-in Capability** 鎻愪緵锛涙湭鏉ュ彲瀹夎鐨勭涓夋柟鍗曞厓鎵嶇О涓?  **External Plugin**銆?- 鎵€鏈夋暟鍊肩粨璁哄繀椤绘潵鑷湡瀹炵▼搴忔墽琛岋紝涓嶈兘鐢卞ぇ妯″瀷鍦ㄦ枃瀛椾腑鐢熸垚銆?- 姹傝В鍣ㄤ笌楠岃瘉鍣ㄧ浉浜掔嫭绔嬶紱楠岃瘉鍣ㄤ笉鑳藉鐢ㄦ眰瑙ｅ櫒鐨勬悳绱㈡垨鏁板€煎垽瀹氬疄鐜般€?- 椤圭洰銆丒xperiment銆丄ttempt銆丷esultSnapshot銆乂alidation 鍜屾姤鍛婂舰鎴愬彲鏌ヨ鐨勬函婧愰摼銆?- 鍐欐搷浣滈噰鐢?`operation_id + canonical_request_hash` 瀹炵幇骞傜瓑锛涙暟瀛︽墽琛屾湡闂翠笉淇濇寔闀?  SQLite 浜嬪姟銆?- 鍘熷璧涢闄勪欢鍙锛涚敓鎴愭暟鎹€佺粨鏋滃拰鎶ュ憡蹇呴』鐗堟湰鍖栧苟鍙拷婧€?- M2.5 鍦?ODE銆佷紭鍖栫瓑閲嶈绠楄兘鍔涘墠寮曞叆鐭敓鍛藉懆鏈?worker 鍜岀‖瓒呮椂銆?
+### 1.3 M1 鐨勫叚涓叕鍏卞伐鍏?
+M1 瀵瑰涓诲彧鏆撮湶浠ヤ笅鍏釜宸ュ叿锛?
 ```text
 health_check
 create_project
@@ -61,306 +33,219 @@ run_experiment
 validate_experiment
 ```
 
-内部求解器、SQLite 表、表达式解析器和验证器都不是宿主可以任意调用的公共工具。
-
-### 1.4 状态与可信性模型
-
-- Project：`UNINITIALIZED → STORAGE_READY → READY`，完整性异常进入
-  `DEGRADED`。
-- Attempt：
-  `PENDING → RUNNING → SUCCEEDED | NUMERICAL_FAILURE | ERRORED | TIMED_OUT | ABANDONED`。
-- Validation：
-  `PENDING → RUNNING → SUCCEEDED | ERRORED | TIMED_OUT | ABANDONED`。
-- Validation 的运行状态与数学结论分离；只有运行成功后才有
-  `PASSED | FAILED | INCONCLUSIVE`。
-- `NUMERICAL_FAILURE` 是正常数学结果，例如区间内无符号变化；它不是系统错误。
-- 结果、输入、模型、数据快照和验证报告均使用规范 JSON 与 SHA-256 形成证据链。
-
+鍐呴儴姹傝В鍣ㄣ€丼QLite 琛ㄣ€佽〃杈惧紡瑙ｆ瀽鍣ㄥ拰楠岃瘉鍣ㄩ兘涓嶆槸瀹夸富鍙互浠绘剰璋冪敤鐨勫叕鍏卞伐鍏枫€?
+### 1.4 鐘舵€佷笌鍙俊鎬фā鍨?
+- Project锛歚UNINITIALIZED 鈫?STORAGE_READY 鈫?READY`锛屽畬鏁存€у紓甯歌繘鍏?  `DEGRADED`銆?- Attempt锛?  `PENDING 鈫?RUNNING 鈫?SUCCEEDED | NUMERICAL_FAILURE | ERRORED | TIMED_OUT | ABANDONED`銆?- Validation锛?  `PENDING 鈫?RUNNING 鈫?SUCCEEDED | ERRORED | TIMED_OUT | ABANDONED`銆?- Validation 鐨勮繍琛岀姸鎬佷笌鏁板缁撹鍒嗙锛涘彧鏈夎繍琛屾垚鍔熷悗鎵嶆湁
+  `PASSED | FAILED | INCONCLUSIVE`銆?- `NUMERICAL_FAILURE` 鏄甯告暟瀛︾粨鏋滐紝渚嬪鍖洪棿鍐呮棤绗﹀彿鍙樺寲锛涘畠涓嶆槸绯荤粺閿欒銆?- 缁撴灉銆佽緭鍏ャ€佹ā鍨嬨€佹暟鎹揩鐓у拰楠岃瘉鎶ュ憡鍧囦娇鐢ㄨ鑼?JSON 涓?SHA-256 褰㈡垚璇佹嵁閾俱€?
 ### 1.5 Context Engineering
 
-上下文采用渐进式加载：
-
+涓婁笅鏂囬噰鐢ㄦ笎杩涘紡鍔犺浇锛?
 ```text
-根 AGENTS.md
-→ 最近目录的嵌套 AGENTS.md
-→ docs/context/index.md
-→ 与当前任务有关的架构、契约和 ADR
-→ 仅在需要时加载对应 Skill 和数学知识
-```
+鏍?AGENTS.md
+鈫?鏈€杩戠洰褰曠殑宓屽 AGENTS.md
+鈫?docs/context/index.md
+鈫?涓庡綋鍓嶄换鍔℃湁鍏崇殑鏋舵瀯銆佸绾﹀拰 ADR
+鈫?浠呭湪闇€瑕佹椂鍔犺浇瀵瑰簲 Skill 鍜屾暟瀛︾煡璇?```
 
-长期规则进入 `AGENTS.md`，权威产品和架构知识进入 `docs/`，程序性工作流进入
-Skills，当前增量目标进入任务 Prompt。ODE、PDE、统计、优化等知识不会常驻每次
-开发上下文。
-
+闀挎湡瑙勫垯杩涘叆 `AGENTS.md`锛屾潈濞佷骇鍝佸拰鏋舵瀯鐭ヨ瘑杩涘叆 `docs/`锛岀▼搴忔€у伐浣滄祦杩涘叆
+Skills锛屽綋鍓嶅閲忕洰鏍囪繘鍏ヤ换鍔?Prompt銆侽DE銆丳DE銆佺粺璁°€佷紭鍖栫瓑鐭ヨ瘑涓嶄細甯搁┗姣忔
+寮€鍙戜笂涓嬫枃銆?
 ### 1.6 Harness Engineering
 
-- 提供单一验证入口：`modeling verify --milestone <milestone>`。
-- 测试分为单元、契约、架构、数学、集成、复现、安全、验收和真实 STDIO 黄金链路。
-- 架构测试阻止核心反向依赖适配器、数据库或具体能力。
-- 数学变形测试用于验证平移、缩放、符号翻转、单位变换等不变量。
-- 完成声明必须包含真实命令、测试统计、Git diff、完整 commit hash 和已知偏差。
-- M1b 增加故障注入、内容寻址制品、跨平台验证和崩溃恢复证据。
+- 鎻愪緵鍗曚竴楠岃瘉鍏ュ彛锛歚modeling verify --milestone <milestone>`銆?- 娴嬭瘯鍒嗕负鍗曞厓銆佸绾︺€佹灦鏋勩€佹暟瀛︺€侀泦鎴愩€佸鐜般€佸畨鍏ㄣ€侀獙鏀跺拰鐪熷疄 STDIO 榛勯噾閾捐矾銆?- 鏋舵瀯娴嬭瘯闃绘鏍稿績鍙嶅悜渚濊禆閫傞厤鍣ㄣ€佹暟鎹簱鎴栧叿浣撹兘鍔涖€?- 鏁板鍙樺舰娴嬭瘯鐢ㄤ簬楠岃瘉骞崇Щ銆佺缉鏀俱€佺鍙风炕杞€佸崟浣嶅彉鎹㈢瓑涓嶅彉閲忋€?- 瀹屾垚澹版槑蹇呴』鍖呭惈鐪熷疄鍛戒护銆佹祴璇曠粺璁°€丟it diff銆佸畬鏁?commit hash 鍜屽凡鐭ュ亸宸€?- M1b 澧炲姞鏁呴殰娉ㄥ叆銆佸唴瀹瑰鍧€鍒跺搧銆佽法骞冲彴楠岃瘉鍜屽穿婧冩仮澶嶈瘉鎹€?
+### 1.7 Phase 0 鏄庣‘涓嶅仛
 
-### 1.7 Phase 0 明确不做
+M1 涓嶅寘鍚畬鏁磋禌棰樿嚜鍔ㄧ悊瑙ｃ€佸叏棰樿嚜涓绘ā鍨嬮€夋嫨銆佽鏂囪嚜鍔ㄧ敓鎴愩€乄eb UI銆佸鐢ㄦ埛鏈嶅姟銆?External Plugin 甯傚満銆佷换鍔￠槦鍒椼€亀orker 姹犳垨鎵€鏈夊巻骞撮姹傝В銆傚畠棣栧厛寤虹珛涓€涓彲淇°€?鍙墿灞曠殑璁＄畻涓庨獙璇佺旱鍚戝垏鐗囥€?
+## 2. M1 瀹炴柦璁″垝
 
-M1 不包含完整赛题自动理解、全题自主模型选择、论文自动生成、Web UI、多用户服务、
-External Plugin 市场、任务队列、worker 池或所有历年题求解。它首先建立一个可信、
-可扩展的计算与验证纵向切片。
-
-## 2. M1 实施计划
-
-M1 的权威实施计划是
-[2026-07-17-math-modeling-mcp-m1.md](superpowers/plans/2026-07-17-math-modeling-mcp-m1.md)。
-
-当前经批准的总路线为：
-
+M1 鐨勬潈濞佸疄鏂借鍒掓槸
+[2026-07-17-math-modeling-mcp-m1.md](superpowers/plans/2026-07-17-math-modeling-mcp-m1.md)銆?
+褰撳墠缁忔壒鍑嗙殑鎬昏矾绾夸负锛?
 ```text
-M1a-0R 宿主证据修复门
-→ M1a A1–A12 功能纵向切片
-→ C1 真实国赛小问产品验证
-→ M1b B1–B12 可信化加固
-```
+M1a-0R 瀹夸富璇佹嵁淇闂?鈫?M1a A1鈥揂12 鍔熻兘绾靛悜鍒囩墖
+鈫?C1 鐪熷疄鍥借禌灏忛棶浜у搧楠岃瘉
+鈫?M1b B1鈥揃12 鍙俊鍖栧姞鍥?```
 
-这一路线把 C1 放在完整 M1b 之前，用真实国赛小问检验平台是否具有产品价值；C1
-仍必须等待 M1a Hard Gate 通过。
+杩欎竴璺嚎鎶?C1 鏀惧湪瀹屾暣 M1b 涔嬪墠锛岀敤鐪熷疄鍥借禌灏忛棶妫€楠屽钩鍙版槸鍚﹀叿鏈変骇鍝佷环鍊硷紱C1
+浠嶅繀椤荤瓑寰?M1a Hard Gate 閫氳繃銆?
+### 2.1 M1a-0R锛氬涓诲彲琛屾€ч棬
 
-### 2.1 M1a-0R：宿主可行性门
-
-目标是证明正式 Codex 宿主能够通过真实 STDIO MCP 调用一次
-`root_finding`，而不是依靠 shell、手写 JSON 或模型自述。该门已经完成。
-
-### 2.2 M1a：功能纵向切片
-
-| 任务 | 交付内容 | 当前状态 |
+鐩爣鏄瘉鏄庢寮?Codex 瀹夸富鑳藉閫氳繃鐪熷疄 STDIO MCP 璋冪敤涓€娆?`root_finding`锛岃€屼笉鏄緷闈?shell銆佹墜鍐?JSON 鎴栨ā鍨嬭嚜杩般€傝闂ㄥ凡缁忓畬鎴愩€?
+### 2.2 M1a锛氬姛鑳界旱鍚戝垏鐗?
+| 浠诲姟 | 浜や粯鍐呭 | 褰撳墠鐘舵€?|
 |---|---|---|
-| A1 | 锁定 Python/uv 项目与验证入口 | 完成 |
-| A2 | 严格 0.1 工具、错误与稳定哈希契约 | 完成 |
-| A3 | 领域不变量、端口与 Application Facade | 完成 |
-| A4 | 原子存储 bootstrap 与 SQLite schema 1 | 完成 |
-| A5 | 封存的 Built-in Capability 注册表 | 完成 |
-| A6 | 安全 math-expr-v1 与规范求根输入 | 完成 |
-| A7 | 确定性二分法求根能力 | 完成 |
-| A8 | 独立残差验证器 | 完成 |
-| A9a | A9 所需的最小存储/异常契约修复 | 进行中，尚未提交 |
-| A9b | Facade、SQLite、幂等和完整实验/验证编排 | 未开始 |
-| A10 | 严格低层 STDIO MCP 六工具适配 | 未开始 |
-| A11 | 真实 STDIO 黄金链路与 M1a Harness | 未开始 |
-| A12 | doctor、基础上下文、Codex 模板与验收门 | 未开始 |
+| A1 | 閿佸畾 Python/uv 椤圭洰涓庨獙璇佸叆鍙?| 瀹屾垚 |
+| A2 | 涓ユ牸 0.1 宸ュ叿銆侀敊璇笌绋冲畾鍝堝笇濂戠害 | 瀹屾垚 |
+| A3 | 棰嗗煙涓嶅彉閲忋€佺鍙ｄ笌 Application Facade | 瀹屾垚 |
+| A4 | 鍘熷瓙瀛樺偍 bootstrap 涓?SQLite schema 1 | 瀹屾垚 |
+| A5 | 灏佸瓨鐨?Built-in Capability 娉ㄥ唽琛?| 瀹屾垚 |
+| A6 | 瀹夊叏 math-expr-v1 涓庤鑼冩眰鏍硅緭鍏?| 瀹屾垚 |
+| A7 | 纭畾鎬т簩鍒嗘硶姹傛牴鑳藉姏 | 瀹屾垚 |
+| A8 | 鐙珛娈嬪樊楠岃瘉鍣?| 瀹屾垚 |
+| A9a | A9 鎵€闇€鐨勬渶灏忓瓨鍌?寮傚父濂戠害淇 | 杩涜涓紝灏氭湭鎻愪氦 |
+| A9b | Facade銆丼QLite銆佸箓绛夊拰瀹屾暣瀹為獙/楠岃瘉缂栨帓 | 鏈紑濮?|
+| A10 | 涓ユ牸浣庡眰 STDIO MCP 鍏伐鍏烽€傞厤 | 鏈紑濮?|
+| A11 | 鐪熷疄 STDIO 榛勯噾閾捐矾涓?M1a Harness | 鏈紑濮?|
+| A12 | doctor銆佸熀纭€涓婁笅鏂囥€丆odex 妯℃澘涓庨獙鏀堕棬 | 鏈紑濮?|
 
-A9a 是 A9 内部的 enabling slice，不增加第 13 个顶层任务。它用于防止
-Application 层导入具体求根异常，并使存储端口能原子保存规范化后的领域对象。
-
+A9a 鏄?A9 鍐呴儴鐨?enabling slice锛屼笉澧炲姞绗?13 涓《灞備换鍔°€傚畠鐢ㄤ簬闃叉
+Application 灞傚鍏ュ叿浣撴眰鏍瑰紓甯革紝骞朵娇瀛樺偍绔彛鑳藉師瀛愪繚瀛樿鑼冨寲鍚庣殑棰嗗煙瀵硅薄銆?
 ### 2.3 M1a Hard Gate
 
-M1a 只有在以下命令退出码为 0、必需跳过为 0 时才完成：
-
+M1a 鍙湁鍦ㄤ互涓嬪懡浠ら€€鍑虹爜涓?0銆佸繀闇€璺宠繃涓?0 鏃舵墠瀹屾垚锛?
 ```powershell
 uv run --locked --no-sync modeling verify --milestone m1a
 ```
 
-该门必须证明真实 STDIO 六工具链路、黄金求根实验、独立验证、SQLite 溯源、幂等、
-超时、安全边界、Context 文档和验证证据都存在。
+璇ラ棬蹇呴』璇佹槑鐪熷疄 STDIO 鍏伐鍏烽摼璺€侀粍閲戞眰鏍瑰疄楠屻€佺嫭绔嬮獙璇併€丼QLite 婧簮銆佸箓绛夈€?瓒呮椂銆佸畨鍏ㄨ竟鐣屻€丆ontext 鏂囨。鍜岄獙璇佽瘉鎹兘瀛樺湪銆?
+### 2.4 M1b锛氬彲淇″寲鍔犲浐
 
-### 2.4 M1b：可信化加固
-
-M1b 计划保留，但按批准路线在 C1 之后继续：
-
-| 任务 | 计划内容 |
+M1b 璁″垝淇濈暀锛屼絾鎸夋壒鍑嗚矾绾垮湪 C1 涔嬪悗缁х画锛?
+| 浠诲姟 | 璁″垝鍐呭 |
 |---|---|
-| B1 | 将已证明的 0.x 切片晋升为稳定 1.0 契约 |
-| B2 | 完整 RFC 8785 向量与 Schema 兼容基线 |
-| B3 | 带护栏的 Built-in Capability 脚手架 |
-| B4 | SQLite schema 2 与内容寻址 ArtifactStore |
-| B5 | 输入/环境快照和结果/报告制品发布 |
-| B6 | 完整幂等恢复、重启收敛和 rerun |
-| B7 | 五个崩溃窗口故障注入与文件系统安全 |
-| B8 | 深化 doctor 与数学/重启复现 |
-| B9 | 渐进式上下文路由和能力 Skills |
-| B10 | 稳定架构、契约、运维和 ADR 文档 |
-| B11 | Windows/Ubuntu 一致的 M1b 验证超集 |
-| B12 | 完成证据包与 Codex 宿主黄金链路 |
+| B1 | 灏嗗凡璇佹槑鐨?0.x 鍒囩墖鏅嬪崌涓虹ǔ瀹?1.0 濂戠害 |
+| B2 | 瀹屾暣 RFC 8785 鍚戦噺涓?Schema 鍏煎鍩虹嚎 |
+| B3 | 甯︽姢鏍忕殑 Built-in Capability 鑴氭墜鏋?|
+| B4 | SQLite schema 2 涓庡唴瀹瑰鍧€ ArtifactStore |
+| B5 | 杈撳叆/鐜蹇収鍜岀粨鏋?鎶ュ憡鍒跺搧鍙戝竷 |
+| B6 | 瀹屾暣骞傜瓑鎭㈠銆侀噸鍚敹鏁涘拰 rerun |
+| B7 | 浜斾釜宕╂簝绐楀彛鏁呴殰娉ㄥ叆涓庢枃浠剁郴缁熷畨鍏?|
+| B8 | 娣卞寲 doctor 涓庢暟瀛?閲嶅惎澶嶇幇 |
+| B9 | 娓愯繘寮忎笂涓嬫枃璺敱鍜岃兘鍔?Skills |
+| B10 | 绋冲畾鏋舵瀯銆佸绾︺€佽繍缁村拰 ADR 鏂囨。 |
+| B11 | Windows/Ubuntu 涓€鑷寸殑 M1b 楠岃瘉瓒呴泦 |
+| B12 | 瀹屾垚璇佹嵁鍖呬笌 Codex 瀹夸富榛勯噾閾捐矾 |
 
-## 3. C1 计划
+## 3. C1 璁″垝
 
-C1 的权威设计与实施文件是：
+C1 鐨勬潈濞佽璁′笌瀹炴柦鏂囦欢鏄細
 
-- [C1 设计规格](superpowers/specs/2026-07-23-cumcm-2022-a-q1-contest-vertical-slice-design.md)
-- [C1 实施计划](superpowers/plans/2026-07-23-cumcm-2022-a-q1-contest-vertical-slice.md)
+- [C1 璁捐瑙勬牸](superpowers/specs/2026-07-23-cumcm-2022-a-q1-contest-vertical-slice-design.md)
+- [C1 瀹炴柦璁″垝](superpowers/plans/2026-07-23-cumcm-2022-a-q1-contest-vertical-slice.md)
 
-### 3.1 C1 的目标
-
-C1 选用 2022 年全国大学生数学建模竞赛 A 题问题一，建立第一个真实闭环：
+### 3.1 C1 鐨勭洰鏍?
+C1 閫夌敤 2022 骞村叏鍥藉ぇ瀛︾敓鏁板寤烘ā绔炶禌 A 棰橀棶棰樹竴锛屽缓绔嬬涓€涓湡瀹為棴鐜細
 
 ```text
-官方题面和附件
-→ 只读内容寻址资产
-→ Codex 生成 MMIR
-→ 用户确认具体 revision
-→ 两个阻尼情形分别执行
-→ 两套独立数值验证
-→ Excel、图、结果卡和 provenance
-→ 真实 Codex MCP 端到端证据
-```
+瀹樻柟棰橀潰鍜岄檮浠?鈫?鍙鍐呭瀵诲潃璧勪骇
+鈫?Codex 鐢熸垚 MMIR
+鈫?鐢ㄦ埛纭鍏蜂綋 revision
+鈫?涓や釜闃诲凹鎯呭舰鍒嗗埆鎵ц
+鈫?涓ゅ鐙珛鏁板€奸獙璇?鈫?Excel銆佸浘銆佺粨鏋滃崱鍜?provenance
+鈫?鐪熷疄 Codex MCP 绔埌绔瘉鎹?```
 
-C1 是 `0.x product-validation preview`，不宣称通用赛题工作流、完整 M1b 或跨平台
-稳定发布已经完成。
+C1 鏄?`0.x product-validation preview`锛屼笉瀹ｇО閫氱敤璧涢宸ヤ綔娴併€佸畬鏁?M1b 鎴栬法骞冲彴
+绋冲畾鍙戝竷宸茬粡瀹屾垚銆?
+### 3.2 鏁板鑳藉姏
 
-### 3.2 数学能力
-
-能力 ID：
-
+鑳藉姏 ID锛?
 ```text
 dynamics.coupled_heave/0.1.0
 ```
 
-它求解浮子与振子的耦合垂荡方程，并分别处理：
-
+瀹冩眰瑙ｆ诞瀛愪笌鎸瓙鐨勮€﹀悎鍨傝崱鏂圭▼锛屽苟鍒嗗埆澶勭悊锛?
 ```text
 linear:    D(q) = 10000 q
 power_law: D(q) = 10000 |q|^0.5 q
 ```
 
-生产求解使用 DOP853，`rtol=1e-9`、`atol=1e-11`，输出固定为
-`t_i=0.2i, i=0…897`，共 898 行，终点 179.4 秒。
-
-线性情形由增广状态矩阵指数解独立验证；非线性情形由步长 0.01 秒和 0.005 秒的
-固定步长 RK4 独立验证。生产解与参考解要求 `rtol=2e-4`、`atol=2e-6`，归一化
-能量闭合误差不超过 `1e-3`。
-
-### 3.3 C1 的八个实施任务
-
-| 任务 | 交付内容 | 当前状态 |
+鐢熶骇姹傝В浣跨敤 DOP853锛宍rtol=1e-9`銆乣atol=1e-11`锛岃緭鍑哄浐瀹氫负
+`t_i=0.2i, i=0鈥?97`锛屽叡 898 琛岋紝缁堢偣 179.4 绉掋€?
+绾挎€ф儏褰㈢敱澧炲箍鐘舵€佺煩闃垫寚鏁拌В鐙珛楠岃瘉锛涢潪绾挎€ф儏褰㈢敱姝ラ暱 0.01 绉掑拰 0.005 绉掔殑
+鍥哄畾姝ラ暱 RK4 鐙珛楠岃瘉銆傜敓浜цВ涓庡弬鑰冭В瑕佹眰 `rtol=2e-4`銆乣atol=2e-6`锛屽綊涓€鍖?鑳介噺闂悎璇樊涓嶈秴杩?`1e-3`銆?
+### 3.3 C1 鐨勫叓涓疄鏂戒换鍔?
+| 浠诲姟 | 浜や粯鍐呭 | 褰撳墠鐘舵€?|
 |---|---|---|
-| C1.1 | 四个预览工具契约和稳定错误 | 未开始 |
-| C1.2 | 只读、内容寻址的官方资产快照 | 未开始 |
-| C1.3 | 带 revision 和人工确认的最小 MMIR | 未开始 |
-| C1.4 | 60 秒硬超时、16 MiB 上限的短生命周期 worker | 未开始 |
-| C1.5 | `dynamics.coupled_heave` DOP853 生产求解 | 未开始 |
-| C1.6 | 矩阵指数、RK4 和能量闭合独立验证 | 未开始 |
-| C1.7 | 两份 Excel、时序图、结果卡和 provenance | 未开始 |
-| C1.8 | `verify --milestone c1` 与真实 Codex 宿主门 | 未开始 |
+| C1.1 | 鍥涗釜棰勮宸ュ叿濂戠害鍜岀ǔ瀹氶敊璇?| 鏈紑濮?|
+| C1.2 | 鍙銆佸唴瀹瑰鍧€鐨勫畼鏂硅祫浜у揩鐓?| 鏈紑濮?|
+| C1.3 | 甯?revision 鍜屼汉宸ョ‘璁ょ殑鏈€灏?MMIR | 鏈紑濮?|
+| C1.4 | 60 绉掔‖瓒呮椂銆?6 MiB 涓婇檺鐨勭煭鐢熷懡鍛ㄦ湡 worker | 鏈紑濮?|
+| C1.5 | `dynamics.coupled_heave` DOP853 鐢熶骇姹傝В | 鏈紑濮?|
+| C1.6 | 鐭╅樀鎸囨暟銆丷K4 鍜岃兘閲忛棴鍚堢嫭绔嬮獙璇?| 鏈紑濮?|
+| C1.7 | 涓や唤 Excel銆佹椂搴忓浘銆佺粨鏋滃崱鍜?provenance | 鏈紑濮?|
+| C1.8 | `verify --milestone c1` 涓庣湡瀹?Codex 瀹夸富闂?| 鏈紑濮?|
 
-### 3.4 C1 输出
+### 3.4 C1 杈撳嚭
 
 - `result1-1.xlsx`
 - `result1-2.xlsx`
-- 两种阻尼情形的时序图
-- 10、20、40、60、100 秒结果卡
-- 参数、单位、来源、假设、代码版本、运行和验证 provenance
+- 涓ょ闃诲凹鎯呭舰鐨勬椂搴忓浘
+- 10銆?0銆?0銆?0銆?00 绉掔粨鏋滃崱
+- 鍙傛暟銆佸崟浣嶃€佹潵婧愩€佸亣璁俱€佷唬鐮佺増鏈€佽繍琛屽拰楠岃瘉 provenance
 
-只有两个 Attempt 都具有 `PASSED` Validation 时，`export_subproblem` 才能发布
-最终制品。
-
+鍙湁涓や釜 Attempt 閮藉叿鏈?`PASSED` Validation 鏃讹紝`export_subproblem` 鎵嶈兘鍙戝竷
+鏈€缁堝埗鍝併€?
 ### 3.5 C1 Hard Gate
 
 ```powershell
 uv run --locked --no-sync modeling verify --milestone c1
 ```
 
-要求退出码 0、必需跳过 0、两个 Validation 均为 `PASSED`，且真实 Codex 宿主只经
-MCP 完成建项、资产登记、MMIR 草拟/确认、两次运行、两次验证和一次导出。
+瑕佹眰閫€鍑虹爜 0銆佸繀闇€璺宠繃 0銆佷袱涓?Validation 鍧囦负 `PASSED`锛屼笖鐪熷疄 Codex 瀹夸富鍙粡
+MCP 瀹屾垚寤洪」銆佽祫浜х櫥璁般€丮MIR 鑽夋嫙/纭銆佷袱娆¤繍琛屻€佷袱娆￠獙璇佸拰涓€娆″鍑恒€?
+## 4. 宸插畬鎴愪换鍔″拰鎻愪氦璁板綍
 
-## 4. 已完成任务和提交记录
-
-以下记录来自当前仓库 Git 历史与 SDD progress ledger。
-
-| 阶段/任务 | 提交 | 说明 | 审查状态 |
+浠ヤ笅璁板綍鏉ヨ嚜褰撳墠浠撳簱 Git 鍘嗗彶涓?SDD progress ledger銆?
+| 闃舵/浠诲姟 | 鎻愪氦 | 璇存槑 | 瀹℃煡鐘舵€?|
 |---|---|---|---|
-| M1a-0R | `d3fb4c126e8b81b2f74bab31d80e7b4a7313cdae` | `spike: prove Codex-hosted MCP root-finding round trip` | 已完成 |
-| M1a-0R 修复 | `610c23869452cbd9e5801e7ff44cdd58cb5d3c22` | `fix: close M1a-0R evidence gate gaps` | 独立审查通过 |
-| A1 | `fe0018314c98dcb523df6369344d0cf5946a42b4` | `build: establish locked Python project` | 独立审查通过 |
-| A2 | `2c5c37f76a331211dd53dcc7075369f43432be14` | `feat: define strict M1a public contracts` | 后续修复 |
-| A2 修复 1 | `26f33ae606677166f7f30a9a75c2b263e850f82f` | `fix: enforce strict M1a contract invariants` | 后续修复 |
-| A2 修复 2 | `456551a27adde5cbab38b4b8a08ccf6fa08b2d47` | `fix: constrain M1a validation trace policy` | 独立审查通过 |
-| A3 | `9f30b904ddfae89caed9c2b3a8c5dbbc5c4f1ff7` | `feat: define host-independent core boundaries` | 后续修复 |
-| A3 修复 | `14c0a45353885ea36c59a01e885d393b4fc8d421` | `fix: enforce validated A3 domain contracts` | 独立审查通过 |
-| A4 计划修正 | `fcb7358c73ee39ccbf8ed73534c61198b8e47dfc` | `docs: correct A4 package ownership` | 独立审查通过 |
-| A4 | `878acf1058bea4e46e4168c000a5ac97a904d55a` | `feat: add atomic SQLite project storage` | 后续修复 |
-| A4 修复 | `670e8e00232b9d34edace9270f96b597ce5e386a` | `fix: reject reparse ancestors in project paths` | 独立审查通过 |
-| A5 | `0b5ca4c6d9801a9f5f459c2a4403fabc662fb265` | `feat: add sealed built-in capability registry` | 后续修复 |
-| A5 修复 1 | `4f04cd126368f39d7c3ebad4d828897c85e750a3` | `fix: seal registry descriptor snapshots` | 后续修复 |
-| A5 修复 2 | `604482e323e1479348844dbd2dd46ed7c9ac9c13` | `fix: resolve sealed registry adapters` | 独立审查通过 |
-| A6 | `ffa1a05b9e65bd9cbcd0ebb8281797dab5e819ae` | `feat: add safe canonical math expression input` | 后续修复 |
-| A6 修复 | `084c15a17684e32a03b898d0ff875faa8cb98c6d` | `fix: seal canonical expression snapshots` | 独立审查通过 |
-| A7 | `e70fc0432730f48e9c1ecfcd2d3fd8820c44b247` | `feat: execute bisection root finding` | 后续修复 |
-| A7 修复 | `d44e8023b8b10f7077559994d1d5c39c4e71340e` | `fix: preserve bisection termination order` | 独立审查通过 |
-| A8 | `7719f2937d640ec90bc8b96cf8b1a6d007b3e459` | `feat: add independent residual validation` | 独立审查通过 |
+| M1a-0R | `d3fb4c126e8b81b2f74bab31d80e7b4a7313cdae` | `spike: prove Codex-hosted MCP root-finding round trip` | 宸插畬鎴?|
+| M1a-0R 淇 | `610c23869452cbd9e5801e7ff44cdd58cb5d3c22` | `fix: close M1a-0R evidence gate gaps` | 鐙珛瀹℃煡閫氳繃 |
+| A1 | `fe0018314c98dcb523df6369344d0cf5946a42b4` | `build: establish locked Python project` | 鐙珛瀹℃煡閫氳繃 |
+| A2 | `2c5c37f76a331211dd53dcc7075369f43432be14` | `feat: define strict M1a public contracts` | 鍚庣画淇 |
+| A2 淇 1 | `26f33ae606677166f7f30a9a75c2b263e850f82f` | `fix: enforce strict M1a contract invariants` | 鍚庣画淇 |
+| A2 淇 2 | `456551a27adde5cbab38b4b8a08ccf6fa08b2d47` | `fix: constrain M1a validation trace policy` | 鐙珛瀹℃煡閫氳繃 |
+| A3 | `9f30b904ddfae89caed9c2b3a8c5dbbc5c4f1ff7` | `feat: define host-independent core boundaries` | 鍚庣画淇 |
+| A3 淇 | `14c0a45353885ea36c59a01e885d393b4fc8d421` | `fix: enforce validated A3 domain contracts` | 鐙珛瀹℃煡閫氳繃 |
+| A4 璁″垝淇 | `fcb7358c73ee39ccbf8ed73534c61198b8e47dfc` | `docs: correct A4 package ownership` | 鐙珛瀹℃煡閫氳繃 |
+| A4 | `878acf1058bea4e46e4168c000a5ac97a904d55a` | `feat: add atomic SQLite project storage` | 鍚庣画淇 |
+| A4 淇 | `670e8e00232b9d34edace9270f96b597ce5e386a` | `fix: reject reparse ancestors in project paths` | 鐙珛瀹℃煡閫氳繃 |
+| A5 | `0b5ca4c6d9801a9f5f459c2a4403fabc662fb265` | `feat: add sealed built-in capability registry` | 鍚庣画淇 |
+| A5 淇 1 | `4f04cd126368f39d7c3ebad4d828897c85e750a3` | `fix: seal registry descriptor snapshots` | 鍚庣画淇 |
+| A5 淇 2 | `604482e323e1479348844dbd2dd46ed7c9ac9c13` | `fix: resolve sealed registry adapters` | 鐙珛瀹℃煡閫氳繃 |
+| A6 | `ffa1a05b9e65bd9cbcd0ebb8281797dab5e819ae` | `feat: add safe canonical math expression input` | 鍚庣画淇 |
+| A6 淇 | `084c15a17684e32a03b898d0ff875faa8cb98c6d` | `fix: seal canonical expression snapshots` | 鐙珛瀹℃煡閫氳繃 |
+| A7 | `e70fc0432730f48e9c1ecfcd2d3fd8820c44b247` | `feat: execute bisection root finding` | 鍚庣画淇 |
+| A7 淇 | `d44e8023b8b10f7077559994d1d5c39c4e71340e` | `fix: preserve bisection termination order` | 鐙珛瀹℃煡閫氳繃 |
+| A8 | `7719f2937d640ec90bc8b96cf8b1a6d007b3e459` | `feat: add independent residual validation` | 鐙珛瀹℃煡閫氳繃 |
 
-截至该基线，已经具备：
+鎴嚦璇ュ熀绾匡紝宸茬粡鍏峰锛?
+- 閿佸畾鐨?Python/uv 寮€鍙戠幆澧冿紱
+- 涓ユ牸宸ュ叿鍜岄敊璇?Schema锛?- 瀹夸富鏃犲叧鏍稿績杈圭晫锛?- SQLite schema 1 涓庡畨鍏ㄩ」鐩矾寰勶紱
+- 灏佸瓨鐨勮兘鍔涙敞鍐岃〃锛?- 瀹夊叏琛ㄨ揪寮忚В鏋愬拰瑙勮寖杈撳叆锛?- 纭畾鎬т簩鍒嗘硶姹傛牴锛?- 涓庢眰瑙ｅ櫒鐙珛鐨勬畫宸獙璇佸櫒銆?
+## 5. 褰撳墠鏈畬鎴愪簨椤?
+### 5.1 姝ｅ湪杩涜
 
-- 锁定的 Python/uv 开发环境；
-- 严格工具和错误 Schema；
-- 宿主无关核心边界；
-- SQLite schema 1 与安全项目路径；
-- 封存的能力注册表；
-- 安全表达式解析和规范输入；
-- 确定性二分法求根；
-- 与求解器独立的残差验证器。
+#### A9a锛欰9 鍓嶇疆濂戠害淇
 
-## 5. 当前未完成事项
+褰撳墠宸ヤ綔鍖哄瓨鍦ㄥ皻鏈彁浜ょ殑 A9a 淇敼锛屼富瑕佸寘鎷細
 
-### 5.1 正在进行
+- 灏嗚鑼冨寲鍚庣殑 `Experiment`銆乣Attempt` 鍜?`Validation` 浣滀负瀛樺偍绔彛杈撳叆锛?- 澧炲姞楠岃瘉鎵€闇€鐨勫彧璇?`ValidationSource`锛?- 绾︽潫閲嶆斁銆佺埗瀛愬叧绯汇€佺粨鏋滃揩鐓у綊灞炲拰 trace 涓€鑷存€э紱
+- 鎻愪緵娣卞害涓嶅彲鍙樼殑 `ProjectStoreError`锛?- 鎻愪緵瀹夸富涓珛鐨勮緭鍏ユ嫆缁濄€佸畨鍏ㄨ繚瑙勩€侀鎵ц璧勬簮瓒呴檺銆佸彇娑堛€佹埅姝㈡椂闂村拰杩愯鏈熻祫婧?  瓒呴檺寮傚父锛?- 灏嗘眰鏍规ā鍧楃殑鍏蜂綋寮傚父鏄犲皠鍒颁笂杩版牳蹇冨绾︼紱
+- 鍚屾 SQLite 閫傞厤鍣ㄧ殑绛惧悕鍗犱綅锛屼絾涓嶆彁鍓嶅疄鐜?SQL 琛屼负銆?
+A9a 鏈€杩戜竴娆¤仛鐒﹂獙璇佷负 320 涓祴璇曢€氳繃锛屽叏閲忛獙璇佷负 532 涓祴璇曢€氳繃锛孯uff 鍜?MyPy
+閫氳繃锛涗絾璇ヤ慨鏀逛粛鍦ㄦ彁浜ゅ墠鐙珛瀹¤涓紝鍥犳鏈枃浠朵笉鎶婂畠鏍囦负瀹屾垚銆傚璁″凡鍙戠幇
+`x//2` 杩欑被鏈煡杩愮畻绗︿粛闇€绋冲畾鏄犲皠涓虹姝㈣娉曪紝淇骞堕噸鏂伴獙璇佸悗鎵嶈兘鎻愪氦銆?
+### 5.2 M1a 鍓╀綑
 
-#### A9a：A9 前置契约修复
+1. 瀹屾垚 A9a銆佸垱寤烘彁浜ゅ苟閫氳繃鐙珛浠诲姟瀹℃煡銆?2. 瀹屾垚 A9b锛?   - `ModelingApplication` 鍏釜鐢ㄤ緥锛?   - SQLite 椤圭洰銆佸疄楠屻€丄ttempt銆丷esultSnapshot銆乂alidation 鍜屽箓绛変簨鍔★紱
+   - 鍚岃繘绋嬮潪闃诲鍐欓棬涓庤繘绋嬬骇椤圭洰閿侊紱
+   - 棰勬墽琛岄敊璇拰杩愯缁堟€佺殑绋冲畾鏄犲皠锛?   - 鐩存帴 Facade 榛勯噾閾捐矾涓庡鐜版祴璇曘€?3. 瀹屾垚 A10锛氫弗鏍?STDIO MCP 鍏伐鍏烽€傞厤鍜屽敮涓€缁勫悎鏍广€?4. 瀹屾垚 A11锛氱湡瀹?MCP 瀛愯繘绋嬮粍閲戦摼璺€佸畨鍏ㄦ祴璇曞拰 M1a evidence銆?5. 瀹屾垚 A12锛歞octor銆丄GENTS銆佷笂涓嬫枃绱㈠紩銆丆odex 閰嶇疆銆佺淮鎶ゆ枃妗ｅ拰楠屾敹鏄犲皠銆?6. 杩愯骞堕€氳繃 `modeling verify --milestone m1a`銆?
+### 5.3 C1 鍓╀綑
 
-当前工作区存在尚未提交的 A9a 修改，主要包括：
+C1.1鈥揅1.8 灏氭湭杩涘叆鐢熶骇瀹炵幇銆侻1a Hard Gate 閫氳繃鍓嶄笉寰楃紪鍐?C1 鐢熶骇浠ｇ爜銆傚悗缁渶瑕?瀹屾垚璧勪骇銆丮MIR銆亀orker銆佽€﹀悎鍨傝崱鑳藉姏銆佺嫭绔嬮獙璇併€丒xcel/鍥捐〃瀵煎嚭鍜岀湡瀹炲涓昏瘉鎹€?
+### 5.4 M1b 鍓╀綑
 
-- 将规范化后的 `Experiment`、`Attempt` 和 `Validation` 作为存储端口输入；
-- 增加验证所需的只读 `ValidationSource`；
-- 约束重放、父子关系、结果快照归属和 trace 一致性；
-- 提供深度不可变的 `ProjectStoreError`；
-- 提供宿主中立的输入拒绝、安全违规、预执行资源超限、取消、截止时间和运行期资源
-  超限异常；
-- 将求根模块的具体异常映射到上述核心契约；
-- 同步 SQLite 适配器的签名占位，但不提前实现 SQL 行为。
+B1鈥揃12 灏氭湭寮€濮嬨€傛寜褰撳墠鎵瑰噯璺嚎锛屽彧鏈?C1 Hard Gate 閫氳繃鍚庢墠鎭㈠瀹屾暣 M1b锛屽寘鎷?绋冲畾 1.0 Schema銆丷FC 8785 瀹屾暣绗﹀悎鎬с€佸唴瀹瑰鍧€鍒跺搧銆佹仮澶?閲嶆斁銆佹晠闅滄敞鍏ャ€?Windows/Ubuntu 鍙屽钩鍙伴獙璇佸拰姝ｅ紡鍙戝竷璇佹嵁銆?
+### 5.5 鍚庣画閲岀▼纰?
+Phase 0 杩樺畾涔変簡 M2鈥揗6 鐨勯暱鏈熸柟鍚戯細
 
-A9a 最近一次聚焦验证为 320 个测试通过，全量验证为 532 个测试通过，Ruff 和 MyPy
-通过；但该修改仍在提交前独立审计中，因此本文件不把它标为完成。审计已发现
-`x//2` 这类未知运算符仍需稳定映射为禁止语法，修复并重新验证后才能提交。
+- M2锛氳禌棰樸€侀檮浠跺拰鏁版嵁鍩虹锛?- M2.5锛氬彈鎺?worker銆佺‖瓒呮椂鍜岃祫婧愰檺鍒讹紱
+- M3锛歁MIR銆佸姩鎬佸缓妯″伐浣滄祦鍜岄鎵?ODE/浼樺寲/缁熻鑳藉姏锛?- M4锛欵xcel銆佸浘琛ㄣ€佸疄楠屾瘮杈冨拰璁烘枃绱犳潗锛?- M5锛氶珮绾ц兘鍔涘拰鍙€?External Plugin锛?- M6锛欳laude Code銆乀RAE 鍜屽叾浠栦骇鍝佸舰鎬併€?
+C1 浼氭彁鍓嶄互鏈夌晫棰勮鏂瑰紡楠岃瘉鍏朵腑閮ㄥ垎鑳藉姏锛屼絾涓嶄細鏇夸唬杩欎簺姝ｅ紡閲岀▼纰戙€?
+## 6. 缁存姢璇存槑
 
-### 5.2 M1a 剩余
+鏈枃浠舵槸椤圭洰瀵艰埅鍜岀姸鎬佹憳瑕侊紝涓嶆浛浠ｆ潈濞佽鏍笺€傚彂鐢熷啿绐佹椂鎸変互涓嬮『搴忓鐞嗭細
 
-1. 完成 A9a、创建提交并通过独立任务审查。
-2. 完成 A9b：
-   - `ModelingApplication` 六个用例；
-   - SQLite 项目、实验、Attempt、ResultSnapshot、Validation 和幂等事务；
-   - 同进程非阻塞写门与进程级项目锁；
-   - 预执行错误和运行终态的稳定映射；
-   - 直接 Facade 黄金链路与复现测试。
-3. 完成 A10：严格 STDIO MCP 六工具适配和唯一组合根。
-4. 完成 A11：真实 MCP 子进程黄金链路、安全测试和 M1a evidence。
-5. 完成 A12：doctor、AGENTS、上下文索引、Codex 配置、维护文档和验收映射。
-6. 运行并通过 `modeling verify --milestone m1a`。
-
-### 5.3 C1 剩余
-
-C1.1–C1.8 尚未进入生产实现。M1a Hard Gate 通过前不得编写 C1 生产代码。后续需要
-完成资产、MMIR、worker、耦合垂荡能力、独立验证、Excel/图表导出和真实宿主证据。
-
-### 5.4 M1b 剩余
-
-B1–B12 尚未开始。按当前批准路线，只有 C1 Hard Gate 通过后才恢复完整 M1b，包括
-稳定 1.0 Schema、RFC 8785 完整符合性、内容寻址制品、恢复/重放、故障注入、
-Windows/Ubuntu 双平台验证和正式发布证据。
-
-### 5.5 后续里程碑
-
-Phase 0 还定义了 M2–M6 的长期方向：
-
-- M2：赛题、附件和数据基础；
-- M2.5：受控 worker、硬超时和资源限制；
-- M3：MMIR、动态建模工作流和首批 ODE/优化/统计能力；
-- M4：Excel、图表、实验比较和论文素材；
-- M5：高级能力和可选 External Plugin；
-- M6：Claude Code、TRAE 和其他产品形态。
-
-C1 会提前以有界预览方式验证其中部分能力，但不会替代这些正式里程碑。
-
-## 6. 维护说明
-
-本文件是项目导航和状态摘要，不替代权威规格。发生冲突时按以下顺序处理：
-
-1. 已批准设计规格与实施计划决定目标和边界；
-2. 版本化 Schema 和契约决定公开数据形状；
-3. Git 提交、测试输出和 verifier 证据决定实际完成状态；
-4. 本文件随每个完成并通过独立审查的任务更新。
+1. 宸叉壒鍑嗚璁¤鏍间笌瀹炴柦璁″垝鍐冲畾鐩爣鍜岃竟鐣岋紱
+2. 鐗堟湰鍖?Schema 鍜屽绾﹀喅瀹氬叕寮€鏁版嵁褰㈢姸锛?3. Git 鎻愪氦銆佹祴璇曡緭鍑哄拰 verifier 璇佹嵁鍐冲畾瀹為檯瀹屾垚鐘舵€侊紱
+4. 鏈枃浠堕殢姣忎釜瀹屾垚骞堕€氳繃鐙珛瀹℃煡鐨勪换鍔℃洿鏂般€?
