@@ -24,6 +24,7 @@ from modeling_capabilities.root_finding.expression.syntax import (
     BinaryNode,
     CallNode,
     ExpressionAst,
+    ExpressionForbiddenSyntaxError,
     ExpressionLimitError,
     ExpressionLimits,
     ExpressionSyntaxError,
@@ -255,6 +256,27 @@ def test_parser_rejects_unicode_digits_standalone_and_in_names(
 )
 def test_parser_rejects_malformed_expressions(source: str) -> None:
     with pytest.raises(ExpressionSyntaxError):
+        parse_expression(source, ExpressionLimits())
+
+
+@pytest.mark.parametrize("source", ["x+(", "(x"])
+def test_malformed_expressions_are_not_classified_as_forbidden(
+    source: str,
+) -> None:
+    with pytest.raises(ExpressionSyntaxError) as caught:
+        parse_expression(source, ExpressionLimits())
+
+    assert not isinstance(caught.value, ExpressionForbiddenSyntaxError)
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["x.__class__", "y", "x**x", "%", "x//2", "x***2", "x**/2"],
+)
+def test_security_sensitive_syntax_has_a_distinct_parser_subtype(
+    source: str,
+) -> None:
+    with pytest.raises(ExpressionForbiddenSyntaxError):
         parse_expression(source, ExpressionLimits())
 
 

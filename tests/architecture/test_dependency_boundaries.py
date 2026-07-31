@@ -6,8 +6,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import get_type_hints
 
+import pytest
+
 from modeling_core.application.facade import ApplicationFacade
-from modeling_core.contracts.common import ProjectSummary
+from modeling_capabilities.root_finding.contracts import (
+    EvaluationBudgetExceeded,
+    EvaluationCancelled,
+    EvaluationDeadlineExceeded,
+)
+from modeling_core.contracts.capability import (
+    CapabilityInputRejected,
+    CapabilityInputResourceLimitExceeded,
+    CapabilitySecurityViolation,
+    ExecutionCancelled,
+    ExecutionDeadlineExceeded,
+    ExecutionResourceLimitExceeded,
+)
 from modeling_core.ports.project_store import (
     BeginRunCommand,
     BeginRunResult,
@@ -18,9 +32,11 @@ from modeling_core.ports.project_store import (
     CreateProjectCommand,
     ExperimentTrace,
     ExperimentTraceQuery,
+    ProjectStatusSnapshot,
     ProjectStateInspection,
     ProjectStore,
     ProjectWriteResult,
+    ValidationSource,
     StoreIntegrityReport,
     StoredRunResult,
     StoredValidationResult,
@@ -71,8 +87,9 @@ def test_project_store_exposes_exact_typed_use_case_methods() -> None:
     assert set(methods) == {
         "inspect_project_state",
         "create_or_replay_project",
-        "get_project_summary",
+        "get_project_status",
         "get_experiment_trace",
+        "get_validation_source",
         "begin_run",
         "mark_attempt_running",
         "complete_attempt",
@@ -88,13 +105,18 @@ def test_project_store_exposes_exact_typed_use_case_methods() -> None:
         "command": CreateProjectCommand,
         "return": ProjectWriteResult,
     }
-    assert get_type_hints(methods["get_project_summary"]) == {
+    assert get_type_hints(methods["get_project_status"]) == {
         "project_id": str,
-        "return": ProjectSummary,
+        "return": ProjectStatusSnapshot,
     }
     assert get_type_hints(methods["get_experiment_trace"]) == {
         "query": ExperimentTraceQuery,
         "return": ExperimentTrace,
+    }
+    assert get_type_hints(methods["get_validation_source"]) == {
+        "project_id": str,
+        "attempt_id": str,
+        "return": ValidationSource,
     }
     assert get_type_hints(methods["begin_run"]) == {
         "command": BeginRunCommand,
@@ -151,3 +173,120 @@ def test_facade_has_exactly_six_concrete_contract_methods() -> None:
     for method in methods.values():
         assert "return" in get_type_hints(method)
         assert "request" in inspect.signature(method).parameters
+
+
+def test_capability_control_errors_are_host_neutral_without_reversing_dependencies() -> None:
+    assert issubclass(EvaluationCancelled, ExecutionCancelled)
+    assert issubclass(
+        EvaluationDeadlineExceeded, ExecutionDeadlineExceeded
+    )
+    assert issubclass(
+        EvaluationBudgetExceeded, ExecutionResourceLimitExceeded
+    )
+
+    error = EvaluationBudgetExceeded("function_evaluations", 2)
+    assert error.resource == "function_evaluations"
+    assert error.limit == 2
+    assert error.observed is None
+    assert str(error) == "function_evaluations limit exceeded: 2"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("", 1, None),
+        ("resource", -1, None),
+        ("resource", True, None),
+        ("resource", 1, -1),
+        ("resource", 1, False),
+    ],
+)
+def test_host_neutral_resource_error_validates_strict_attributes(
+    arguments: tuple[object, object, object],
+) -> None:
+    with pytest.raises(ValueError):
+        ExecutionResourceLimitExceeded(*arguments)
+
+
+def test_host_neutral_pre_execution_errors_preserve_typed_metadata() -> None:
+    rejected = CapabilityInputRejected(
+        "/payload/expression",
+        "expression_parse_error",
+        "expression is malformed",
+    )
+    security = CapabilitySecurityViolation(
+        "math_expr_forbidden_syntax",
+        "expression contains forbidden syntax",
+    )
+    resource = CapabilityInputResourceLimitExceeded(
+        "expression_bytes",
+        4096,
+        4097,
+        "expression is too large",
+    )
+
+    assert isinstance(rejected, ValueError)
+    assert rejected.field_path == "/payload/expression"
+    assert rejected.reason == "expression_parse_error"
+    assert str(rejected) == "expression is malformed"
+    assert isinstance(security, ValueError)
+    assert security.rule == "math_expr_forbidden_syntax"
+    assert str(security) == "expression contains forbidden syntax"
+    assert isinstance(resource, ValueError)
+    assert not isinstance(resource, ExecutionResourceLimitExceeded)
+    assert resource.resource == "expression_bytes"
+    assert resource.limit == 4096
+    assert resource.observed == 4097
+    assert str(resource) == "expression is too large"
+
+
+@pytest.mark.parametrize(
+    ("factory", "arguments"),
+    [
+        (CapabilityInputRejected, ("payload", "out_of_range", "diagnostic")),
+        (
+            CapabilityInputRejected,
+            ("/payload/~2bad", "out_of_range", "diagnostic"),
+        ),
+        (
+            CapabilityInputRejected,
+            ("/payload", "unknown_reason", "diagnostic"),
+        ),
+        (CapabilityInputRejected, ("/payload", "out_of_range", "")),
+        (CapabilitySecurityViolation, ("unknown_rule", "diagnostic")),
+        (
+            CapabilitySecurityViolation,
+            ("math_expr_forbidden_syntax", ""),
+        ),
+        (
+            CapabilityInputResourceLimitExceeded,
+            ("", 1, None, "diagnostic"),
+        ),
+        (
+            CapabilityInputResourceLimitExceeded,
+            ("expression_bytes", True, None, "diagnostic"),
+        ),
+        (
+            CapabilityInputResourceLimitExceeded,
+            ("expression_bytes", -1, None, "diagnostic"),
+        ),
+        (
+            CapabilityInputResourceLimitExceeded,
+            ("expression_bytes", 1, False, "diagnostic"),
+        ),
+        (
+            CapabilityInputResourceLimitExceeded,
+            ("expression_bytes", 1, -1, "diagnostic"),
+        ),
+        (
+            CapabilityInputResourceLimitExceeded,
+            ("expression_bytes", 1, None, ""),
+        ),
+    ],
+)
+def test_host_neutral_pre_execution_errors_reject_invalid_contract_values(
+    factory: type[ValueError],
+    arguments: tuple[object, ...],
+) -> None:
+    with pytest.raises(ValueError):
+        factory(*arguments)

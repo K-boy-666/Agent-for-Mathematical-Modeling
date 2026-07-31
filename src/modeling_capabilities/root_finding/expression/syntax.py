@@ -147,6 +147,10 @@ class ExpressionSyntaxError(ValueError):
         super().__init__(message + suffix)
 
 
+class ExpressionForbiddenSyntaxError(ExpressionSyntaxError):
+    """The source attempts syntax forbidden by the math-expr-v1 contract."""
+
+
 class ExpressionLimitError(ValueError):
     """The source or resulting canonical AST exceeds a fixed limit."""
 
@@ -280,12 +284,16 @@ def _tokenize(source: str, limits: ExpressionLimits) -> tuple[_Token, ...]:
             tokens.append(_Token("POWER", "**", index))
             index += 2
             continue
+        if source.startswith("//", index):
+            raise ExpressionForbiddenSyntaxError(
+                "unknown operator", index
+            )
         token_kind = _SINGLE_TOKENS.get(char)
         if token_kind is not None:
             tokens.append(_Token(token_kind, char, index))
             index += 1
             continue
-        raise ExpressionSyntaxError("forbidden character", index)
+        raise ExpressionForbiddenSyntaxError("forbidden character", index)
     tokens.append(_Token("EOF", "", len(source)))
     return tuple(tokens)
 
@@ -401,12 +409,21 @@ class _Parser:
             if left_binding_power < minimum_binding_power:
                 break
             operator_token = self._advance()
+            if (
+                operator == "power"
+                and self._peek().kind
+                in {"STAR", "SLASH", "POWER"}
+            ):
+                raise ExpressionForbiddenSyntaxError(
+                    "power exponent uses a forbidden operator",
+                    self._peek().position,
+                )
             right = self._parse_bp(right_binding_power)
             if operator == "power" and (
                 not isinstance(right.node, NumberNode)
                 or not -1024.0 <= right.node.value <= 1024.0
             ):
-                raise ExpressionSyntaxError(
+                raise ExpressionForbiddenSyntaxError(
                     "power exponent must be a number from -1024 through 1024",
                     operator_token.position,
                 )
@@ -480,7 +497,9 @@ class _Parser:
                 else:
                     function = "tan"
                 return self._call(function, argument)
-            raise ExpressionSyntaxError("unknown name", token.position)
+            raise ExpressionForbiddenSyntaxError(
+                "unknown name", token.position
+            )
         raise ExpressionSyntaxError("expected expression", token.position)
 
 
@@ -706,6 +725,7 @@ __all__ = [
     "CallNode",
     "ConstantNode",
     "ExpressionAst",
+    "ExpressionForbiddenSyntaxError",
     "ExpressionLimitError",
     "ExpressionLimits",
     "ExpressionSyntaxError",

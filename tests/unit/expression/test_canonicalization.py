@@ -21,6 +21,11 @@ from modeling_capabilities.root_finding.expression.syntax import (
     ast_from_canonical_json,
 )
 from modeling_core.contracts.canonical_json import canonical_json_bytes, sha256_json
+from modeling_core.contracts.capability import (
+    CapabilityInputRejected,
+    CapabilityInputResourceLimitExceeded,
+    CapabilitySecurityViolation,
+)
 from modeling_core.contracts.common import JsonObject
 
 
@@ -231,8 +236,11 @@ def test_normalization_returns_a_frozen_canonical_input_record() -> None:
     ],
 )
 def test_raw_shape_is_strictly_validated(raw_payload: JsonObject) -> None:
-    with pytest.raises(InputValidationError):
+    with pytest.raises(InputValidationError) as caught:
         normalize_root_finding_input(raw_payload)
+
+    assert isinstance(caught.value, CapabilityInputRejected)
+    assert caught.value.reason == "capability_payload_violation"
 
 
 def test_raw_shape_validation_precedes_expression_parsing() -> None:
@@ -296,13 +304,75 @@ def test_raw_shape_validation_precedes_expression_parsing() -> None:
 def test_normalization_rejects_invalid_ranges_and_non_binary64_values(
     raw_payload: JsonObject,
 ) -> None:
-    with pytest.raises(InputValidationError):
+    with pytest.raises(InputValidationError) as caught:
         normalize_root_finding_input(raw_payload)
 
+    expected_reason = (
+        "capability_payload_violation"
+        if isinstance(raw_payload.get("max_iterations"), float)
+        else "out_of_range"
+    )
+    assert caught.value.reason == expected_reason
 
-def test_expression_failures_are_reported_as_input_validation_errors() -> None:
-    with pytest.raises(InputValidationError, match="expression"):
-        normalize_root_finding_input(_raw_payload("x.__class__"))
+
+@pytest.mark.parametrize("expression", ["x+(", "(x"])
+def test_malformed_expressions_map_to_input_rejection(
+    expression: str,
+) -> None:
+    with pytest.raises(CapabilityInputRejected) as caught:
+        normalize_root_finding_input(_raw_payload(expression))
+
+    assert caught.value.field_path == "/payload/expression"
+    assert caught.value.reason == "expression_parse_error"
+    assert str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["x.__class__", "y", "x**x", "%", "x//2", "x***2", "x**/2"],
+)
+def test_forbidden_expressions_map_to_security_violation(
+    expression: str,
+) -> None:
+    with pytest.raises(CapabilitySecurityViolation) as caught:
+        normalize_root_finding_input(_raw_payload(expression))
+
+    assert caught.value.rule == "math_expr_forbidden_syntax"
+    assert str(caught.value)
+
+
+def _balanced_sum(leaf_count: int) -> str:
+    if leaf_count == 1:
+        return "x"
+    left_count = leaf_count // 2
+    return (
+        f"({_balanced_sum(left_count)}"
+        f"+{_balanced_sum(leaf_count - left_count)})"
+    )
+
+
+@pytest.mark.parametrize(
+    ("expression", "resource", "limit", "observed"),
+    [
+        (" " * 4096 + "x", "expression_bytes", 4096, 4097),
+        ("9" * 65, "numeric_literal_chars", 64, 65),
+        (_balanced_sum(129), "ast_nodes", 256, 257),
+        ("-" * 32 + "x", "ast_depth", 32, 33),
+    ],
+)
+def test_expression_limits_map_to_input_resource_errors_with_exact_metadata(
+    expression: str,
+    resource: str,
+    limit: int,
+    observed: int,
+) -> None:
+    with pytest.raises(CapabilityInputResourceLimitExceeded) as caught:
+        normalize_root_finding_input(_raw_payload(expression))
+
+    assert caught.value.resource == resource
+    assert caught.value.limit == limit
+    assert caught.value.observed == observed
+    assert str(caught.value)
 
 
 def test_input_and_canonical_schemas_are_strict_draft_2020_12_contracts() -> None:

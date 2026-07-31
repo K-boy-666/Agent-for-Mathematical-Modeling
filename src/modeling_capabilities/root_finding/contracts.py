@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Literal
 
 from modeling_capabilities.root_finding.expression.syntax import (
+    ExpressionForbiddenSyntaxError,
     ExpressionLimitError,
     ExpressionLimits,
     ExpressionSyntaxError,
@@ -14,8 +16,14 @@ from modeling_capabilities.root_finding.expression.syntax import (
 )
 from modeling_core.contracts.canonical_json import sha256_json
 from modeling_core.contracts.capability import (
+    CapabilityInputRejected,
+    CapabilityInputResourceLimitExceeded,
+    CapabilitySecurityViolation,
     CancellationSignal,
     CanonicalInputRecord,
+    ExecutionCancelled,
+    ExecutionDeadlineExceeded,
+    ExecutionResourceLimitExceeded,
 )
 from modeling_core.contracts.common import JsonObject, JsonValue
 from modeling_core.ports.clock import Clock
@@ -28,29 +36,34 @@ MAX_AST_NODES_PER_EVALUATION = 256
 MAX_AST_DEPTH_PER_EVALUATION = 32
 
 
-class InputValidationError(ValueError):
+class InputValidationError(CapabilityInputRejected):
     """A strict root-finding payload contract violation."""
 
-    def __init__(self, field_path: str, reason: str) -> None:
-        self.field_path = field_path
-        self.reason = reason
-        super().__init__(f"{field_path}: {reason}")
+    def __init__(
+        self,
+        field_path: str,
+        reason: Literal[
+            "out_of_range",
+            "expression_parse_error",
+            "capability_payload_violation",
+        ],
+        message: str,
+    ) -> None:
+        super().__init__(field_path, reason, message)
 
 
-class EvaluationBudgetExceeded(RuntimeError):
+class EvaluationBudgetExceeded(ExecutionResourceLimitExceeded):
     """A function-evaluation or node-visit safety budget was exhausted."""
 
     def __init__(self, resource: str, limit: int) -> None:
-        self.resource = resource
-        self.limit = limit
-        super().__init__(f"{resource} limit exceeded: {limit}")
+        super().__init__(resource, limit)
 
 
-class EvaluationCancelled(RuntimeError):
+class EvaluationCancelled(ExecutionCancelled):
     """Evaluation stopped because its cancellation signal was set."""
 
 
-class EvaluationDeadlineExceeded(RuntimeError):
+class EvaluationDeadlineExceeded(ExecutionDeadlineExceeded):
     """Evaluation stopped at its monotonic deadline."""
 
 
@@ -144,30 +157,48 @@ _DEFAULTS: dict[str, JsonValue] = {
 
 def _validate_raw_shape(raw_payload: JsonObject) -> None:
     if type(raw_payload) is not dict:
-        raise InputValidationError("$", "payload must be an object")
+        raise InputValidationError(
+            "/payload",
+            "capability_payload_violation",
+            "payload must be an object",
+        )
     unknown = sorted(set(raw_payload) - _RAW_FIELDS)
     if unknown:
         raise InputValidationError(
-            "$", f"unknown field: {', '.join(unknown)}"
+            "/payload",
+            "capability_payload_violation",
+            f"unknown field: {', '.join(unknown)}",
         )
     missing = sorted(_REQUIRED_RAW_FIELDS - set(raw_payload))
     if missing:
         raise InputValidationError(
-            "$", f"missing required field: {', '.join(missing)}"
+            "/payload",
+            "capability_payload_violation",
+            f"missing required field: {', '.join(missing)}",
         )
     if type(raw_payload["expression"]) is not str:
-        raise InputValidationError("expression", "must be a string")
+        raise InputValidationError(
+            "/payload/expression",
+            "capability_payload_violation",
+            "expression must be a string",
+        )
     for field_name in _NUMBER_FIELDS:
         if field_name not in raw_payload:
             continue
         value = raw_payload[field_name]
         if isinstance(value, bool) or type(value) not in {int, float}:
-            raise InputValidationError(field_name, "must be a number")
+            raise InputValidationError(
+                f"/payload/{field_name}",
+                "capability_payload_violation",
+                f"{field_name} must be a number",
+            )
     if "max_iterations" in raw_payload:
         value = raw_payload["max_iterations"]
         if isinstance(value, bool) or type(value) is not int:
             raise InputValidationError(
-                "max_iterations", "must be an integer"
+                "/payload/max_iterations",
+                "capability_payload_violation",
+                "max_iterations must be an integer",
             )
 
 
@@ -176,11 +207,15 @@ def _to_finite_binary64(field_name: str, value: JsonValue) -> float:
         result = float(value)  # type: ignore[arg-type]
     except (OverflowError, TypeError, ValueError) as error:
         raise InputValidationError(
-            field_name, "must be a finite binary64 number"
+            f"/payload/{field_name}",
+            "out_of_range",
+            f"{field_name} must be a finite binary64 number",
         ) from error
     if not math.isfinite(result):
         raise InputValidationError(
-            field_name, "must be a finite binary64 number"
+            f"/payload/{field_name}",
+            "out_of_range",
+            f"{field_name} must be a finite binary64 number",
         )
     return 0.0 if result == 0.0 else result
 
@@ -188,7 +223,9 @@ def _to_finite_binary64(field_name: str, value: JsonValue) -> float:
 def _validate_tolerance(field_name: str, value: float) -> None:
     if not 0.0 < value <= 1.0:
         raise InputValidationError(
-            field_name, "must be greater than 0 and at most 1"
+            f"/payload/{field_name}",
+            "out_of_range",
+            f"{field_name} must be greater than 0 and at most 1",
         )
 
 
@@ -205,11 +242,23 @@ def normalize_root_finding_input(
     assert isinstance(expression, str)
     try:
         expression_ast = parse_expression(expression, ExpressionLimits())
-    except ExpressionLimitError:
-        raise
+    except ExpressionLimitError as error:
+        raise CapabilityInputResourceLimitExceeded(
+            error.resource,
+            error.limit,
+            error.observed,
+            str(error),
+        ) from error
+    except ExpressionForbiddenSyntaxError as error:
+        raise CapabilitySecurityViolation(
+            "math_expr_forbidden_syntax",
+            str(error),
+        ) from error
     except ExpressionSyntaxError as error:
         raise InputValidationError(
-            "expression", f"expression parse error: {error}"
+            "/payload/expression",
+            "expression_parse_error",
+            f"expression parse error: {error}",
         ) from error
 
     numbers = {
@@ -219,7 +268,11 @@ def normalize_root_finding_input(
         for field_name in _NUMBER_FIELDS
     }
     if numbers["upper"] <= numbers["lower"]:
-        raise InputValidationError("upper", "must be greater than lower")
+        raise InputValidationError(
+            "/payload/upper",
+            "out_of_range",
+            "upper must be greater than lower",
+        )
     for field_name in (
         "absolute_tolerance",
         "relative_tolerance",
@@ -233,7 +286,9 @@ def normalize_root_finding_input(
     )
     if not 1 <= max_iterations <= 10_000:
         raise InputValidationError(
-            "max_iterations", "must be from 1 through 10000"
+            "/payload/max_iterations",
+            "out_of_range",
+            "max_iterations must be from 1 through 10000",
         )
 
     canonical_payload: JsonObject = {

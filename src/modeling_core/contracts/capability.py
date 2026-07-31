@@ -42,6 +42,118 @@ ValidatorKey: TypeAlias = tuple[str, str]
 
 _SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 _ENTITY_ID = TypeAdapter(EntityId)
+_JSON_POINTER = re.compile(r"^(?:/(?:[^~/]|~[01])*)*$")
+
+InputRejectionReason: TypeAlias = Literal[
+    "out_of_range",
+    "expression_parse_error",
+    "capability_payload_violation",
+]
+SecurityRule: TypeAlias = Literal["math_expr_forbidden_syntax"]
+
+
+def _require_diagnostic(message: str) -> str:
+    if not isinstance(message, str) or not message:
+        raise ValueError("diagnostic message must be a non-empty string")
+    return message
+
+
+def _require_resource_limit(
+    resource: str,
+    limit: int,
+    observed: int | None,
+) -> None:
+    if not isinstance(resource, str) or not resource:
+        raise ValueError("resource must be a non-empty string")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+        raise ValueError("limit must be a non-negative integer")
+    if (
+        isinstance(observed, bool)
+        or (
+            observed is not None
+            and (not isinstance(observed, int) or observed < 0)
+        )
+    ):
+        raise ValueError("observed must be a non-negative integer or None")
+
+
+class CapabilityInputRejected(ValueError):
+    """Host-neutral rejection of a capability payload before execution."""
+
+    def __init__(
+        self,
+        field_path: str,
+        reason: InputRejectionReason,
+        message: str,
+    ) -> None:
+        if (
+            not isinstance(field_path, str)
+            or _JSON_POINTER.fullmatch(field_path) is None
+        ):
+            raise ValueError("field_path must be a valid JSON Pointer")
+        if reason not in {
+            "out_of_range",
+            "expression_parse_error",
+            "capability_payload_violation",
+        }:
+            raise ValueError("unknown capability input rejection reason")
+        self.field_path = field_path
+        self.reason = reason
+        super().__init__(_require_diagnostic(message))
+
+
+class CapabilitySecurityViolation(ValueError):
+    """Host-neutral classification for rejected unsafe capability input."""
+
+    def __init__(self, rule: SecurityRule, message: str) -> None:
+        if rule != "math_expr_forbidden_syntax":
+            raise ValueError("unknown capability security rule")
+        self.rule = rule
+        super().__init__(_require_diagnostic(message))
+
+
+class CapabilityInputResourceLimitExceeded(ValueError):
+    """A fixed pre-execution normalization limit was exceeded."""
+
+    def __init__(
+        self,
+        resource: str,
+        limit: int,
+        observed: int | None,
+        message: str,
+    ) -> None:
+        _require_resource_limit(resource, limit, observed)
+        self.resource = resource
+        self.limit = limit
+        self.observed = observed
+        super().__init__(_require_diagnostic(message))
+
+
+class ExecutionCancelled(RuntimeError):
+    """Host-neutral cooperative cancellation signal."""
+
+
+class ExecutionDeadlineExceeded(RuntimeError):
+    """Host-neutral monotonic deadline signal."""
+
+
+class ExecutionResourceLimitExceeded(RuntimeError):
+    """Host-neutral deterministic execution budget exhaustion."""
+
+    def __init__(
+        self,
+        resource: str,
+        limit: int,
+        observed: int | None = None,
+    ) -> None:
+        _require_resource_limit(resource, limit, observed)
+        self.resource = resource
+        self.limit = limit
+        self.observed = observed
+        message = f"{resource} limit exceeded: {limit}"
+        if observed is not None:
+            message += f" (observed: {observed})"
+        super().__init__(message)
 
 
 def _semver(value: str) -> tuple[int, int, int]:
@@ -514,11 +626,17 @@ __all__ = [
     "BuiltInCapability",
     "CancellationSignal",
     "CapabilityDescriptor",
+    "CapabilityInputRejected",
+    "CapabilityInputResourceLimitExceeded",
     "CapabilityKey",
+    "CapabilitySecurityViolation",
     "CapabilityValidator",
     "CanonicalInputRecord",
     "ExecutionContext",
+    "ExecutionCancelled",
+    "ExecutionDeadlineExceeded",
     "ExecutionOutcome",
+    "ExecutionResourceLimitExceeded",
     "ResultSnapshotView",
     "SchemaReference",
     "SupportedCapabilityRange",

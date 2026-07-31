@@ -189,7 +189,8 @@ def test_execute_rejects_outer_canonical_schema_version_before_evaluation(
 
     with pytest.raises(InputValidationError) as caught:
         capability.execute(mismatched, _context())
-    assert caught.value.field_path == "canonical_input_schema_version"
+    assert caught.value.field_path == "/canonical_input_schema_version"
+    assert caught.value.reason == "capability_payload_violation"
     assert evaluations == 0
 
 

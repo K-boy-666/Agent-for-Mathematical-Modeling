@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modeling_core.contracts.common import ProjectSummary
 from modeling_core.contracts.versions import VersionSet
 from modeling_core.domain.models import Project
 from modeling_core.domain.states import ProjectState
@@ -23,11 +22,13 @@ from modeling_core.ports.project_store import (
     CreateProjectCommand,
     ExperimentTrace,
     ExperimentTraceQuery,
+    ProjectStatusSnapshot,
     ProjectStateInspection,
     ProjectWriteResult,
     StoreIntegrityReport,
     StoredRunResult,
     StoredValidationResult,
+    ValidationSource,
 )
 from modeling_infrastructure.project_paths import ProjectPaths
 from modeling_infrastructure.storage import load_storage_metadata
@@ -89,11 +90,16 @@ class SQLiteProjectStore:
     ) -> ProjectWriteResult:
         raise NotImplementedError("project workflow is owned by A9")
 
-    def get_project_summary(self, project_id: str) -> ProjectSummary:
+    def get_project_status(self, project_id: str) -> ProjectStatusSnapshot:
         raise NotImplementedError("project workflow is owned by A9")
 
     def get_experiment_trace(self, query: ExperimentTraceQuery) -> ExperimentTrace:
         raise NotImplementedError("experiment workflow is owned by A9")
+
+    def get_validation_source(
+        self, project_id: str, attempt_id: str
+    ) -> ValidationSource:
+        raise NotImplementedError("validation workflow is owned by A9")
 
     def begin_run(self, command: BeginRunCommand) -> BeginRunResult:
         raise NotImplementedError("experiment workflow is owned by A9")

@@ -143,7 +143,8 @@ class BisectionRootFindingCapability:
             != CANONICAL_INPUT_SCHEMA_VERSION
         ):
             raise InputValidationError(
-                "canonical_input_schema_version",
+                "/canonical_input_schema_version",
+                "capability_payload_violation",
                 f"must equal {CANONICAL_INPUT_SCHEMA_VERSION}",
             )
         typed = CanonicalRootFindingInput.model_validate(
