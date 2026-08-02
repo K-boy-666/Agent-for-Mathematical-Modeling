@@ -334,9 +334,11 @@ stateDiagram-v2
 
 CLI <code>bootstrap</code> 只负责从 UNINITIALIZED 到 STORAGE_READY，不创建 Project 领域记录。MCP <code>create_project</code> 在 UNINITIALIZED 时复用同一存储初始化原语并继续创建 Project，在 STORAGE_READY 时只创建 Project，在 READY 时按幂等规则返回唯一 Project。
 
-存储初始化在项目根内创建唯一 <code>.modeling.tmp.&lt;uuid&gt;</code>，并生成不可变的 <code>storage_instance_id</code>；完整建立后以原子目录发布竞争决定唯一赢家，失败或竞争失败的临时目录不得被引用。READY 后由 <code>.modeling/project.lock</code> 串行化写入。
+存储初始化在项目根内创建唯一 <code>.modeling.tmp.&lt;uuid&gt;</code>，并生成不可变的 <code>storage_instance_id</code>；完整建立后以原子目录发布竞争决定唯一赢家，失败或竞争失败的临时目录不得被引用。该 bootstrap 发布必须无锁且原子：服务器构造或启动不得为取得锁而改动真正的 UNINITIALIZED 根。
 
-<code>health_check</code> 在 UNINITIALIZED 和 STORAGE_READY 都可返回 <code>status=OK</code> 与 <code>ready_for_project_creation=true</code>；在 READY 返回 <code>status=OK</code> 与 <code>ready_for_project_creation=false</code>；完整性失败返回 DEGRADED。服务器进程可在四种状态启动。
+发布后，<code>create_project</code> 必须先以非阻塞方式取得已发布赢家 <code>.modeling/project.lock</code>，重新检查存储和项目状态，随后才打开 Project 的 SQLite 事务。服务器对既有 STORAGE_READY、READY 或异常存储必须在报告就绪前尝试取得同一 OS 写租约；首次创建取得租约后，以及既有存储启动取得租约后，服务器必须将该租约保留到关闭，并在生命周期 <code>finally</code> 路径中释放。跨进程租约冲突返回可重试 <code>CONFLICT/project_busy</code>，不得创建领域实体或幂等记录。应用层 admission gate 仍是同进程门闩，SQLite 仍是纵深防御；这落实第 12.2 节的单写入服务器规则。
+
+<code>health_check</code> 必须无副作用；其 <code>ready_for_project_creation</code> 真值表为：UNINITIALIZED 和 STORAGE_READY 为 true，READY 和 DEGRADED 为 false。UNINITIALIZED、STORAGE_READY 与 READY 的健康结果可为 <code>status=OK</code>；完整性失败返回 DEGRADED。服务器进程可在四种状态启动。
 
 ### 8.2 不可变与可变对象
 

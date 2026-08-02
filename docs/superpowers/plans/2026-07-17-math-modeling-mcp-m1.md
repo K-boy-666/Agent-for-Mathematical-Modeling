@@ -1572,7 +1572,8 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
 
 - Create: `src/modeling_bootstrap/__init__.py`, `src/modeling_bootstrap/composition.py`
 - Create: `src/modeling_mcp/__init__.py`, `src/modeling_mcp/strict_stdio.py`, `src/modeling_mcp/adapter.py`, `src/modeling_mcp/server.py`, `src/modeling_mcp/__main__.py`
-- Create: `tests/contract/test_mcp_adapter.py`, `tests/architecture/test_composition_root.py`
+- Modify: `src/modeling_core/application/service.py`, `src/modeling_infrastructure/project_lock.py`, `src/modeling_infrastructure/sqlite/store.py`
+- Create: `tests/contract/test_mcp_adapter.py`, `tests/architecture/test_composition_root.py`, `tests/integration/test_mcp_lifecycle.py`
 - Modify: `pyproject.toml`, `uv.lock` only if the already declared MCP dependency resolves differently; no new dependency is allowed
 
 **Interfaces consumed:** `ApplicationFacade`, packaged tool schemas, official MCP SDK low-level `Server`, `Tool`, `CallToolResult` and protocol types.
@@ -1591,6 +1592,13 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
   - response structured content is independently validated before return and limited to 262144 UTF-8 bytes;
   - composition root registers exactly root solver and residual validator, seals registry, and supplies the only concrete store;
   - no concrete imports occur outside `modeling_bootstrap` except tests.
+  - constructing or starting on a true `UNINITIALIZED` root is byte-for-byte side-effect free; health reports `UNINITIALIZED`, `OK`, and `ready_for_project_creation=true`;
+  - first create atomically bootstraps, acquires the published winner's `project.lock`, then re-inspects state before any SQLite mutation; the lock remains held until server lifespan exit and is acquirable afterward;
+  - existing `STORAGE_READY` and `READY` storage obtains a nonblocking OS writer lease before readiness, while a contending process receives retryable `CONFLICT/project_busy` without a Project or idempotency row;
+  - two independent processes racing first create leave one complete storage instance, one Project and one create idempotency record, with no referenced loser temporary directory;
+  - a publish-to-lock handoff interleaving cannot open a transaction or create duplicate rows when the competing process acquires the published lock first;
+  - every create, run and validate mutation holds `ProjectLock`; failed acquisition opens no transaction; normal shutdown, cancellation and adapter errors release only a held lease;
+  - health asserts the four-state truth table: `ready_for_project_creation` is true only for `UNINITIALIZED` and `STORAGE_READY`, and false for `READY` and `DEGRADED`.
 
 - [ ] **Step 2: Run and observe failure**
 
@@ -1619,10 +1627,12 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
 
   `server.py` declares application `0.1.0`, protocol negotiation `2025-11-25`, and only tool capabilities. `composition.py` is the sole concrete assembly location and performs registry seal before the server reports ready.
 
+  Writer-lease lifecycle is concrete infrastructure behavior, not an adapter or core port: process construction leaves a true `UNINITIALIZED` root untouched. For existing storage, composition starts one nonblocking OS writer lease before readiness and re-inspects the held storage; it retains the lease for the server lifetime and releases it in the lifespan `finally` path. On first create, the application admission gate remains the same-process gate, then the store atomically bootstraps lock-free, acquires the published winner's `project.lock`, re-inspects state, and only then opens the Project SQLite transaction. A cross-process lease conflict returns retryable `CONFLICT/project_busy` with no entity or idempotency row. SQLite remains defense in depth under the lease.
+
 - [ ] **Step 5: Run focused tests and process help**
 
   ```powershell
-  uv run --locked --no-sync pytest tests/contract/test_mcp_adapter.py tests/architecture/test_composition_root.py -q
+  uv run --locked --no-sync pytest tests/contract/test_mcp_adapter.py tests/architecture/test_composition_root.py tests/integration/test_mcp_lifecycle.py -q
   uv run --locked --no-sync modeling-mcp --help
   ```
 
@@ -1631,9 +1641,9 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
 - [ ] **Step 6: Run architecture and contract regressions**
 
   ```powershell
-  uv run --locked --no-sync ruff check src/modeling_mcp src/modeling_bootstrap tests/contract/test_mcp_adapter.py tests/architecture
+  uv run --locked --no-sync ruff check src/modeling_mcp src/modeling_bootstrap src/modeling_core/application/service.py src/modeling_infrastructure/project_lock.py src/modeling_infrastructure/sqlite/store.py tests/contract/test_mcp_adapter.py tests/architecture tests/integration/test_mcp_lifecycle.py
   uv run --locked --no-sync mypy src
-  uv run --locked --no-sync pytest tests/contract tests/architecture tests/integration/test_application_workflow.py -q
+  uv run --locked --no-sync pytest tests/contract tests/architecture tests/integration/test_application_workflow.py tests/integration/test_mcp_lifecycle.py -q
   ```
 
   Expected: exit 0; no host brand appears under `src/modeling_core`.
@@ -1641,11 +1651,11 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
 - [ ] **Step 7: Commit**
 
   ```powershell
-  git add pyproject.toml uv.lock src/modeling_bootstrap src/modeling_mcp tests/contract/test_mcp_adapter.py tests/architecture/test_composition_root.py
+  git add pyproject.toml uv.lock src/modeling_bootstrap src/modeling_mcp src/modeling_core/application/service.py src/modeling_infrastructure/project_lock.py src/modeling_infrastructure/sqlite/store.py tests/contract/test_mcp_adapter.py tests/architecture/test_composition_root.py tests/integration/test_mcp_lifecycle.py
   git commit -m "feat: expose six tools over strict STDIO MCP"
   ```
 
-**Acceptance:** MCP layer has no numerical algorithm or SQLite call, only six tools are advertised, malformed raw JSON is rejected before use, and STDOUT after session start can contain only protocol frames.
+**Acceptance:** MCP layer has no numerical algorithm or SQLite call, only six tools are advertised, malformed raw JSON is rejected before use, and STDOUT after session start can contain only protocol frames. Server construction is side-effect free for a true `UNINITIALIZED` root; existing storage is writer-leased before readiness, first create publishes storage atomically then acquires and re-inspects under the published winner's lease before any SQLite mutation, and the lease is released in `finally` on normal or error shutdown. Cross-process contention is retryable `CONFLICT/project_busy` without a Project or idempotency row; application admission remains the same-process gate and SQLite remains defense in depth.
 
 ### Task A11: Prove the real STDIO golden chain and assemble the M1a test harness
 
