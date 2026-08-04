@@ -182,21 +182,25 @@ class SQLiteProjectStore:
 
     @contextmanager
     def _write(self, *, degrade_on_failure: bool = False) -> Iterator[sqlite3.Connection]:
-        connection = self._connect(named_rows=True)
-        connection.isolation_level = None
+        connection: sqlite3.Connection | None = None
         try:
+            connection = self._connect(named_rows=True)
+            connection.isolation_level = None
             connection.execute("BEGIN IMMEDIATE")
             yield connection
             connection.execute("COMMIT")
         except ProjectStoreError:
-            if connection.in_transaction:
+            if connection is not None and connection.in_transaction:
                 connection.execute("ROLLBACK")
             raise
         except sqlite3.OperationalError as error:
-            if connection.in_transaction:
+            if connection is not None and connection.in_transaction:
                 connection.execute("ROLLBACK")
             error_code = getattr(error, "sqlite_errorcode", 0) or 0
-            if error_code & 0xFF in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+            if (
+                not degrade_on_failure
+                and error_code & 0xFF in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+            ):
                 raise ProjectStoreError(
                     "CONFLICT",
                     "project storage is busy",
@@ -212,7 +216,7 @@ class SQLiteProjectStore:
                 {"subject": "database_relation"},
             ) from error
         except (OSError, sqlite3.DatabaseError, ValueError) as error:
-            if connection.in_transaction:
+            if connection is not None and connection.in_transaction:
                 connection.execute("ROLLBACK")
             if degrade_on_failure:
                 self._degraded = True
@@ -223,7 +227,8 @@ class SQLiteProjectStore:
                 {"subject": "database_relation"},
             ) from error
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
     def _now(self) -> datetime:
         value = self._clock.utc_now() if self._clock is not None else datetime.now(UTC)
@@ -443,7 +448,13 @@ class SQLiteProjectStore:
                 state=ProjectState.READY,
                 project=self._project_from_row(rows[0]),
             )
-        except (StorageError, OSError, sqlite3.DatabaseError, ValueError):
+        except (
+            ProjectStoreError,
+            StorageError,
+            OSError,
+            sqlite3.DatabaseError,
+            ValueError,
+        ):
             return ProjectStateInspection(state=ProjectState.DEGRADED)
 
     def create_or_replay_project(
@@ -780,16 +791,49 @@ class SQLiteProjectStore:
             if replay is not None:
                 experiment_id = replay.get("experiment_id")
                 attempt_id = replay.get("attempt_id")
+                if (
+                    set(replay) != {"experiment_id", "attempt_id"}
+                    or not isinstance(experiment_id, str)
+                    or not isinstance(attempt_id, str)
+                ):
+                    raise ProjectStoreError(
+                        "INTEGRITY_FAILURE",
+                        "completed run references invalid state",
+                        False,
+                        {"subject": "database_relation"},
+                    )
                 experiment_row = connection.execute(
                     "SELECT * FROM experiments WHERE experiment_id=? AND project_id=?",
                     (experiment_id, command.experiment.project_id),
                 ).fetchone()
-                if experiment_row is None or not isinstance(attempt_id, str):
+                try:
+                    attempt_row = self._attempt_row(connection, attempt_id)
+                except ProjectStoreError as error:
+                    if error.code != "NOT_FOUND":
+                        raise
+                    raise ProjectStoreError(
+                        "INTEGRITY_FAILURE",
+                        "completed run references missing state",
+                        False,
+                        {"subject": "database_relation"},
+                    ) from error
+                if (
+                    experiment_row is None
+                    or attempt_row["experiment_id"] != experiment_id
+                    or attempt_row["status"]
+                    not in {
+                        "SUCCEEDED",
+                        "NUMERICAL_FAILURE",
+                        "ERRORED",
+                        "TIMED_OUT",
+                        "ABANDONED",
+                    }
+                ):
                     raise ProjectStoreError(
                         "INTEGRITY_FAILURE", "completed run references missing state", False,
                         {"subject": "database_relation"},
                     )
-                attempt = self._attempt_from_row(self._attempt_row(connection, attempt_id))
+                attempt = self._attempt_from_row(attempt_row)
                 return BeginRunResult(
                     experiment=self._experiment_from_row(experiment_row),
                     attempt=attempt, replayed=True,
@@ -978,6 +1022,8 @@ class SQLiteProjectStore:
                     stored is None
                     or set(replay) != {"validation_id"}
                     or not isinstance(validation_id, str)
+                    or stored["status"]
+                    not in {"SUCCEEDED", "ERRORED", "TIMED_OUT", "ABANDONED"}
                 ):
                     raise ProjectStoreError(
                         "INTEGRITY_FAILURE", "completed validation references missing state", False,
@@ -1176,7 +1222,7 @@ class SQLiteProjectStore:
                     "SELECT 1 FROM idempotency_records WHERE status='IN_PROGRESS' LIMIT 1"
                 ).fetchone() is not None:
                     issues.append("stale_operation")
-        except (OSError, sqlite3.DatabaseError, ValueError):
+        except (ProjectStoreError, OSError, sqlite3.DatabaseError, ValueError):
             issues.append("database_relation")
         return StoreIntegrityReport(
             state=ProjectState.DEGRADED if issues else inspection.state,

@@ -84,6 +84,7 @@ from modeling_core.contracts.tools import (
     ValidateExperimentStoppedResult,
     ValidateExperimentSucceededResult,
     ValidationTrace,
+    ValidationReportPayload,
 )
 from modeling_core.contracts.versions import VersionSet
 from modeling_core.domain.models import (
@@ -281,7 +282,6 @@ class ModelingApplication(ApplicationFacade):
             raise ValueError("default_display_name must be Unicode NFC")
         self._default_display_name = default_display_name
         self._write_gate = threading.Lock()
-        self._active_write: tuple[str, str] | None = None
 
     def _common(self) -> _CommonFields:
         return {
@@ -349,34 +349,20 @@ class ModelingApplication(ApplicationFacade):
     def _acquire_write(
         self,
         correlation_id: str,
-        tool_name: str,
-        operation_id: str,
     ) -> None:
         if not self._write_gate.acquire(blocking=False):
-            active = self._active_write
-            same_operation = active == (tool_name, operation_id)
             self._raise_error(
                 correlation_id=correlation_id,
                 code="CONFLICT",
-                message=(
-                    "operation is already in progress"
-                    if same_operation
-                    else "another project write is in progress"
-                ),
+                message="another project write is in progress",
                 retryable=True,
                 details={
-                    "conflict_type": (
-                        "operation_in_progress"
-                        if same_operation
-                        else "project_busy"
-                    ),
+                    "conflict_type": "project_busy",
                     "retry_after_ms": 250,
                 },
             )
-        self._active_write = (tool_name, operation_id)
 
     def _release_write(self) -> None:
-        self._active_write = None
         self._write_gate.release()
 
     def _require_ready(self, project_id: str, correlation_id: str) -> Project:
@@ -446,9 +432,7 @@ class ModelingApplication(ApplicationFacade):
     def create_project(self, request: CreateProjectRequest) -> CreateProjectResult:
         common = self._common()
         correlation_id = common["correlation_id"]
-        self._acquire_write(
-            correlation_id, "create_project", request.operation_id
-        )
+        self._acquire_write(correlation_id)
         try:
             inspection = self._store.inspect_project_state()
             integrity = self._store.inspect_integrity(deep=False)
@@ -689,9 +673,7 @@ class ModelingApplication(ApplicationFacade):
     def run_experiment(self, request: RunExperimentRequest) -> RunExperimentResult:
         common = self._common()
         correlation_id = common["correlation_id"]
-        self._acquire_write(
-            correlation_id, "run_experiment", request.operation_id
-        )
+        self._acquire_write(correlation_id)
         try:
             self._require_ready(request.project_id, correlation_id)
             try:
@@ -859,11 +841,23 @@ class ModelingApplication(ApplicationFacade):
                         cancellation=self._cancellation,
                     ),
                 )
-                result_hash = sha256_json(
-                    cast(
-                        JsonObject,
-                        outcome.result_payload.model_dump(mode="json"),
+                result_document = cast(
+                    JsonObject,
+                    outcome.result_payload.model_dump(mode="python"),
+                )
+                strict_result_payload: (
+                    SuccessResultPayload | FailureResultPayload
+                )
+                if outcome.result_kind == "success":
+                    strict_result_payload = SuccessResultPayload.model_validate(
+                        result_document, strict=True
                     )
+                else:
+                    strict_result_payload = FailureResultPayload.model_validate(
+                        result_document, strict=True
+                    )
+                result_hash = sha256_json(
+                    cast(JsonObject, strict_result_payload.model_dump(mode="json"))
                 )
                 result_snapshot = ResultSnapshot(
                     result_snapshot_id=self._ids.new_uuid4(),
@@ -874,19 +868,19 @@ class ModelingApplication(ApplicationFacade):
                         self._versions.result_schema_version,
                     ),
                     result_hash=result_hash,
-                    result_payload=outcome.result_payload,
+                    result_payload=strict_result_payload,
                 )
                 if outcome.result_kind == "success":
                     final_status = AttemptStatus.SUCCEEDED
                 else:
                     final_status = AttemptStatus.NUMERICAL_FAILURE
                     if not isinstance(
-                        outcome.result_payload, FailureResultPayload
+                        strict_result_payload, FailureResultPayload
                     ):
                         raise ValueError(
                             "numerical failure has the wrong payload type"
                         )
-                    numerical_failure = outcome.result_payload.data
+                    numerical_failure = strict_result_payload.data
             except ExecutionDeadlineExceeded:
                 final_status = AttemptStatus.TIMED_OUT
                 terminal_reason = TerminalReason.DEADLINE_EXCEEDED
@@ -1022,9 +1016,7 @@ class ModelingApplication(ApplicationFacade):
     ) -> ValidateExperimentResult:
         common = self._common()
         correlation_id = common["correlation_id"]
-        self._acquire_write(
-            correlation_id, "validate_experiment", request.operation_id
-        )
+        self._acquire_write(correlation_id)
         try:
             self._require_ready(request.project_id, correlation_id)
             try:
@@ -1210,7 +1202,7 @@ class ModelingApplication(ApplicationFacade):
             operational_error: ErrorResponse | None = None
             terminal_reason: TerminalReason | None = None
             try:
-                report_payload = validator.validate(
+                raw_report_payload = validator.validate(
                     canonical,
                     ResultSnapshotView(
                         result_snapshot_id=(
@@ -1230,6 +1222,12 @@ class ModelingApplication(ApplicationFacade):
                         clock=self._clock,
                         cancellation=self._cancellation,
                     ),
+                )
+                report_payload = ValidationReportPayload.model_validate(
+                    raw_report_payload.model_dump(
+                        mode="python", warnings="none"
+                    ),
+                    strict=True,
                 )
                 outcome = ValidationOutcome(report_payload.outcome)
                 metrics = report_payload.metrics

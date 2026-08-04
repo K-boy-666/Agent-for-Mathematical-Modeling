@@ -19,6 +19,7 @@ from modeling_capabilities.root_finding.validator import (
 )
 from modeling_core.application import ModelingApplication
 from modeling_core.contracts.capability import (
+    ExecutionOutcome,
     ExecutionCancelled,
     ExecutionDeadlineExceeded,
     ExecutionResourceLimitExceeded,
@@ -35,6 +36,8 @@ from modeling_core.contracts.tools import (
     ListCapabilitiesContractRequest,
     ListCapabilitiesSummaryRequest,
     RootFindingInput,
+    ResultSuccessData,
+    SuccessResultPayload,
     RunExperimentErroredResult,
     RunExperimentNumericalFailureResult,
     RunExperimentRequest,
@@ -101,6 +104,27 @@ class _CommitFailingConnection:
     ) -> sqlite3.Cursor:
         if sql == "COMMIT":
             raise sqlite3.OperationalError("injected final commit failure")
+        return self._connection.execute(sql, parameters)  # type: ignore[arg-type]
+
+
+class _CommitErrorConnection:
+    def __init__(
+        self, connection: sqlite3.Connection, error: sqlite3.OperationalError
+    ) -> None:
+        object.__setattr__(self, "_connection", connection)
+        object.__setattr__(self, "_error", error)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._connection, name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        setattr(self._connection, name, value)
+
+    def execute(
+        self, sql: str, parameters: object = ()
+    ) -> sqlite3.Cursor:
+        if sql == "COMMIT":
+            raise self._error
         return self._connection.execute(sql, parameters)  # type: ignore[arg-type]
 
 
@@ -218,6 +242,41 @@ def test_six_use_cases_reconstruct_a_validated_root_finding_trace(
     ]
     assert trace.trace[0].attempt_id == run.attempt_id
     assert trace.trace[1].validation_id == validation.validation_id
+
+
+def test_health_degrades_when_project_state_inspection_is_translated(
+    tmp_path: Path,
+) -> None:
+    """Catches translated state-inspection failures escaping health_check."""
+    application = _build_application(tmp_path)
+    database = tmp_path / ".modeling" / "state.sqlite3"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute("DROP TABLE projects")
+        connection.commit()
+
+    health = application.health_check(HealthCheckRequest())
+
+    assert health.status == "DEGRADED"
+    assert health.project_state == "DEGRADED"
+    assert health.ready_for_project_creation is False
+
+
+def test_health_degrades_when_integrity_inspection_is_translated(
+    tmp_path: Path,
+) -> None:
+    """Catches translated integrity-inspection failures escaping health_check."""
+    application = _build_application(tmp_path)
+    application.create_project(CreateProjectRequest(operation_id=_uuid(9)))
+    database = tmp_path / ".modeling" / "state.sqlite3"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute("DROP TABLE idempotency_records")
+        connection.commit()
+
+    health = application.health_check(HealthCheckRequest())
+
+    assert health.status == "DEGRADED"
+    assert health.project_state == "DEGRADED"
+    assert health.ready_for_project_creation is False
 
 
 def test_stale_active_state_degrades_health_and_refuses_new_writes(
@@ -431,6 +490,91 @@ def test_run_replay_rejects_cross_experiment_references(
     assert captured.value.response.details.subject == "database_relation"
 
 
+def test_run_replay_rejects_extra_response_reference_keys(
+    tmp_path: Path,
+) -> None:
+    """Catches completed run refs accepting an ambiguous expanded shape."""
+    application = _build_application(tmp_path)
+    project = application.create_project(
+        CreateProjectRequest(operation_id=_uuid(43))
+    )
+    request = RunExperimentRequest(
+        operation_id=_uuid(44),
+        project_id=project.project_id,
+        mode="new",
+        capability=CapabilitySelection(
+            capability_id="numerical.root_finding",
+            contract_version="0.1.0",
+        ),
+        payload=RootFindingInput(
+            expression="x*x - 2", lower=0.0, upper=2.0
+        ),
+    )
+    first = application.run_experiment(request)
+    assert isinstance(first, RunExperimentSucceededResult)
+
+    database = tmp_path / ".modeling" / "state.sqlite3"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute(
+            "UPDATE idempotency_records SET result_entity_references=? "
+            "WHERE tool_name='run_experiment' AND operation_id=?",
+            (
+                '{"attempt_id":"'
+                + first.attempt_id
+                + '","experiment_id":"'
+                + first.experiment_id
+                + '","unexpected":"reference"}',
+                request.operation_id,
+            ),
+        )
+        connection.commit()
+
+    with pytest.raises(ModelingError) as captured:
+        application.run_experiment(request)
+    assert captured.value.response.code == "INTEGRITY_FAILURE"
+    assert captured.value.response.details.subject == "database_relation"
+
+
+def test_run_replay_rejects_missing_attempt_reference_as_integrity_failure(
+    tmp_path: Path,
+) -> None:
+    """Catches a dangling COMPLETED reference being reported as user absence."""
+    application = _build_application(tmp_path)
+    project = application.create_project(
+        CreateProjectRequest(operation_id=_uuid(45))
+    )
+    request = RunExperimentRequest(
+        operation_id=_uuid(46),
+        project_id=project.project_id,
+        mode="new",
+        capability=CapabilitySelection(
+            capability_id="numerical.root_finding",
+            contract_version="0.1.0",
+        ),
+        payload=RootFindingInput(
+            expression="x*x - 2", lower=0.0, upper=2.0
+        ),
+    )
+    first = application.run_experiment(request)
+    assert isinstance(first, RunExperimentSucceededResult)
+
+    database = tmp_path / ".modeling" / "state.sqlite3"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute(
+            "DELETE FROM result_snapshots WHERE attempt_id=?",
+            (first.attempt_id,),
+        )
+        connection.execute(
+            "DELETE FROM attempts WHERE attempt_id=?", (first.attempt_id,)
+        )
+        connection.commit()
+
+    with pytest.raises(ModelingError) as captured:
+        application.run_experiment(request)
+    assert captured.value.response.code == "INTEGRITY_FAILURE"
+    assert captured.value.response.details.subject == "database_relation"
+
+
 def test_validation_replay_rejects_cross_attempt_reference(
     tmp_path: Path,
 ) -> None:
@@ -556,6 +700,112 @@ def test_run_terminal_commit_failure_rolls_back_and_degrades_store(
             "WHERE tool_name='run_experiment' AND operation_id=?",
             (request.operation_id,),
         ).fetchone() == ("IN_PROGRESS",)
+
+
+@pytest.mark.parametrize("sqlite_error", [sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED])
+def test_terminal_busy_or_locked_commit_failure_degrades_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_error: int,
+) -> None:
+    """A terminal SQLite contention failure must fail closed in memory."""
+    versions = VersionSet.m1a()
+    store = SQLiteProjectStore(tmp_path, versions)
+    application = _build_application(tmp_path, store=store)
+    project = application.create_project(
+        CreateProjectRequest(operation_id=_uuid(62 + sqlite_error))
+    )
+    original_connect = store._connect
+    original_complete = store.complete_attempt
+    armed = False
+    error = sqlite3.OperationalError("injected terminal contention")
+    error.sqlite_errorcode = sqlite_error
+
+    def connect(*, named_rows: bool = False) -> sqlite3.Connection:
+        connection = original_connect(named_rows=named_rows)
+        if not armed:
+            return connection
+        return _CommitErrorConnection(connection, error)  # type: ignore[return-value]
+
+    def complete_with_failed_commit(command: object) -> object:
+        nonlocal armed
+        armed = True
+        try:
+            return original_complete(command)  # type: ignore[arg-type]
+        finally:
+            armed = False
+
+    monkeypatch.setattr(store, "_connect", connect)
+    monkeypatch.setattr(store, "complete_attempt", complete_with_failed_commit)
+    with pytest.raises(ModelingError) as captured:
+        application.run_experiment(
+            RunExperimentRequest(
+                operation_id=_uuid(64 + sqlite_error),
+                project_id=project.project_id,
+                mode="new",
+                capability=CapabilitySelection(
+                    capability_id="numerical.root_finding",
+                    contract_version="0.1.0",
+                ),
+                payload=RootFindingInput(
+                    expression="x*x - 2", lower=0.0, upper=2.0
+                ),
+            )
+        )
+
+    assert captured.value.response.code == "INTEGRITY_FAILURE"
+    assert store.inspect_project_state().state.value == "DEGRADED"
+
+
+def test_terminal_connection_failure_is_translated_and_degrades_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches terminal connection setup errors escaping without fail-close."""
+    versions = VersionSet.m1a()
+    store = SQLiteProjectStore(tmp_path, versions)
+    application = _build_application(tmp_path, store=store)
+    project = application.create_project(
+        CreateProjectRequest(operation_id=_uuid(66))
+    )
+    original_connect = store._connect
+    original_complete = store.complete_attempt
+    armed = False
+
+    def connect(*, named_rows: bool = False) -> sqlite3.Connection:
+        if armed:
+            raise OSError("injected terminal connect failure")
+        return original_connect(named_rows=named_rows)
+
+    def complete_without_connection(command: object) -> object:
+        nonlocal armed
+        armed = True
+        try:
+            return original_complete(command)  # type: ignore[arg-type]
+        finally:
+            armed = False
+
+    monkeypatch.setattr(store, "_connect", connect)
+    monkeypatch.setattr(store, "complete_attempt", complete_without_connection)
+    with pytest.raises(ModelingError) as captured:
+        application.run_experiment(
+            RunExperimentRequest(
+                operation_id=_uuid(67),
+                project_id=project.project_id,
+                mode="new",
+                capability=CapabilitySelection(
+                    capability_id="numerical.root_finding",
+                    contract_version="0.1.0",
+                ),
+                payload=RootFindingInput(
+                    expression="x*x - 2", lower=0.0, upper=2.0
+                ),
+            )
+        )
+
+    assert captured.value.response.code == "INTEGRITY_FAILURE"
+    assert captured.value.response.details.subject == "database_relation"
+    assert store.inspect_project_state().state.value == "DEGRADED"
 
 
 def test_create_commit_failure_rolls_back_and_degrades_store(
@@ -1191,6 +1441,67 @@ def test_solver_terminal_errors_are_durable_and_replayable(
         assert second.system_error.code == expected_detail
 
 
+def test_solver_output_is_strictly_reconstructed_before_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches model_construct bypasses being hashed as trusted solver output."""
+    calls = 0
+
+    def malformed_output(*_args: object, **_kwargs: object) -> ExecutionOutcome:
+        nonlocal calls
+        calls += 1
+        data = ResultSuccessData.model_construct(
+            root=0.0,
+            function_value=0.0,
+            iterations=-1,
+            evaluations=0,
+            termination_reason="not-a-terminal-reason",
+        )
+        payload = SuccessResultPayload.model_construct(
+            result_schema_version="modeling-result/0.1.0",
+            capability_id="numerical.root_finding",
+            contract_version="0.1.0",
+            result_kind="success",
+            data=data,
+        )
+        return ExecutionOutcome.success(payload)
+
+    monkeypatch.setattr(
+        BisectionRootFindingCapability, "execute", malformed_output
+    )
+    application = _build_application(tmp_path)
+    project = application.create_project(
+        CreateProjectRequest(operation_id=_uuid(165))
+    )
+    request = RunExperimentRequest(
+        operation_id=_uuid(166),
+        project_id=project.project_id,
+        mode="new",
+        capability=CapabilitySelection(
+            capability_id="numerical.root_finding",
+            contract_version="0.1.0",
+        ),
+        payload=RootFindingInput(expression="x", lower=-1.0, upper=1.0),
+    )
+
+    first = application.run_experiment(request)
+    replay = application.run_experiment(request)
+
+    assert isinstance(first, RunExperimentErroredResult)
+    assert isinstance(replay, RunExperimentErroredResult)
+    assert first.system_error.code == "INTERNAL_ERROR"
+    assert replay.system_error.code == "INTERNAL_ERROR"
+    assert replay.replayed is True
+    assert calls == 1
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM result_snapshots"
+        ).fetchone() == (0,)
+
+
 def test_validator_failed_report_round_trips_and_replays(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1324,7 +1635,76 @@ def test_validator_exception_is_durable_and_replayable(
     assert calls == 1
 
 
-def test_concurrent_write_gate_distinguishes_same_operation_and_project_busy(
+def test_validator_output_is_strictly_reconstructed_before_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches model_construct bypasses being hashed as a trusted report."""
+    original_validate = ResidualRootFindingValidator.validate
+    calls = 0
+
+    def malformed_report(
+        self: ResidualRootFindingValidator,
+        *args: object,
+        **kwargs: object,
+    ) -> ValidationReportPayload:
+        nonlocal calls
+        calls += 1
+        valid = original_validate(self, *args, **kwargs)  # type: ignore[arg-type]
+        document = valid.model_dump(mode="python")
+        document["metrics"] = "not-validation-metrics"
+        return ValidationReportPayload.model_construct(**document)
+
+    monkeypatch.setattr(
+        ResidualRootFindingValidator, "validate", malformed_report
+    )
+    application = _build_application(tmp_path)
+    project = application.create_project(
+        CreateProjectRequest(operation_id=_uuid(185))
+    )
+    run = application.run_experiment(
+        RunExperimentRequest(
+            operation_id=_uuid(186),
+            project_id=project.project_id,
+            mode="new",
+            capability=CapabilitySelection(
+                capability_id="numerical.root_finding",
+                contract_version="0.1.0",
+            ),
+            payload=RootFindingInput(
+                expression="x*x - 2", lower=0.0, upper=2.0
+            ),
+        )
+    )
+    assert isinstance(run, RunExperimentSucceededResult)
+    request = ValidateExperimentRequest(
+        operation_id=_uuid(187),
+        project_id=project.project_id,
+        attempt_id=run.attempt_id,
+        expected_result_hash=run.result_hash,
+        validator_id="numerical.root_finding.residual",
+        policy_version="0.1.0",
+        policy={},
+    )
+
+    first = application.validate_experiment(request)
+    replay = application.validate_experiment(request)
+
+    assert isinstance(first, ValidateExperimentErroredResult)
+    assert isinstance(replay, ValidateExperimentErroredResult)
+    assert first.operational_error.code == "INTERNAL_ERROR"
+    assert replay.operational_error.code == "INTERNAL_ERROR"
+    assert replay.replayed is True
+    assert calls == 1
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
+        assert connection.execute(
+            "SELECT report_payload_json FROM validations"
+        ).fetchone() == (None,)
+
+
+def test_concurrent_write_gate_always_reports_project_busy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1380,7 +1760,7 @@ def test_concurrent_write_gate_distinguishes_same_operation_and_project_busy(
         assert same_operation.value.response.retryable is True
         assert (
             same_operation.value.response.details.conflict_type
-            == "operation_in_progress"
+            == "project_busy"
         )
 
         with pytest.raises(ModelingError) as project_busy:
@@ -1404,6 +1784,93 @@ def test_concurrent_write_gate_distinguishes_same_operation_and_project_busy(
             "SELECT COUNT(*) FROM idempotency_records "
             "WHERE tool_name='run_experiment'"
         ).fetchone() == (1,)
+
+
+def test_pre_persistence_gate_loser_defers_idempotency_to_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches gate claiming operation_in_progress before durable admission."""
+    entered = threading.Event()
+    release = threading.Event()
+    original_normalize = BisectionRootFindingCapability.normalize_and_validate
+
+    def blocked_normalize(
+        self: BisectionRootFindingCapability,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        entered.set()
+        if not release.wait(timeout=5):
+            raise AssertionError("test did not release blocked normalization")
+        return original_normalize(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        BisectionRootFindingCapability,
+        "normalize_and_validate",
+        blocked_normalize,
+    )
+    application = _build_application(tmp_path)
+    project = application.create_project(
+        CreateProjectRequest(operation_id=_uuid(193))
+    )
+    request = RunExperimentRequest(
+        operation_id=_uuid(194),
+        project_id=project.project_id,
+        mode="new",
+        capability=CapabilitySelection(
+            capability_id="numerical.root_finding",
+            contract_version="0.1.0",
+        ),
+        payload=RootFindingInput(
+            expression="x*x - 2", lower=0.0, upper=2.0
+        ),
+    )
+    outcome: list[object] = []
+
+    def run_first() -> None:
+        try:
+            outcome.append(application.run_experiment(request))
+        except BaseException as error:
+            outcome.append(error)
+
+    worker = threading.Thread(target=run_first)
+    worker.start()
+    assert entered.wait(timeout=5)
+    try:
+        with closing(
+            sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+        ) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM idempotency_records "
+                "WHERE tool_name='run_experiment' AND operation_id=?",
+                (request.operation_id,),
+            ).fetchone() == (0,)
+        with pytest.raises(ModelingError) as busy:
+            application.run_experiment(request)
+        assert busy.value.response.code == "CONFLICT"
+        assert busy.value.response.retryable is True
+        assert busy.value.response.details.conflict_type == "project_busy"
+    finally:
+        release.set()
+        worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], RunExperimentSucceededResult)
+    with pytest.raises(ModelingError) as mismatch:
+        application.run_experiment(
+            request.model_copy(
+                update={
+                    "payload": RootFindingInput(
+                        expression="x - 1", lower=0.0, upper=2.0
+                    )
+                }
+            )
+        )
+    assert mismatch.value.response.code == "CONFLICT"
+    assert mismatch.value.response.retryable is False
+    assert mismatch.value.response.details.conflict_type == "idempotency_mismatch"
 
 
 def test_list_capabilities_distinguishes_unknown_id_and_version(
