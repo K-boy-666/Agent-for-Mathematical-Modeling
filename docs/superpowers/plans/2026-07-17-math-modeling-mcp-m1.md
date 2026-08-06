@@ -1574,7 +1574,7 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
 - Create: `src/modeling_mcp/__init__.py`, `src/modeling_mcp/strict_stdio.py`, `src/modeling_mcp/adapter.py`, `src/modeling_mcp/server.py`, `src/modeling_mcp/__main__.py`
 - Modify: `src/modeling_core/application/service.py`, `src/modeling_infrastructure/project_lock.py`, `src/modeling_infrastructure/sqlite/store.py`
 - Create: `tests/contract/test_mcp_adapter.py`, `tests/architecture/test_composition_root.py`, `tests/integration/test_mcp_lifecycle.py`
-- Modify: `pyproject.toml`, `uv.lock` only if the already declared MCP dependency resolves differently; no new dependency is allowed
+- Modify: `pyproject.toml` to add `src/modeling_mcp` and `src/modeling_bootstrap` to the Hatch wheel package list and preserve the existing `modeling-mcp` entry point; modify `uv.lock` only if the already declared MCP dependency resolves differently; no new dependency is allowed
 
 **Interfaces consumed:** `ApplicationFacade`, packaged tool schemas, official MCP SDK low-level `Server`, `Tool`, `CallToolResult` and protocol types.
 
@@ -1592,6 +1592,7 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
   - response structured content is independently validated before return and limited to 262144 UTF-8 bytes;
   - composition root registers exactly root solver and residual validator, seals registry, and supplies the only concrete store;
   - no concrete imports occur outside `modeling_bootstrap` except tests.
+  - `uv run --locked --no-sync` imports both new packages without a `PYTHONPATH` override, and the built wheel contains both packages;
   - constructing or starting on a true `UNINITIALIZED` root is byte-for-byte side-effect free; health reports `UNINITIALIZED`, `OK`, and `ready_for_project_creation=true`;
   - first create atomically bootstraps, acquires the published winner's `project.lock`, then re-inspects state before any SQLite mutation; the lock remains held until server lifespan exit and is acquirable afterward;
   - existing `STORAGE_READY` and `READY` storage obtains a nonblocking OS writer lease before readiness, while a contending process receives retryable `CONFLICT/project_busy` without a Project or idempotency row;
@@ -1655,7 +1656,7 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
   git commit -m "feat: expose six tools over strict STDIO MCP"
   ```
 
-**Acceptance:** MCP layer has no numerical algorithm or SQLite call, only six tools are advertised, malformed raw JSON is rejected before use, and STDOUT after session start can contain only protocol frames. Server construction is side-effect free for a true `UNINITIALIZED` root; existing storage is writer-leased before readiness, first create publishes storage atomically then acquires and re-inspects under the published winner's lease before any SQLite mutation, and the lease is released in `finally` on normal or error shutdown. Cross-process contention is retryable `CONFLICT/project_busy` without a Project or idempotency row; application admission remains the same-process gate and SQLite remains defense in depth.
+**Acceptance:** MCP layer has no numerical algorithm or SQLite call, both new packages import and ship through the normal locked Hatch/uv environment without `PYTHONPATH`, only six tools are advertised, malformed raw JSON is rejected before use, and STDOUT after session start can contain only protocol frames. Server construction is side-effect free for a true `UNINITIALIZED` root; existing storage is writer-leased before readiness, first create publishes storage atomically then acquires and re-inspects under the published winner's lease before any SQLite mutation, and the lease is released in `finally` on normal or error shutdown. Cross-process contention is retryable `CONFLICT/project_busy` without a Project or idempotency row; application admission remains the same-process gate and SQLite remains defense in depth.
 
 ### Task A11: Prove the real STDIO golden chain and assemble the M1a test harness
 
