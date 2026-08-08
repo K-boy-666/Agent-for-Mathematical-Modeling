@@ -422,7 +422,9 @@ class ModelingApplication(ApplicationFacade):
             **common,
             status="DEGRADED" if degraded else "OK",
             project_state="DEGRADED" if degraded else inspection.state.value,
-            ready_for_project_creation=inspection.state in {ProjectState.UNINITIALIZED, ProjectState.STORAGE_READY, ProjectState.READY} and not degraded,
+            ready_for_project_creation=inspection.state
+            in {ProjectState.UNINITIALIZED, ProjectState.STORAGE_READY}
+            and not degraded,
             versions=HealthVersions.m1a(),
             registry=self._registry_summary,
             checks=checks,
@@ -436,7 +438,11 @@ class ModelingApplication(ApplicationFacade):
         try:
             inspection = self._store.inspect_project_state()
             integrity = self._store.inspect_integrity(deep=False)
-            if (
+            state_inspection_failed = (
+                inspection.state is ProjectState.DEGRADED
+                or integrity.issues == ("project_state",)
+            )
+            if not state_inspection_failed and (
                 inspection.state is ProjectState.DEGRADED
                 or integrity.state is ProjectState.DEGRADED
                 or integrity.issues

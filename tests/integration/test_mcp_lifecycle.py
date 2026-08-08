@@ -1,0 +1,723 @@
+from __future__ import annotations
+
+import asyncio
+import multiprocessing
+import sqlite3
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import closing, contextmanager
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from modeling_bootstrap.composition import (
+    build_composition,
+    run_mcp_server as run_composed_mcp_server,
+)
+from modeling_core.contracts.errors import ModelingError
+from modeling_core.contracts.tools import (
+    CapabilitySelection,
+    CreateProjectRequest,
+    CreateProjectResult,
+    HealthCheckRequest,
+    RootFindingInput,
+    RunExperimentRequest,
+    RunExperimentSucceededResult,
+    ValidateExperimentRequest,
+)
+from modeling_core.contracts.versions import VersionSet
+from modeling_core.ports.project_store import ProjectStoreError
+from modeling_infrastructure.project_lock import ProjectLock, StorageConflict
+from modeling_infrastructure.storage import (
+    StorageMetadata,
+    bootstrap_storage,
+    load_storage_metadata,
+)
+
+
+def _tree_snapshot(root: Path) -> tuple[tuple[str, str, bytes | None], ...]:
+    snapshot: list[tuple[str, str, bytes | None]] = []
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        if path.is_dir():
+            snapshot.append((relative, "directory", None))
+        else:
+            snapshot.append((relative, "file", path.read_bytes()))
+    return tuple(snapshot)
+
+
+def _race_first_create_process(
+    project_root: str,
+    operation_id: str,
+    barrier: Any,
+    release_winner: Any,
+    outcomes: Any,
+) -> None:
+    composition = build_composition(Path(project_root))
+    try:
+        composition.start()
+        barrier.wait(timeout=20)
+        try:
+            result = composition.application.create_project(
+                CreateProjectRequest(operation_id=operation_id)
+            )
+        except ModelingError as error:
+            outcomes.put(
+                (
+                    "error",
+                    error.response.code,
+                    error.response.retryable,
+                    error.response.details.model_dump(mode="json"),
+                )
+            )
+        else:
+            outcomes.put(("success", result.project_id, result.operation_id))
+            if not release_winner.wait(timeout=20):
+                raise AssertionError("parent did not release process winner")
+    except BaseException as error:
+        outcomes.put(("unexpected", type(error).__name__, str(error)))
+    finally:
+        composition.close()
+
+
+def test_uninitialized_construction_and_start_are_byte_for_byte_side_effect_free(
+    tmp_path: Path,
+) -> None:
+    """Catches eager startup bootstrap or lock-file creation."""
+    marker = tmp_path / "existing.bin"
+    marker.write_bytes(b"preserve-me")
+    before = _tree_snapshot(tmp_path)
+
+    composition = build_composition(tmp_path)
+    composition.start()
+    health = composition.application.health_check(HealthCheckRequest())
+
+    assert _tree_snapshot(tmp_path) == before
+    assert health.project_state == "UNINITIALIZED"
+    assert health.status == "OK"
+    assert health.ready_for_project_creation is True
+
+
+def test_first_create_retains_published_writer_lease_until_composition_close(
+    tmp_path: Path,
+) -> None:
+    """Catches a publish-to-transaction lock gap or an unreleased server lease."""
+    composition = build_composition(tmp_path)
+    composition.start()
+    created = composition.application.create_project(
+        CreateProjectRequest(operation_id="00000000-0000-4000-8000-000000000001")
+    )
+    contender = ProjectLock(
+        tmp_path / ".modeling" / "project.lock",
+        "00000000-0000-4000-8000-000000000002",
+    )
+
+    try:
+        with pytest.raises(StorageConflict):
+            contender.acquire()
+    finally:
+        contender.release()
+
+    assert created.created is True
+    composition.close()
+    contender.acquire()
+    contender.release()
+    assert (tmp_path / ".modeling" / "project.lock").is_file()
+
+
+def test_late_second_first_create_with_live_wal_reports_project_busy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches public create preflight misclassifying a live WAL as degradation."""
+    holder = build_composition(tmp_path)
+    contender = build_composition(tmp_path)
+    holder.start()
+    contender.start()
+    transaction_live = threading.Event()
+    release_transaction = threading.Event()
+    original_write = holder.store._write
+
+    @contextmanager
+    def pause_before_commit(
+        *, degrade_on_failure: bool = False
+    ) -> Iterator[sqlite3.Connection]:
+        with original_write(degrade_on_failure=degrade_on_failure) as connection:
+            yield connection
+            transaction_live.set()
+            if not release_transaction.wait(timeout=10):
+                raise AssertionError("live transaction was not released")
+
+    monkeypatch.setattr(holder.store, "_write", pause_before_commit)
+    holder_outcome: list[CreateProjectResult | BaseException] = []
+
+    def create_as_holder() -> None:
+        try:
+            holder_outcome.append(
+                holder.application.create_project(
+                    CreateProjectRequest(
+                        operation_id="00000000-0000-4000-8000-000000000003",
+                        display_name="Published project",
+                    )
+                )
+            )
+        except BaseException as error:
+            holder_outcome.append(error)
+
+    holder_thread = threading.Thread(target=create_as_holder)
+    holder_thread.start()
+    assert transaction_live.wait(timeout=10)
+    modeling = tmp_path / ".modeling"
+    assert {"state.sqlite3-wal", "state.sqlite3-shm"} <= {
+        path.name for path in modeling.iterdir()
+    }
+
+    try:
+        with pytest.raises(ModelingError) as captured:
+            contender.application.create_project(
+                CreateProjectRequest(
+                    operation_id="00000000-0000-4000-8000-000000000004"
+                )
+            )
+    finally:
+        release_transaction.set()
+        holder_thread.join(timeout=10)
+        holder.close()
+
+    try:
+        assert not holder_thread.is_alive()
+        assert len(holder_outcome) == 1
+        assert isinstance(holder_outcome[0], CreateProjectResult)
+        assert captured.value.response.code == "CONFLICT"
+        assert captured.value.response.retryable is True
+        assert captured.value.response.details.conflict_type == "project_busy"
+        retry_request = CreateProjectRequest(
+            operation_id="00000000-0000-4000-8000-000000000004"
+        )
+        retried = contender.application.create_project(retry_request)
+        replayed = contender.application.create_project(retry_request)
+    finally:
+        contender.close()
+
+    assert retried.display_name == "Published project"
+    assert retried.created is False
+    assert retried.replayed is False
+    assert replayed.project_id == retried.project_id
+    assert replayed.created is False
+    assert replayed.replayed is True
+    with closing(sqlite3.connect(modeling / "state.sqlite3")) as connection:
+        assert connection.execute(
+            "SELECT display_name FROM projects"
+        ).fetchall() == [("Published project",)]
+        assert connection.execute(
+            "SELECT operation_id FROM idempotency_records "
+            "WHERE tool_name='create_project' ORDER BY operation_id"
+        ).fetchall() == [
+            ("00000000-0000-4000-8000-000000000003",),
+            ("00000000-0000-4000-8000-000000000004",),
+        ]
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ["missing-lock", "missing-metadata", "unknown-entry", "corrupt-metadata"],
+)
+def test_late_first_create_preserves_genuine_layout_integrity_failures(
+    tmp_path: Path,
+    damage: str,
+) -> None:
+    """Catches transient-contention handling masking invalid published storage."""
+    composition = build_composition(tmp_path)
+    composition.start()
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    modeling = tmp_path / ".modeling"
+    if damage == "missing-lock":
+        (modeling / "project.lock").unlink()
+    elif damage == "missing-metadata":
+        (modeling / "project.json").unlink()
+    elif damage == "unknown-entry":
+        (modeling / "unexpected.bin").write_bytes(b"unexpected")
+    else:
+        (modeling / "project.json").write_bytes(b"not-json")
+
+    try:
+        with pytest.raises(ModelingError) as captured:
+            composition.application.create_project(
+                CreateProjectRequest(
+                    operation_id="00000000-0000-4000-8000-000000000005"
+                )
+            )
+    finally:
+        composition.close()
+
+    assert captured.value.response.code == "INTEGRITY_FAILURE"
+    assert captured.value.response.retryable is False
+    with closing(sqlite3.connect(modeling / "state.sqlite3")) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM projects").fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM idempotency_records"
+        ).fetchone() == (0,)
+
+
+def _leave_uninitialized(_root: Path) -> None:
+    return
+
+
+def _make_storage_ready(root: Path) -> None:
+    bootstrap_storage(root, VersionSet.m1a())
+
+
+def _make_ready(root: Path) -> None:
+    composition = build_composition(root)
+    composition.start()
+    composition.application.create_project(
+        CreateProjectRequest(operation_id="00000000-0000-4000-8000-000000000010")
+    )
+    composition.close()
+
+
+def _make_degraded(root: Path) -> None:
+    bootstrap_storage(root, VersionSet.m1a())
+    (root / ".modeling" / "project.json").write_bytes(b"not-json")
+
+
+@pytest.mark.parametrize(
+    ("arrange", "expected_state", "expected_ready"),
+    [
+        (_leave_uninitialized, "UNINITIALIZED", True),
+        (_make_storage_ready, "STORAGE_READY", True),
+        (_make_ready, "READY", False),
+        (_make_degraded, "DEGRADED", False),
+    ],
+)
+def test_health_project_creation_readiness_has_exact_four_state_truth_table(
+    tmp_path: Path,
+    arrange: Callable[[Path], None],
+    expected_state: str,
+    expected_ready: bool,
+) -> None:
+    """Catches READY or DEGRADED storage being advertised as creatable."""
+    arrange(tmp_path)
+    composition = build_composition(tmp_path)
+
+    health = composition.application.health_check(HealthCheckRequest())
+
+    assert health.project_state == expected_state
+    assert health.ready_for_project_creation is expected_ready
+
+
+@pytest.mark.parametrize("exit_error", [None, RuntimeError, asyncio.CancelledError])
+def test_lifespan_releases_held_lease_on_normal_error_and_cancellation_exit(
+    tmp_path: Path,
+    exit_error: type[BaseException] | None,
+) -> None:
+    """Catches any lifespan exit path leaking its OS writer lease."""
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    composition = build_composition(tmp_path)
+    contender = ProjectLock(
+        tmp_path / ".modeling" / "project.lock",
+        "00000000-0000-4000-8000-000000000020",
+    )
+
+    def exercise_lifespan() -> None:
+        with composition:
+            with pytest.raises(StorageConflict):
+                contender.acquire()
+            if exit_error is not None:
+                raise exit_error("injected lifespan exit")
+
+    if exit_error is None:
+        exercise_lifespan()
+    else:
+        with pytest.raises(exit_error):
+            exercise_lifespan()
+
+    contender.acquire()
+    contender.release()
+    assert (tmp_path / ".modeling" / "project.lock").is_file()
+
+
+@pytest.mark.parametrize("ready", [False, True], ids=["storage-ready", "ready"])
+def test_existing_storage_is_leased_before_readiness_and_contention_is_transient(
+    tmp_path: Path,
+    ready: bool,
+) -> None:
+    """Catches startup readiness preceding lease ownership or sticky contention."""
+    if ready:
+        _make_ready(tmp_path)
+    else:
+        _make_storage_ready(tmp_path)
+    database = tmp_path / ".modeling" / "state.sqlite3"
+    with closing(sqlite3.connect(database)) as connection:
+        before = (
+            connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM idempotency_records").fetchone()[
+                0
+            ],
+        )
+
+    holder = build_composition(tmp_path)
+    contender = build_composition(tmp_path)
+    holder.start()
+    try:
+        with pytest.raises(ProjectStoreError) as captured:
+            contender.start()
+        assert captured.value.code == "CONFLICT"
+        assert captured.value.retryable is True
+        assert captured.value.details == {
+            "conflict_type": "project_busy",
+            "retry_after_ms": 250,
+        }
+        with closing(sqlite3.connect(database)) as connection:
+            after = (
+                connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0],
+                connection.execute(
+                    "SELECT COUNT(*) FROM idempotency_records"
+                ).fetchone()[0],
+            )
+        assert after == before
+    finally:
+        holder.close()
+
+    contender.start()
+    assert contender.application.health_check(HealthCheckRequest()).status == "OK"
+    contender.close()
+
+
+def test_publish_to_lock_handoff_loser_opens_no_write_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches the publisher writing after a competitor owns its published lock."""
+    from modeling_infrastructure.sqlite import store as sqlite_store
+
+    published = threading.Event()
+    resume_publisher = threading.Event()
+    contender_holds_lease = threading.Event()
+    release_contender = threading.Event()
+    losing_write_opened = threading.Event()
+    original_bootstrap = sqlite_store.bootstrap_storage
+
+    def pause_after_publish(
+        project_root: Path, versions: VersionSet
+    ) -> StorageMetadata:
+        metadata = original_bootstrap(project_root, versions)
+        if metadata.created:
+            published.set()
+            if not resume_publisher.wait(timeout=10):
+                raise AssertionError("publisher was not resumed")
+        return metadata
+
+    monkeypatch.setattr(sqlite_store, "bootstrap_storage", pause_after_publish)
+    publisher = build_composition(tmp_path)
+    contender = build_composition(tmp_path)
+    original_publisher_write = publisher.store._write
+
+    @contextmanager
+    def observe_losing_write(*, degrade_on_failure: bool = False) -> object:
+        losing_write_opened.set()
+        with original_publisher_write(
+            degrade_on_failure=degrade_on_failure
+        ) as connection:
+            yield connection
+
+    monkeypatch.setattr(publisher.store, "_write", observe_losing_write)
+    publisher_outcome: list[CreateProjectResult | BaseException] = []
+    contender_outcome: list[CreateProjectResult | BaseException] = []
+
+    def create_as_publisher() -> None:
+        try:
+            publisher_outcome.append(
+                publisher.application.create_project(
+                    CreateProjectRequest(
+                        operation_id="00000000-0000-4000-8000-000000000030"
+                    )
+                )
+            )
+        except BaseException as error:
+            publisher_outcome.append(error)
+        finally:
+            publisher.close()
+
+    def create_as_contender() -> None:
+        try:
+            contender_outcome.append(
+                contender.application.create_project(
+                    CreateProjectRequest(
+                        operation_id="00000000-0000-4000-8000-000000000031"
+                    )
+                )
+            )
+            contender_holds_lease.set()
+            if not release_contender.wait(timeout=10):
+                raise AssertionError("contender lease was not released")
+        except BaseException as error:
+            contender_outcome.append(error)
+        finally:
+            contender.close()
+
+    publisher_thread = threading.Thread(target=create_as_publisher)
+    contender_thread = threading.Thread(target=create_as_contender)
+    publisher_thread.start()
+    assert published.wait(timeout=10)
+    contender_thread.start()
+    assert contender_holds_lease.wait(timeout=10)
+    resume_publisher.set()
+    publisher_thread.join(timeout=10)
+    release_contender.set()
+    contender_thread.join(timeout=10)
+
+    assert not publisher_thread.is_alive()
+    assert not contender_thread.is_alive()
+    assert len(publisher_outcome) == 1
+    assert isinstance(publisher_outcome[0], ModelingError)
+    assert publisher_outcome[0].response.code == "CONFLICT"
+    assert publisher_outcome[0].response.retryable is True
+    assert publisher_outcome[0].response.details.conflict_type == "project_busy"
+    assert len(contender_outcome) == 1
+    assert isinstance(contender_outcome[0], CreateProjectResult)
+    assert losing_write_opened.is_set() is False
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM projects").fetchone() == (1,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM idempotency_records WHERE tool_name='create_project'"
+        ).fetchone() == (1,)
+
+
+def test_two_process_first_create_race_publishes_one_complete_project(
+    tmp_path: Path,
+) -> None:
+    """Catches independent initializers publishing or mutating two winners."""
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    release_winner = context.Event()
+    outcomes = context.Queue()
+    operation_ids = (
+        "00000000-0000-4000-8000-000000000040",
+        "00000000-0000-4000-8000-000000000041",
+    )
+    processes = [
+        context.Process(
+            target=_race_first_create_process,
+            args=(
+                str(tmp_path),
+                operation_id,
+                barrier,
+                release_winner,
+                outcomes,
+            ),
+            daemon=True,
+        )
+        for operation_id in operation_ids
+    ]
+    try:
+        for process in processes:
+            process.start()
+        results = [outcomes.get(timeout=30), outcomes.get(timeout=30)]
+    finally:
+        release_winner.set()
+        for process in processes:
+            process.join(timeout=20)
+
+    assert all(not process.is_alive() for process in processes)
+    assert all(process.exitcode == 0 for process in processes)
+    successes = [result for result in results if result[0] == "success"]
+    errors = [result for result in results if result[0] == "error"]
+    assert len(successes) == 1
+    assert errors == [
+        (
+            "error",
+            "CONFLICT",
+            True,
+            {
+                "conflict_type": "project_busy",
+                "existing_resource_id": None,
+                "retry_after_ms": 250,
+            },
+        )
+    ]
+    modeling = tmp_path / ".modeling"
+    assert {path.name for path in modeling.iterdir()} == {
+        "project.json",
+        "project.lock",
+        "state.sqlite3",
+    }
+    metadata = load_storage_metadata(tmp_path, VersionSet.m1a())
+    with closing(sqlite3.connect(modeling / "state.sqlite3")) as connection:
+        project_rows = connection.execute(
+            "SELECT project_id, storage_instance_id FROM projects"
+        ).fetchall()
+        idempotency_rows = connection.execute(
+            "SELECT scope_id, operation_id FROM idempotency_records "
+            "WHERE tool_name='create_project'"
+        ).fetchall()
+    assert project_rows == [(successes[0][1], metadata.storage_instance_id)]
+    assert idempotency_rows == [(metadata.storage_instance_id, successes[0][2])]
+    assert list(tmp_path.glob(".modeling.tmp.*")) == []
+    assert b".modeling.tmp." not in (modeling / "project.json").read_bytes()
+
+
+def test_one_held_lease_covers_every_create_run_and_validate_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches any persistence phase escaping the server-lifetime writer lease."""
+    composition = build_composition(tmp_path)
+    phase = "create"
+    observed_phases: list[str] = []
+    original_write = composition.store._write
+
+    @contextmanager
+    def checked_write(
+        *, degrade_on_failure: bool = False
+    ) -> Iterator[sqlite3.Connection]:
+        assert composition.store._project_lock.held is True
+        observed_phases.append(phase)
+        with original_write(degrade_on_failure=degrade_on_failure) as connection:
+            yield connection
+
+    monkeypatch.setattr(composition.store, "_write", checked_write)
+    with composition:
+        project = composition.application.create_project(
+            CreateProjectRequest(operation_id="00000000-0000-4000-8000-000000000050")
+        )
+        phase = "run"
+        run = composition.application.run_experiment(
+            RunExperimentRequest(
+                operation_id="00000000-0000-4000-8000-000000000051",
+                project_id=project.project_id,
+                mode="new",
+                capability=CapabilitySelection(
+                    capability_id="numerical.root_finding",
+                    contract_version="0.1.0",
+                ),
+                payload=RootFindingInput(
+                    expression="x*x - 2",
+                    lower=0.0,
+                    upper=2.0,
+                ),
+            )
+        )
+        assert isinstance(run, RunExperimentSucceededResult)
+        phase = "validate"
+        composition.application.validate_experiment(
+            ValidateExperimentRequest(
+                operation_id="00000000-0000-4000-8000-000000000052",
+                project_id=project.project_id,
+                attempt_id=run.attempt_id,
+                expected_result_hash=run.result_hash,
+                validator_id="numerical.root_finding.residual",
+                policy_version="0.1.0",
+                policy={},
+            )
+        )
+
+    assert set(observed_phases) == {"create", "run", "validate"}
+
+
+def test_writer_lease_acquisition_failure_opens_no_sqlite_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches SQLite becoming the first-line cross-process ownership gate."""
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    holder = build_composition(tmp_path)
+    contender = build_composition(tmp_path)
+    holder.start()
+    statements: list[str] = []
+    original_connect = contender.store._connect
+
+    def traced_connect(*, named_rows: bool = False) -> sqlite3.Connection:
+        connection = original_connect(named_rows=named_rows)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(contender.store, "_connect", traced_connect)
+    try:
+        with pytest.raises(ModelingError) as captured:
+            contender.application.create_project(
+                CreateProjectRequest(
+                    operation_id="00000000-0000-4000-8000-000000000053"
+                )
+            )
+        assert captured.value.response.code == "CONFLICT"
+        assert captured.value.response.details.conflict_type == "project_busy"
+        assert not any(
+            statement.lstrip().upper().startswith("BEGIN") for statement in statements
+        )
+    finally:
+        holder.close()
+        contender.close()
+
+
+@pytest.mark.parametrize(
+    ("runtime_entries", "expected_code", "expected_retryable"),
+    [
+        (
+            ("state.sqlite3-wal", "state.sqlite3-shm"),
+            "CONFLICT",
+            True,
+        ),
+        (("unexpected.bin",), "INTEGRITY_FAILURE", False),
+    ],
+    ids=["sqlite-sidecars", "unknown-entry"],
+)
+def test_held_lease_classifies_only_sqlite_runtime_sidecars_as_transient(
+    tmp_path: Path,
+    runtime_entries: tuple[str, ...],
+    expected_code: str,
+    expected_retryable: bool,
+) -> None:
+    """Catches transient SQLite files degrading storage or masking corruption."""
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    modeling = tmp_path / ".modeling"
+    for name in runtime_entries:
+        (modeling / name).write_bytes(b"")
+    composition = build_composition(tmp_path)
+
+    with pytest.raises(ProjectStoreError) as captured:
+        composition.start()
+
+    assert captured.value.code == expected_code
+    assert captured.value.retryable is expected_retryable
+    replacement = ProjectLock(
+        modeling / "project.lock",
+        "00000000-0000-4000-8000-000000000054",
+    )
+    replacement.acquire()
+    replacement.release()
+
+
+@pytest.mark.parametrize("server_error", [None, RuntimeError, asyncio.CancelledError])
+def test_process_runner_releases_lease_on_normal_error_and_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_error: type[BaseException] | None,
+) -> None:
+    """Catches the lazy process hook bypassing composition cleanup."""
+    from modeling_mcp import server as mcp_server
+
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    contender = ProjectLock(
+        tmp_path / ".modeling" / "project.lock",
+        "00000000-0000-4000-8000-000000000060",
+    )
+
+    async def exercise_server(_facade: object) -> None:
+        with pytest.raises(StorageConflict):
+            contender.acquire()
+        if server_error is not None:
+            raise server_error("injected server exit")
+
+    monkeypatch.setattr(mcp_server, "run_mcp_server", exercise_server)
+    if server_error is None:
+        run_composed_mcp_server(tmp_path)
+    else:
+        with pytest.raises(server_error):
+            run_composed_mcp_server(tmp_path)
+
+    contender.acquire()
+    contender.release()

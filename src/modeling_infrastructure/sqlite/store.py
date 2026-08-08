@@ -68,6 +68,7 @@ from modeling_core.ports.project_store import (
     ValidationSource,
     WriteOperation,
 )
+from modeling_infrastructure.project_lock import ProjectLock, StorageConflict
 from modeling_infrastructure.project_paths import ProjectPaths
 from modeling_infrastructure.storage import (
     StorageError,
@@ -128,12 +129,92 @@ class SQLiteProjectStore:
         versions: VersionSet,
         clock: Clock | None = None,
         id_generator: IdGenerator | None = None,
+        session_id: str | None = None,
     ) -> None:
         self._paths = ProjectPaths.bind(project_root)
         self._versions = versions
         self._clock = clock
         self._id_generator = id_generator
         self._degraded = False
+        self._project_lock = ProjectLock(
+            self._paths.lock,
+            session_id if session_id is not None else str(uuid.uuid4()),
+        )
+
+    def _transient_sqlite_layout(self, error: StorageError) -> bool:
+        if (
+            error.code != "INTEGRITY_FAILURE"
+            or str(error) != "project storage layout is incomplete or unexpected"
+        ):
+            return False
+        try:
+            entries = {entry.name for entry in self._paths.modeling.iterdir()}
+        except OSError:
+            return False
+        stable = {"project.json", "project.lock", "state.sqlite3"}
+        runtime = stable | {"state.sqlite3-shm", "state.sqlite3-wal"}
+        return stable <= entries <= runtime
+
+    def start_writer_session(self) -> None:
+        """Acquire and verify existing storage without bootstrapping a new root."""
+        if self._project_lock.held:
+            return
+        if not self._paths.modeling.exists():
+            return
+        if not self._paths.lock.is_file():
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "project storage is unavailable",
+                False,
+                {"subject": "project_metadata"},
+            )
+        try:
+            self._project_lock.acquire()
+        except StorageConflict as error:
+            raise ProjectStoreError(
+                "CONFLICT",
+                "project is busy",
+                True,
+                {"conflict_type": "project_busy", "retry_after_ms": 250},
+            ) from error
+        try:
+            load_storage_metadata(self._paths.root, self._versions)
+            inspection = self.inspect_project_state()
+            integrity = self.inspect_integrity(deep=False)
+            if (
+                inspection.state is ProjectState.DEGRADED
+                or integrity.state is ProjectState.DEGRADED
+                or integrity.issues
+            ):
+                raise ProjectStoreError(
+                    "INTEGRITY_FAILURE",
+                    "project persistence failed closed",
+                    False,
+                    {"subject": "database_relation"},
+                )
+        except StorageError as error:
+            transient_layout = self._transient_sqlite_layout(error)
+            self._project_lock.release()
+            if transient_layout:
+                raise ProjectStoreError(
+                    "CONFLICT",
+                    "project is busy",
+                    True,
+                    {"conflict_type": "project_busy", "retry_after_ms": 250},
+                ) from error
+            raise ProjectStoreError(
+                cast(object, error.code),  # type: ignore[arg-type]
+                "project storage is unavailable",
+                error.retryable,
+                cast(JsonObject, error.details),
+            ) from error
+        except BaseException:
+            self._project_lock.release()
+            raise
+
+    def close(self) -> None:
+        """Release only this store's held writer lease; retain its lock file."""
+        self._project_lock.release()
 
     def _connect(self, *, named_rows: bool = False) -> sqlite3.Connection:
         connection = sqlite3.connect(self._paths.database, timeout=0.25)
@@ -184,6 +265,7 @@ class SQLiteProjectStore:
     def _write(self, *, degrade_on_failure: bool = False) -> Iterator[sqlite3.Connection]:
         connection: sqlite3.Connection | None = None
         try:
+            self.start_writer_session()
             connection = self._connect(named_rows=True)
             connection.isolation_level = None
             connection.execute("BEGIN IMMEDIATE")
@@ -460,11 +542,27 @@ class SQLiteProjectStore:
     def create_or_replay_project(
         self, command: CreateProjectCommand
     ) -> ProjectWriteResult:
+        if self._degraded:
+            raise ProjectStoreError(
+                "PRECONDITION_FAILED",
+                "project is degraded",
+                False,
+                {"condition": "project_degraded", "current_state": "DEGRADED"},
+            )
+        if not self._paths.modeling.exists():
+            try:
+                bootstrap_storage(self._paths.root, self._versions)
+            except StorageError as error:
+                if not self._paths.modeling.exists():
+                    raise ProjectStoreError(
+                        cast(object, error.code),  # type: ignore[arg-type]
+                        "project storage is unavailable",
+                        error.retryable,
+                        cast(JsonObject, error.details),
+                    ) from error
+        self.start_writer_session()
         try:
-            if self._paths.modeling.exists():
-                metadata = load_storage_metadata(self._paths.root, self._versions)
-            else:
-                metadata = bootstrap_storage(self._paths.root, self._versions)
+            metadata = load_storage_metadata(self._paths.root, self._versions)
         except StorageError as error:
             raise ProjectStoreError(
                 cast(object, error.code),  # type: ignore[arg-type]

@@ -40,6 +40,8 @@ packages = [
     "src/modeling_core",
     "src/modeling_harness",
     "src/modeling_infrastructure",
+    "src/modeling_bootstrap",
+    "src/modeling_mcp",
 ]
 exclude = ["spikes"]
 dev-mode-exact = true
