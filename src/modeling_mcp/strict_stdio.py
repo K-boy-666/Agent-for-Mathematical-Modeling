@@ -41,6 +41,28 @@ def _parse_frame(line: bytes, max_request_bytes: int) -> JSONRPCMessage:
     return JSONRPCMessage.model_validate(value)
 
 
+async def _bounded_lines(
+    stdin: anyio.AsyncFile[bytes],
+    max_request_bytes: int,
+) -> AsyncIterator[bytes]:
+    pending = bytearray()
+    while True:
+        delimiter = pending.find(b"\n")
+        if delimiter >= 0:
+            line = bytes(pending[: delimiter + 1])
+            del pending[: delimiter + 1]
+            yield line
+            continue
+        if len(pending) > max_request_bytes:
+            raise ValueError("STDIO frame exceeds the request byte limit")
+        chunk = await stdin.read1(max_request_bytes + 1 - len(pending))
+        if not chunk:
+            if pending:
+                yield bytes(pending)
+            return
+        pending.extend(chunk)
+
+
 @asynccontextmanager
 async def strict_stdio_server(
     max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES,
@@ -62,14 +84,18 @@ async def strict_stdio_server(
     async def stdin_reader() -> None:
         try:
             async with read_stream_writer:
-                async for line in stdin:
-                    try:
-                        message = _parse_frame(line, max_request_bytes)
-                    except Exception as error:
-                        logger.warning("rejected STDIO frame: %s", error)
-                        await read_stream_writer.send(error)
-                        continue
-                    await read_stream_writer.send(SessionMessage(message))
+                try:
+                    async for line in _bounded_lines(stdin, max_request_bytes):
+                        try:
+                            message = _parse_frame(line, max_request_bytes)
+                        except Exception as error:
+                            logger.warning("rejected STDIO frame: %s", error)
+                            await read_stream_writer.send(error)
+                            continue
+                        await read_stream_writer.send(SessionMessage(message))
+                except ValueError as error:
+                    logger.warning("rejected STDIO frame: %s", error)
+                    await read_stream_writer.send(error)
         except anyio.ClosedResourceError:  # pragma: no cover
             await anyio.lowlevel.checkpoint()
 

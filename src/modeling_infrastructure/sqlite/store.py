@@ -186,25 +186,25 @@ class SQLiteProjectStore:
                 or integrity.state is ProjectState.DEGRADED
                 or integrity.issues
             ):
-                raise ProjectStoreError(
-                    "INTEGRITY_FAILURE",
-                    "project persistence failed closed",
-                    False,
-                    {"subject": "database_relation"},
-                )
+                self._degraded = True
+                return
         except StorageError as error:
             transient_layout = self._transient_sqlite_layout(error)
-            self._project_lock.release()
             if transient_layout:
+                self._project_lock.release()
                 raise ProjectStoreError(
                     "CONFLICT",
                     "project is busy",
                     True,
                     {"conflict_type": "project_busy", "retry_after_ms": 250},
                 ) from error
+            if error.code == "INTEGRITY_FAILURE":
+                self._degraded = True
+                return
+            self._project_lock.release()
             raise ProjectStoreError(
                 cast(object, error.code),  # type: ignore[arg-type]
-                "project storage is unavailable",
+                str(error),
                 error.retryable,
                 cast(JsonObject, error.details),
             ) from error

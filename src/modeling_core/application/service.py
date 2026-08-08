@@ -466,7 +466,33 @@ class ModelingApplication(ApplicationFacade):
             try:
                 stored = self._store.create_or_replay_project(command)
             except ProjectStoreError as error:
-                self._raise_store(error, correlation_id)
+                metadata_mismatch = (
+                    error.code == "CONFLICT"
+                    and error.details.get("conflict_type")
+                    == "project_metadata_mismatch"
+                )
+                if request.display_name is not None or not metadata_mismatch:
+                    self._raise_store(error, correlation_id)
+                locked_inspection = self._store.inspect_project_state()
+                if (
+                    locked_inspection.state is not ProjectState.READY
+                    or locked_inspection.project is None
+                ):
+                    self._raise_store(error, correlation_id)
+                locked_display_name = locked_inspection.project.display_name
+                locked_command = CreateProjectCommand(
+                    operation=WriteOperation(
+                        operation_id=request.operation_id,
+                        canonical_request_hash=create_project_request_hash(
+                            locked_display_name
+                        ),
+                    ),
+                    display_name=locked_display_name,
+                )
+                try:
+                    stored = self._store.create_or_replay_project(locked_command)
+                except ProjectStoreError as locked_error:
+                    self._raise_store(locked_error, correlation_id)
             return CreateProjectResult(
                 **common,
                 operation_id=request.operation_id,

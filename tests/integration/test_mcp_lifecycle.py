@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import multiprocessing
 import sqlite3
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
@@ -10,6 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp import types as mcp_types
 
 from modeling_bootstrap.composition import (
     build_composition,
@@ -20,7 +24,9 @@ from modeling_core.contracts.tools import (
     CapabilitySelection,
     CreateProjectRequest,
     CreateProjectResult,
+    GetProjectStatusSummaryRequest,
     HealthCheckRequest,
+    ListCapabilitiesSummaryRequest,
     RootFindingInput,
     RunExperimentRequest,
     RunExperimentSucceededResult,
@@ -219,6 +225,127 @@ def test_late_second_first_create_with_live_wal_reports_project_busy(
         ]
 
 
+def test_omitted_display_name_is_resolved_from_project_after_degraded_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches a transient preflight freezing the local default before lease handoff."""
+    publisher = build_composition(tmp_path)
+    follower = build_composition(tmp_path)
+    publisher.start()
+    follower.start()
+    transaction_live = threading.Event()
+    release_publisher = threading.Event()
+    publisher_released = threading.Event()
+    degraded_preflight_seen = threading.Event()
+    resume_follower = threading.Event()
+    original_write = publisher.store._write
+    original_integrity = follower.store.inspect_integrity
+
+    @contextmanager
+    def pause_publisher_before_commit(
+        *, degrade_on_failure: bool = False
+    ) -> Iterator[sqlite3.Connection]:
+        with original_write(degrade_on_failure=degrade_on_failure) as connection:
+            yield connection
+            transaction_live.set()
+            if not release_publisher.wait(timeout=10):
+                raise AssertionError("publisher transaction was not released")
+
+    def pause_after_degraded_preflight(*, deep: bool) -> object:
+        report = original_integrity(deep=deep)
+        if report.state.value == "DEGRADED" and not degraded_preflight_seen.is_set():
+            degraded_preflight_seen.set()
+            if not resume_follower.wait(timeout=10):
+                raise AssertionError("follower preflight was not resumed")
+        return report
+
+    monkeypatch.setattr(publisher.store, "_write", pause_publisher_before_commit)
+    monkeypatch.setattr(follower.store, "inspect_integrity", pause_after_degraded_preflight)
+    publisher_outcome: list[CreateProjectResult | BaseException] = []
+    follower_outcome: list[CreateProjectResult | BaseException] = []
+
+    def create_publisher() -> None:
+        try:
+            publisher_outcome.append(
+                publisher.application.create_project(
+                    CreateProjectRequest(
+                        operation_id="00000000-0000-4000-8000-000000000006",
+                        display_name="Published project",
+                    )
+                )
+            )
+        except BaseException as error:
+            publisher_outcome.append(error)
+        finally:
+            publisher.close()
+            publisher_released.set()
+
+    def create_follower() -> None:
+        try:
+            follower_outcome.append(
+                follower.application.create_project(
+                    CreateProjectRequest(
+                        operation_id="00000000-0000-4000-8000-000000000007"
+                    )
+                )
+            )
+        except BaseException as error:
+            follower_outcome.append(error)
+        finally:
+            follower.close()
+
+    publisher_thread = threading.Thread(target=create_publisher)
+    follower_thread = threading.Thread(target=create_follower)
+    publisher_thread.start()
+    assert transaction_live.wait(timeout=10)
+    follower_thread.start()
+    assert degraded_preflight_seen.wait(timeout=10)
+    release_publisher.set()
+    assert publisher_released.wait(timeout=10)
+    resume_follower.set()
+    publisher_thread.join(timeout=10)
+    follower_thread.join(timeout=10)
+
+    assert not publisher_thread.is_alive()
+    assert not follower_thread.is_alive()
+    assert len(publisher_outcome) == 1
+    assert isinstance(publisher_outcome[0], CreateProjectResult)
+    assert len(follower_outcome) == 1
+    assert isinstance(follower_outcome[0], CreateProjectResult)
+    follower_result = follower_outcome[0]
+    assert follower_result.display_name == "Published project"
+    assert follower_result.created is False
+    explicit_conflict = build_composition(tmp_path)
+    explicit_conflict.start()
+    try:
+        with pytest.raises(ModelingError) as captured:
+            explicit_conflict.application.create_project(
+                CreateProjectRequest(
+                    operation_id="00000000-0000-4000-8000-000000000008",
+                    display_name="Math modeling project",
+                )
+            )
+    finally:
+        explicit_conflict.close()
+    assert captured.value.response.code == "CONFLICT"
+    assert captured.value.response.retryable is False
+    assert (
+        captured.value.response.details.conflict_type
+        == "project_metadata_mismatch"
+    )
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
+        assert connection.execute(
+            "SELECT canonical_request_hash FROM idempotency_records "
+            "WHERE operation_id='00000000-0000-4000-8000-000000000007'"
+        ).fetchone() == (
+            "sha256:6e09b10abf7a225afce1842ccef1e335"
+            "47051bca91c3d343ff4e310c607b8ee7",
+        )
+
+
 @pytest.mark.parametrize(
     "damage",
     ["missing-lock", "missing-metadata", "unknown-entry", "corrupt-metadata"],
@@ -305,6 +432,116 @@ def test_health_project_creation_readiness_has_exact_four_state_truth_table(
 
     assert health.project_state == expected_state
     assert health.ready_for_project_creation is expected_ready
+
+
+@pytest.mark.parametrize("damage", ["corrupt-metadata", "unknown-entry"])
+def test_real_mcp_process_serves_read_only_health_for_degraded_storage(
+    tmp_path: Path,
+    damage: str,
+) -> None:
+    """Catches production startup exiting instead of serving DEGRADED health."""
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    modeling = tmp_path / ".modeling"
+    if damage == "corrupt-metadata":
+        (modeling / "project.json").write_bytes(b"not-json")
+    else:
+        (modeling / "unexpected.bin").write_bytes(b"preserve-me")
+    before_evidence = tuple(
+        item
+        for item in _tree_snapshot(tmp_path)
+        if item[0] != ".modeling/project.lock"
+    )
+    project_id = "00000000-0000-4000-8000-000000000080"
+
+    async def exercise_process() -> None:
+        parameters = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "modeling_mcp", "--project-root", str(tmp_path)],
+        )
+        async with stdio_client(parameters) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                health = await session.send_request(
+                    mcp_types.ClientRequest(
+                        mcp_types.CallToolRequest(
+                            params=mcp_types.CallToolRequestParams(
+                                name="health_check",
+                                arguments={},
+                            )
+                        )
+                    ),
+                    mcp_types.CallToolResult,
+                )
+                assert health.isError is False
+                assert health.structuredContent is not None
+                assert health.structuredContent["status"] == "DEGRADED"
+                assert health.structuredContent["project_state"] == "DEGRADED"
+                assert health.structuredContent["ready_for_project_creation"] is False
+                live_contender = ProjectLock(
+                    modeling / "project.lock",
+                    "00000000-0000-4000-8000-000000000086",
+                )
+                with pytest.raises(StorageConflict):
+                    live_contender.acquire()
+                live_contender.release()
+
+                rejected_requests = {
+                    "create_project": CreateProjectRequest(
+                        operation_id="00000000-0000-4000-8000-000000000081"
+                    ).model_dump(mode="json", exclude_none=True),
+                    "get_project_status": GetProjectStatusSummaryRequest(
+                        project_id=project_id
+                    ).model_dump(mode="json", exclude_none=True),
+                    "list_capabilities": ListCapabilitiesSummaryRequest().model_dump(
+                        mode="json", exclude_none=True
+                    ),
+                    "run_experiment": RunExperimentRequest(
+                        operation_id="00000000-0000-4000-8000-000000000082",
+                        project_id=project_id,
+                        mode="new",
+                        capability=CapabilitySelection(
+                            capability_id="numerical.root_finding",
+                            contract_version="0.1.0",
+                        ),
+                        payload=RootFindingInput(
+                            expression="x*x - 2",
+                            lower=0.0,
+                            upper=2.0,
+                        ),
+                    ).model_dump(mode="json", exclude_none=True),
+                    "validate_experiment": ValidateExperimentRequest(
+                        operation_id="00000000-0000-4000-8000-000000000083",
+                        project_id=project_id,
+                        attempt_id="00000000-0000-4000-8000-000000000084",
+                        expected_result_hash="sha256:" + ("0" * 64),
+                        validator_id="numerical.root_finding.residual",
+                        policy_version="0.1.0",
+                        policy={},
+                    ).model_dump(mode="json", exclude_none=True),
+                }
+                for tool_name, arguments in rejected_requests.items():
+                    result = await session.call_tool(tool_name, arguments=arguments)
+                    assert result.isError is True, tool_name
+                    assert result.structuredContent is not None
+                    assert result.structuredContent["code"] == "PRECONDITION_FAILED"
+                    assert result.structuredContent["details"]["condition"] == (
+                        "project_degraded"
+                    )
+
+    asyncio.run(exercise_process())
+
+    after_evidence = tuple(
+        item
+        for item in _tree_snapshot(tmp_path)
+        if item[0] != ".modeling/project.lock"
+    )
+    assert after_evidence == before_evidence
+    replacement = ProjectLock(
+        modeling / "project.lock",
+        "00000000-0000-4000-8000-000000000085",
+    )
+    replacement.acquire()
+    replacement.release()
 
 
 @pytest.mark.parametrize("exit_error", [None, RuntimeError, asyncio.CancelledError])
@@ -653,42 +890,93 @@ def test_writer_lease_acquisition_failure_opens_no_sqlite_transaction(
         contender.close()
 
 
-@pytest.mark.parametrize(
-    ("runtime_entries", "expected_code", "expected_retryable"),
-    [
-        (
-            ("state.sqlite3-wal", "state.sqlite3-shm"),
-            "CONFLICT",
-            True,
-        ),
-        (("unexpected.bin",), "INTEGRITY_FAILURE", False),
-    ],
-    ids=["sqlite-sidecars", "unknown-entry"],
-)
-def test_held_lease_classifies_only_sqlite_runtime_sidecars_as_transient(
+def test_held_lease_classifies_sqlite_runtime_sidecars_as_transient_contention(
     tmp_path: Path,
-    runtime_entries: tuple[str, ...],
-    expected_code: str,
-    expected_retryable: bool,
 ) -> None:
-    """Catches transient SQLite files degrading storage or masking corruption."""
+    """Catches SQLite runtime files becoming a sticky degraded server state."""
     bootstrap_storage(tmp_path, VersionSet.m1a())
     modeling = tmp_path / ".modeling"
-    for name in runtime_entries:
+    for name in ("state.sqlite3-wal", "state.sqlite3-shm"):
         (modeling / name).write_bytes(b"")
     composition = build_composition(tmp_path)
 
     with pytest.raises(ProjectStoreError) as captured:
         composition.start()
 
-    assert captured.value.code == expected_code
-    assert captured.value.retryable is expected_retryable
+    assert captured.value.code == "CONFLICT"
+    assert captured.value.retryable is True
     replacement = ProjectLock(
         modeling / "project.lock",
         "00000000-0000-4000-8000-000000000054",
     )
     replacement.acquire()
     replacement.release()
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "details"),
+    [
+        (
+            "SECURITY_VIOLATION",
+            "project root cannot be safely rebound",
+            {"rule": "unsafe_reparse_point"},
+        ),
+        (
+            "UNSUPPORTED_VERSION",
+            "database schema is newer than this application",
+            {
+                "subject": "database_schema",
+                "requested_version": "2",
+                "supported_versions": ["1"],
+            },
+        ),
+    ],
+)
+def test_non_integrity_storage_error_releases_lease_and_preserves_taxonomy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+    message: str,
+    details: dict[str, object],
+) -> None:
+    """Catches security/version failures being masked as read-only degradation."""
+    from modeling_infrastructure.sqlite import store as sqlite_store
+    from modeling_infrastructure.storage import StorageError
+
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    composition = build_composition(tmp_path)
+    original_load = sqlite_store.load_storage_metadata
+    lock_path = tmp_path / ".modeling" / "project.lock"
+    observed_lease = ProjectLock(
+        lock_path,
+        "00000000-0000-4000-8000-000000000087",
+    )
+
+    def fail_after_lease(*_args: object, **_kwargs: object) -> object:
+        with pytest.raises(StorageConflict):
+            observed_lease.acquire()
+        observed_lease.release()
+        raise StorageError(code, message, details=details)
+
+    monkeypatch.setattr(sqlite_store, "load_storage_metadata", fail_after_lease)
+    with pytest.raises(ProjectStoreError) as captured:
+        composition.start()
+
+    assert captured.value.code == code
+    assert captured.value.message == message
+    assert captured.value.retryable is False
+    assert captured.value.details == details
+    replacement = ProjectLock(
+        lock_path,
+        "00000000-0000-4000-8000-000000000088",
+    )
+    replacement.acquire()
+    replacement.release()
+
+    monkeypatch.setattr(sqlite_store, "load_storage_metadata", original_load)
+    health = composition.application.health_check(HealthCheckRequest())
+    assert health.status == "OK"
+    assert health.project_state == "STORAGE_READY"
 
 
 @pytest.mark.parametrize("server_error", [None, RuntimeError, asyncio.CancelledError])

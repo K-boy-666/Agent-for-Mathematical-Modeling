@@ -11,12 +11,13 @@ from unittest.mock import Mock
 
 import anyio
 import pytest
-from jsonschema import ValidationError as JsonSchemaValidationError
 from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from mcp.shared.message import SessionMessage
 from mcp.types import (
     LATEST_PROTOCOL_VERSION,
+    CallToolRequest,
+    CallToolRequestParams,
     CallToolResult,
     JSONRPCMessage,
     TextContent,
@@ -40,6 +41,7 @@ from modeling_core.contracts.tools import (
     ListCapabilitiesResult,
     RunExperimentRequest,
     RunExperimentResult,
+    RunExperimentSucceededResult,
     ValidateExperimentRequest,
     ValidateExperimentResult,
 )
@@ -61,6 +63,30 @@ def _corpus_instance(tool: str, kind: str, label: str) -> dict[str, object]:
         for case in cases
         if case["kind"] == kind and case["label"] == label
     )
+
+
+def _call_through_low_level_sdk(
+    adapter: ModelingMcpAdapter,
+    name: str,
+    arguments: dict[str, object],
+) -> CallToolResult:
+    server = Server[object, object](
+        name="math-modeling-mcp",
+        version=APPLICATION_VERSION,
+    )
+    configure_mcp_server(adapter, server)
+
+    async def call() -> CallToolResult:
+        handler = server.request_handlers[CallToolRequest]
+        response = await handler(
+            CallToolRequest(
+                params=CallToolRequestParams(name=name, arguments=arguments)
+            )
+        )
+        assert isinstance(response.root, CallToolResult)
+        return response.root
+
+    return anyio.run(call)
 
 
 def test_tools_list_exposes_exactly_the_six_approved_names_in_order() -> None:
@@ -116,7 +142,11 @@ def test_valid_create_project_call_invokes_the_typed_facade_once() -> None:
     facade.create_project.return_value = expected_result
     adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
 
-    result = adapter.call_tool("create_project", request_data)
+    result = _call_through_low_level_sdk(
+        adapter,
+        "create_project",
+        request_data,
+    )
 
     facade.create_project.assert_called_once_with(expected_request)
     assert result.isError is False
@@ -218,7 +248,11 @@ def test_modeling_error_returns_exact_tool_specific_structured_error() -> None:
     facade.create_project.side_effect = ModelingError(error_response)
     adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
 
-    result = adapter.call_tool("create_project", request_data)
+    result = _call_through_low_level_sdk(
+        adapter,
+        "create_project",
+        request_data,
+    )
 
     expected = error_response.model_dump(mode="json", exclude_none=True)
     assert result.isError is True
@@ -318,18 +352,230 @@ def test_facade_result_is_independently_validated_before_return() -> None:
     facade.health_check.return_value = forged
     adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
 
-    with pytest.raises(JsonSchemaValidationError):
-        adapter.call_tool("health_check", {})
+    result = adapter.call_tool("health_check", {})
+
+    assert result.isError is True
+    assert result.structuredContent is not None
+    assert result.structuredContent["code"] == "INTERNAL_ERROR"
 
 
 def test_request_schema_is_validated_before_facade_dispatch() -> None:
     facade = Mock(spec=ApplicationFacade)
     adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
 
-    with pytest.raises(JsonSchemaValidationError):
-        adapter.call_tool("health_check", {"extra": True})
+    result = adapter.call_tool("health_check", {"extra": True})
 
+    assert result.isError is True
+    assert result.structuredContent is not None
+    assert result.structuredContent["code"] == "INVALID_REQUEST"
     facade.health_check.assert_not_called()
+
+
+def test_low_level_sdk_returns_structured_invalid_request_for_unknown_field() -> (
+    None
+):
+    facade = Mock(spec=ApplicationFacade)
+    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
+
+    result = _call_through_low_level_sdk(
+        adapter,
+        "health_check",
+        {"extra": True},
+    )
+
+    assert result.isError is True
+    assert result.structuredContent is not None
+    error = ErrorResponse.model_validate(result.structuredContent)
+    assert error.code == "INVALID_REQUEST"
+    assert error.details.model_dump() == {
+        "field_path": "/extra",
+        "reason": "unknown_field",
+    }
+    SchemaCatalog.load_packaged().validator("health_check", "error").validate(
+        result.structuredContent
+    )
+    facade.health_check.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "field_path", "reason"),
+    [
+        ({}, "/operation_id", "missing_required"),
+        ({"operation_id": 7}, "/operation_id", "invalid_type"),
+        ({"operation_id": "not-a-uuid"}, "/operation_id", "invalid_format"),
+    ],
+)
+def test_low_level_sdk_maps_request_schema_failures_to_stable_details(
+    arguments: dict[str, object],
+    field_path: str,
+    reason: str,
+) -> None:
+    facade = Mock(spec=ApplicationFacade)
+    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
+
+    result = _call_through_low_level_sdk(
+        adapter,
+        "create_project",
+        arguments,
+    )
+
+    assert result.isError is True
+    assert result.structuredContent is not None
+    error = ErrorResponse.model_validate(result.structuredContent)
+    assert error.code == "INVALID_REQUEST"
+    assert error.details.model_dump() == {
+        "field_path": field_path,
+        "reason": reason,
+    }
+    SchemaCatalog.load_packaged().validator("create_project", "error").validate(
+        result.structuredContent
+    )
+    facade.create_project.assert_not_called()
+
+
+def test_low_level_sdk_returns_structured_invalid_request_for_unknown_tool() -> (
+    None
+):
+    facade = Mock(spec=ApplicationFacade)
+    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
+
+    result = _call_through_low_level_sdk(adapter, "not_a_tool", {})
+
+    assert result.isError is True
+    assert result.structuredContent is not None
+    error = ErrorResponse.model_validate(result.structuredContent)
+    assert error.code == "INVALID_REQUEST"
+    assert error.details.model_dump() == {
+        "field_path": "/name",
+        "reason": "invalid_format",
+    }
+    assert "not_a_tool" not in result.content[0].text
+    assert not any(
+        getattr(facade, method_name).called for method_name in TOOL_NAMES
+    )
+
+
+def test_low_level_sdk_maps_dto_validation_failure_to_invalid_request() -> None:
+    request_data = _corpus_instance("run_experiment", "request", "valid_request")
+    payload = cast(dict[str, object], request_data["payload"])
+    payload["max_iterations"] = 100.0
+    SchemaCatalog.load_packaged().validator("run_experiment", "request").validate(
+        request_data
+    )
+    facade = Mock(spec=ApplicationFacade)
+    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
+
+    result = _call_through_low_level_sdk(
+        adapter,
+        "run_experiment",
+        request_data,
+    )
+
+    assert result.isError is True
+    assert result.structuredContent is not None
+    error = ErrorResponse.model_validate(result.structuredContent)
+    assert error.code == "INVALID_REQUEST"
+    assert error.details.model_dump() == {
+        "field_path": "/payload/max_iterations",
+        "reason": "invalid_type",
+    }
+    SchemaCatalog.load_packaged().validator("run_experiment", "error").validate(
+        result.structuredContent
+    )
+    facade.run_experiment.assert_not_called()
+
+
+def test_low_level_sdk_fails_closed_when_facade_raises_unexpected_error() -> None:
+    facade = Mock(spec=ApplicationFacade)
+    facade.health_check.side_effect = RuntimeError(
+        "secret implementation path C:/private/store.sqlite3"
+    )
+    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
+
+    result = _call_through_low_level_sdk(adapter, "health_check", {})
+
+    assert result.isError is True
+    assert result.structuredContent is not None
+    error = ErrorResponse.model_validate(result.structuredContent)
+    assert error.code == "INTERNAL_ERROR"
+    assert error.message == "tool request failed unexpectedly"
+    assert "secret" not in result.content[0].text
+    assert "private" not in result.content[0].text
+    SchemaCatalog.load_packaged().validator("health_check", "error").validate(
+        result.structuredContent
+    )
+
+
+def test_low_level_sdk_fails_closed_when_facade_result_breaks_contract() -> None:
+    valid = HealthCheckResult.model_validate_json(
+        json.dumps(_corpus_instance("health_check", "result", "valid_result"))
+    )
+    facade = Mock(spec=ApplicationFacade)
+    facade.health_check.return_value = valid.model_copy(update={"status": "BROKEN"})
+    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
+
+    result = _call_through_low_level_sdk(adapter, "health_check", {})
+
+    assert result.isError is True
+    assert result.structuredContent is not None
+    error = ErrorResponse.model_validate(result.structuredContent)
+    assert error.code == "INTERNAL_ERROR"
+    assert error.message == "tool request failed unexpectedly"
+    assert "BROKEN" not in result.content[0].text
+    SchemaCatalog.load_packaged().validator("health_check", "error").validate(
+        result.structuredContent
+    )
+
+
+def test_low_level_sdk_fails_closed_when_result_cannot_be_serialized() -> None:
+    result_data = _corpus_instance(
+        "run_experiment", "result", "valid_result"
+    )
+    result_data.pop("terminal_reason")
+    result_data.update(
+        {
+            "attempt_status": "SUCCEEDED",
+            "result_kind": "success",
+            "result_hash": "sha256:" + "a" * 64,
+            "result_summary": {
+                "root": 1.0,
+                "function_value": 0.0,
+                "iterations": 1,
+                "evaluations": 3,
+                "termination_reason": "residual_tolerance",
+            },
+        }
+    )
+    valid = cast(
+        RunExperimentSucceededResult,
+        TypeAdapter(RunExperimentResult).validate_json(
+            json.dumps(result_data)
+        ),
+    )
+    forged_summary = valid.result_summary.model_copy(
+        update={"root": float("nan")}
+    )
+    facade = Mock(spec=ApplicationFacade)
+    facade.run_experiment.return_value = valid.model_copy(
+        update={"result_summary": forged_summary}
+    )
+    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
+
+    result = _call_through_low_level_sdk(
+        adapter,
+        "run_experiment",
+        _corpus_instance("run_experiment", "request", "valid_request"),
+    )
+
+    assert result.isError is True
+    assert result.structuredContent is not None
+    error = ErrorResponse.model_validate(result.structuredContent)
+    assert error.code == "INTERNAL_ERROR"
+    assert error.message == "tool request failed unexpectedly"
+    assert "Out of range float values" not in result.content[0].text
+    SchemaCatalog.load_packaged().validator("run_experiment", "error").validate(
+        result.structuredContent
+    )
 
 
 def test_oversized_schema_valid_result_becomes_bounded_tool_error() -> None:
@@ -528,6 +774,57 @@ def test_strict_stdio_rejects_nonstrict_frames_before_sdk_use(
 
     assert isinstance(received, ValueError)
     assert written == b""
+
+
+def test_strict_stdio_stops_bounded_read_before_newline_or_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    max_request_bytes = 32
+
+    class NeverEndingNoNewlineBuffer:
+        def __init__(self) -> None:
+            self.read_sizes: list[int] = []
+            self.unbounded_read_attempted = False
+            self.readline_calls = 0
+
+        def readline(self) -> bytes:
+            self.unbounded_read_attempted = True
+            self.readline_calls += 1
+            if self.readline_calls == 1:
+                return b"x" * (max_request_bytes + 2) + b"\n"
+            return b""
+
+        def read1(self, size: int = -1) -> bytes:
+            self.read_sizes.append(size)
+            if len(self.read_sizes) > 1:
+                raise AssertionError("transport read beyond the overflow boundary")
+            return b"x" * size
+
+    class BinaryInput:
+        def __init__(self, buffer: NeverEndingNoNewlineBuffer) -> None:
+            self.buffer = buffer
+
+    source = NeverEndingNoNewlineBuffer()
+    stdout_bytes = io.BytesIO()
+    stdout = io.TextIOWrapper(stdout_bytes, encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", BinaryInput(source))
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    async def receive_overflow() -> SessionMessage | Exception:
+        async with strict_stdio_server(max_request_bytes) as (
+            read_stream,
+            write_stream,
+        ):
+            received = await read_stream.receive()
+            await write_stream.aclose()
+            return received
+
+    received = anyio.run(receive_overflow)
+
+    assert isinstance(received, ValueError)
+    assert str(received) == "STDIO frame exceeds the request byte limit"
+    assert source.unbounded_read_attempted is False
+    assert source.read_sizes == [max_request_bytes + 1]
 
 
 def test_low_level_server_negotiates_pinned_protocol_with_tool_capability_only() -> (
