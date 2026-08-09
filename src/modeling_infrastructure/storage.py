@@ -25,6 +25,7 @@ _PROJECT_KEYS = frozenset(
         "storage_instance_id",
     }
 )
+_MAX_VERSION_COMPONENT_DIGITS = 64
 
 
 class StorageError(RuntimeError):
@@ -85,6 +86,34 @@ def _is_uuid4(value: object) -> bool:
     except ValueError:
         return False
     return parsed.version == 4 and str(parsed) == value
+
+
+def _is_higher_project_format_version(requested: str, supported: str) -> bool:
+    requested_family, requested_separator, requested_number = requested.partition("/")
+    supported_family, supported_separator, supported_number = supported.partition("/")
+    if (
+        requested_separator != "/"
+        or supported_separator != "/"
+        or requested_family != supported_family
+    ):
+        return False
+    requested_parts = requested_number.split(".")
+    supported_parts = supported_number.split(".")
+    if (
+        len(requested_parts) != 3
+        or len(supported_parts) != 3
+        or not all(part.isascii() and part.isdecimal() for part in requested_parts)
+        or not all(part.isascii() and part.isdecimal() for part in supported_parts)
+        or any(
+            len(part) > _MAX_VERSION_COMPONENT_DIGITS
+            or (len(part) > 1 and part.startswith("0"))
+            for part in requested_parts + supported_parts
+        )
+    ):
+        return False
+    requested_key = tuple((len(part), part) for part in requested_parts)
+    supported_key = tuple((len(part), part) for part in supported_parts)
+    return requested_key > supported_key
 
 
 def _project_bytes(versions: VersionSet, storage_instance_id: str) -> bytes:
@@ -287,6 +316,21 @@ def load_storage_metadata(
             details={"subject": "project_metadata"},
         )
     user_version, database_metadata = _read_database_metadata(paths.database, versions)
+    project_format_version = project["project_format_version"]
+    if project_format_version == database_metadata.get(
+        "project_format_version"
+    ) and _is_higher_project_format_version(
+        project_format_version, versions.project_format_version
+    ):
+        raise StorageError(
+            "UNSUPPORTED_VERSION",
+            "project format is newer than this application",
+            details={
+                "subject": "project_format",
+                "requested_version": project_format_version,
+                "supported_versions": [versions.project_format_version],
+            },
+        )
     expected = {
         "project_format_version": versions.project_format_version,
         "canonicalization_version": versions.canonicalization_version,

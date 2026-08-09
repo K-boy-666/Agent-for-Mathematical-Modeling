@@ -110,6 +110,98 @@ def test_higher_database_version_fails_closed_without_overwrite(tmp_path: Path) 
     assert _snapshot(tmp_path) == before
 
 
+def test_coherent_higher_project_format_fails_closed_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    """A coherent newer project format is unsupported, not corrupted metadata."""
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    project_json = tmp_path / ".modeling" / "project.json"
+    database = tmp_path / ".modeling" / "state.sqlite3"
+    project_metadata = json.loads(project_json.read_text(encoding="utf-8"))
+    project_metadata["project_format_version"] = "modeling-project/0.2.0"
+    project_json.write_text(
+        json.dumps(project_metadata, separators=(",", ":"), sort_keys=True),
+        encoding="utf-8",
+    )
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute(
+            "UPDATE metadata SET value=? WHERE key='project_format_version'",
+            ("modeling-project/0.2.0",),
+        )
+        connection.commit()
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(StorageError) as captured:
+        bootstrap_storage(tmp_path, VersionSet.m1a())
+
+    assert captured.value.code == "UNSUPPORTED_VERSION"
+    assert captured.value.details == {
+        "subject": "project_format",
+        "requested_version": "modeling-project/0.2.0",
+        "supported_versions": ["modeling-project/0.1.0"],
+    }
+    assert _snapshot(tmp_path) == before
+
+
+def test_malformed_project_format_remains_an_integrity_failure(
+    tmp_path: Path,
+) -> None:
+    """A noncanonical format number is not a known unsupported version."""
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    project_json = tmp_path / ".modeling" / "project.json"
+    database = tmp_path / ".modeling" / "state.sqlite3"
+    project_metadata = json.loads(project_json.read_text(encoding="utf-8"))
+    project_metadata["project_format_version"] = "modeling-project/00.2.0"
+    project_json.write_text(
+        json.dumps(project_metadata, separators=(",", ":"), sort_keys=True),
+        encoding="utf-8",
+    )
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute(
+            "UPDATE metadata SET value=? WHERE key='project_format_version'",
+            ("modeling-project/00.2.0",),
+        )
+        connection.commit()
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(StorageError) as captured:
+        bootstrap_storage(tmp_path, VersionSet.m1a())
+
+    assert captured.value.code == "INTEGRITY_FAILURE"
+    assert _snapshot(tmp_path) == before
+
+
+def test_over_limit_project_format_fails_closed_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    """An oversized numeric component cannot escape the stable storage error."""
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    project_json = tmp_path / ".modeling" / "project.json"
+    database = tmp_path / ".modeling" / "state.sqlite3"
+    oversized_version = "modeling-project/1" + ("0" * 5_000) + ".0.0"
+    project_metadata = json.loads(project_json.read_text(encoding="utf-8"))
+    project_metadata["project_format_version"] = oversized_version
+    project_json.write_text(
+        json.dumps(project_metadata, separators=(",", ":"), sort_keys=True),
+        encoding="utf-8",
+    )
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute(
+            "UPDATE metadata SET value=? WHERE key='project_format_version'",
+            (oversized_version,),
+        )
+        connection.commit()
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(StorageError) as captured:
+        try:
+            bootstrap_storage(tmp_path, VersionSet.m1a())
+        finally:
+            assert _snapshot(tmp_path) == before
+
+    assert captured.value.code == "INTEGRITY_FAILURE"
+
+
 def test_mismatched_project_metadata_fails_closed_without_overwrite(
     tmp_path: Path,
 ) -> None:
