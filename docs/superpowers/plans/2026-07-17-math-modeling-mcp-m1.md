@@ -1736,8 +1736,28 @@ can merge it with its safe platform environment.
   5. package asset inventory and source fingerprint;
   6. a dedicated fresh golden STDIO run.
 
-  It must not shell through Bash/PowerShell; use `subprocess.run` argument
-  arrays whose first element is the already validated absolute uv executable.
+  Item 5 reuses B11's exact source-inventory algorithm now. Invoke
+  `git ls-files --cached --others --exclude-standard -z` through the direct
+  argument array
+  `["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"]`
+  with `shell=False`. This is the sole authorized direct non-uv subprocess in
+  A11: it is a support inventory call, not a verification check, so it is
+  explicitly exempt from the rule that every check subprocess starts with the
+  validated absolute uv executable. Decode each NUL-delimited path as strict
+  UTF-8, NFC-normalize it to a repository-relative POSIX path, and reject an
+  absolute path, `.` or `..` component, duplicate normalized path, NFC
+  collision, non-file entry, or listed-but-missing file. Hash each file's raw
+  bytes with SHA-256; sort records by the UTF-8 bytes of the normalized path;
+  construct the complete JSON array whose objects contain exactly `path` and
+  `sha256`; then compute `source_fingerprint = sha256_json(array)` without
+  truncation. Git's cached-plus-nonignored-untracked inventory therefore
+  includes in-progress task files while excluding ignored environments,
+  caches, project state and `build/` evidence.
+
+  No subprocess may shell through Bash, PowerShell or `cmd`. Every subprocess
+  other than the single source-inventory support call above must use a
+  `subprocess.run` argument array whose first element is the already validated
+  absolute uv executable.
   Set `UV_OFFLINE=1` for the entire verification process after the explicit
   environment sync and pass the offline environment to every child; any
   missing/mismatched uv executable or network attempt is a Harness failure.
