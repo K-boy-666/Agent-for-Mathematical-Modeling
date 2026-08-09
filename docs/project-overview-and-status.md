@@ -282,6 +282,14 @@ MCP 完成建项、资产登记、MMIR 草拟/确认、两次运行、两次验�
 | A7 修复 | `d44e8023b8b10f7077559994d1d5c39c4e71340e` | `fix: preserve bisection termination order` | 独立审查通过 |
 | A8 | `7719f2937d640ec90bc8b96cf8b1a6d007b3e459` | `feat: add independent residual validation` | 独立审查通过 |
 | A9a | `665a53f69b092a408d1fff4ec95ae8ebca5aad78` | `refactor: repair A9 persistence contracts` | 独立审查通过 |
+| A9b | `a9cd1ef636df9246aa3d5c090309fce49816d802` | `feat: orchestrate traceable M1a experiments` | 后续修复 |
+| A9b 修复 | `831903991fd841cf60b60893b184220a4a6107a2` | `fix: harden A9b orchestration boundaries` | 独立审查通过，1 个 Minor 延后 |
+| A10 生命周期规格 | `68e3fac0ea97f9fd63e3031881bab0cc497c2829` | `docs: clarify A10 writer-lease lifecycle` | 计划澄清 |
+| A10 包装修正 | `ea2aa93b9ea5b9e221a4d4807c402602bf29532f` | `docs: authorize A10 package wiring` | 计划澄清 |
+| A10 | `0077917d1e6d80865c6dbabdeb7a96ff6a3da911` | `feat: expose six tools over strict STDIO MCP` | 后续修复 |
+| A10 父审修复 | `1cc7a8d8853d737beef42532de9863742eca7399` | `fix: harden A10 protocol and lifecycle boundaries` | 独立复审通过，真实 shutdown 交给 A11 |
+| A11 前置 Schema 修正 | `d879bc8e909953cc45a55adc3b344dedc15ae967` | `fix: advertise offline-resolvable MCP schemas` | 独立审查通过 |
+| A11 前置格式基线 | `7ff1419eac4c79ccfcf48c17095e6934a40aab27` | `style: establish Ruff formatting baseline` | AST 39/39 等价，独立审查通过 |
 
 当前已具备：
 
@@ -293,37 +301,45 @@ MCP 完成建项、资产登记、MMIR 草拟/确认、两次运行、两次验�
 - 安全表达式解析和规范输入；
 - 确定性二分法求根；
 - 与求解器独立的残差验证器；
-- A9 所需的宿主中立错误和存储端口契约。
+- 六个应用用例及 Project/Experiment/Attempt/Validation 的 SQLite 溯源；
+- create/run/validate 幂等、终态重建和失败关闭；
+- 严格字节 STDIO、1 MiB 预换行有界读取和 256 KiB 响应门；
+- 六个 MCP 工具、唯一组合根和进程生命周期 writer lease；
+- 真实 `DEGRADED` 只读 health，其他业务工具失败关闭；
+- 可由官方 MCP ClientSession 离线解析的自包含广告 Schema；
+- 全仓 Ruff 格式基线。
 
-A9a 的最终独立证据：
+A10 及其前置关闭证据：
 
-- 聚焦测试：326 passed；
-- 全量测试：538 passed；
-- MyPy：42 个源文件无问题；
-- Ruff：通过；
-- diff check：通过；
-- 事后审查：`TASK REVIEW PASS — A9b AUTHORIZED`。
+- A10 父审修复后全量测试：651 passed；
+- 离线 Schema 修正后全量测试：656 passed；
+- Ruff、MyPy（52 个源文件）、compileall、diff check：通过；
+- 官方 MCP ClientSession 在 `UV_OFFLINE=1` 下完成真实 health 调用；
+- 格式基线修改 39 个 Python 文件，AST 39/39 完全等价；
+- A10 父级审查 4 个 Important 与复审新增 1 个 Important 全部关闭；
+- 仅真实 SDK EOF/cancellation/handler-error shutdown 证据明确交由 A11。
 
 ## 5. 当前未完成事项
 
-### 5.1 正在进行：A9b
+### 5.1 下一步：A11
 
-A9b 已获得授权，下一步实现：
+A9b 与 A10 已完成。A11 的产品前置缺陷也已关闭：广告 Schema 可以离线解析，
+全仓格式门已建立。A11 开始前只需按已批准的计划文字使用绝对、已验证的 uv
+0.11.28，并把 `UV_OFFLINE=1` 显式传给每个子进程。
 
-- `ModelingApplication` 六个用例；
-- schema-1 `SQLiteProjectStore` 的真实读写；
-- create/run/validate 的规范幂等哈希和短事务；
-- Experiment、Attempt、ResultSnapshot、Validation 与报告的内联溯源；
-- 预执行错误、数值失败、超时、取消、系统错误和 Validation FAILED 的正交映射；
-- 直接 Facade 黄金链路和复现测试。
+A11 将实现：
+
+- 官方 MCP ClientSession 的六工具真实 STDIO 黄金链路；
+- 原始 stdout 协议纯度、stderr 分离和 Windows 进程关闭证据；
+- M1a security/reproducibility/architecture 测试编排；
+- 原子、脱敏的 M1a evidence 输出；
+- `modeling verify --milestone m1a` 的 A11 检查注册表。
 
 ### 5.2 M1a 剩余
 
-1. 完成 A9b 并通过独立审查。
-2. 完成 A10：严格 STDIO MCP 六工具适配和唯一组合根。
-3. 完成 A11：真实 MCP 子进程黄金链路、安全测试和 M1a evidence。
-4. 完成 A12：doctor、AGENTS、上下文索引、Codex 配置、维护文档和验收映射。
-5. 通过 `modeling verify --milestone m1a`。
+1. 完成 A11：真实 MCP 子进程黄金链路、安全测试和 M1a evidence。
+2. 完成 A12：doctor、AGENTS、上下文索引、Codex 配置、维护文档和验收映射。
+3. 通过 `modeling verify --milestone m1a`。
 
 ### 5.3 C1 剩余
 

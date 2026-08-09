@@ -1662,6 +1662,18 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
 
 **Primary concern:** 真实进程端到端证据和单一自动验证编排。
 
+**2026-08-09 preflight closure:** A10 parent remediation is closed by
+`1cc7a8d8853d737beef42532de9863742eca7399`; the official-client offline
+Schema correction is closed by `d879bc8e909953cc45a55adc3b344dedc15ae967`;
+and the whole-tree Ruff formatting baseline is closed by
+`7ff1419eac4c79ccfcf48c17095e6934a40aab27`. A11 must resolve the uv
+executable only from `os.environ["UV"]`, require an absolute existing regular
+file, run `--version`, and require exactly uv `0.11.28`. It must never resolve
+uv through PATH or `shutil.which`. Every Harness subprocess receives an
+explicit environment containing `UV_OFFLINE=1`; every MCP
+`StdioServerParameters` receives `env={"UV_OFFLINE": "1"}` so the pinned SDK
+can merge it with its safe platform environment.
+
 **Files:**
 
 - Create: `tests/integration/test_stdio_golden_m1a.py`, `tests/security/test_m1a_boundaries.py`
@@ -1675,7 +1687,11 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
 
 - [ ] **Step 1: Write the failing real-subprocess golden test**
 
-  The test must construct `StdioServerParameters` with arguments `uv run --locked --no-sync modeling-mcp --project-root` followed by `str(tmp_path / "stdio-golden-project")`, then execute this exact sequence:
+  The test must validate the absolute uv executable from `os.environ["UV"]`
+  as specified above, then construct `StdioServerParameters` with that path as
+  `command`, arguments `run --locked --no-sync modeling-mcp --project-root`
+  followed by `str(tmp_path / "stdio-golden-project")`, repository root as
+  `cwd`, and `env={"UV_OFFLINE": "1"}`. It then executes this exact sequence:
 
   ```text
   initialize
@@ -1712,14 +1728,25 @@ normalize_root_finding_input(raw_payload: JsonObject) -> CanonicalInputRecord
 
   `verify.py` M1a profile runs, in order:
 
-  1. `uv lock --check --offline` with subprocess environment `UV_OFFLINE=1`;
+  1. the validated absolute uv 0.11.28 executable with
+     `lock --check --offline` and subprocess environment `UV_OFFLINE=1`;
   2. `ruff check src tests` and `ruff format --check src tests`;
   3. `mypy src`;
   4. pytest unit, contract, math, architecture, integration, reproducibility, security, acceptance groups;
   5. package asset inventory and source fingerprint;
   6. a dedicated fresh golden STDIO run.
 
-  It must not shell through Bash/PowerShell; use `subprocess.run` argument arrays. Set `UV_OFFLINE=1` for the entire verification process after the explicit environment sync; any network attempt is a Harness failure. Evidence writes to a sibling temporary directory, closes files, then atomically renames. JSON contains schema version, source fingerprint, Python/uv/OS/lock summary, every check status/duration/test count, architecture report, golden IDs and paths to redacted transcript/trace. Failure returns nonzero and preserves a diagnostic report.
+  It must not shell through Bash/PowerShell; use `subprocess.run` argument
+  arrays whose first element is the already validated absolute uv executable.
+  Set `UV_OFFLINE=1` for the entire verification process after the explicit
+  environment sync and pass the offline environment to every child; any
+  missing/mismatched uv executable or network attempt is a Harness failure.
+  Evidence records the validated uv version and optional executable digest,
+  never its absolute path. Evidence writes to a sibling temporary directory,
+  closes files, then atomically renames. JSON contains schema version, source
+  fingerprint, Python/uv/OS/lock summary, every check status/duration/test
+  count, architecture report, golden IDs and paths to redacted
+  transcript/trace. Failure returns nonzero and preserves a diagnostic report.
 
 - [ ] **Step 6: Run focused tests and pre-document verification**
 
