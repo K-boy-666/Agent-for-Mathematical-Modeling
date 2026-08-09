@@ -70,8 +70,7 @@ class _Cancellation:
     def is_cancelled(self) -> bool:
         self.checks += 1
         return self.cancelled or (
-            self.cancel_on_check is not None
-            and self.checks >= self.cancel_on_check
+            self.cancel_on_check is not None and self.checks >= self.cancel_on_check
         )
 
 
@@ -87,9 +86,7 @@ def _context(
         seed=None,
         deadline=deadline,
         clock=clock or _Clock(),
-        cancellation=cast(
-            CancellationSignal, cancellation or _Cancellation()
-        ),
+        cancellation=cast(CancellationSignal, cancellation or _Cancellation()),
     )
 
 
@@ -165,9 +162,7 @@ def test_execute_rejects_outer_canonical_schema_version_before_evaluation(
     capability = BisectionRootFindingCapability()
     valid = capability.normalize_and_validate(_raw("x", -1.0, 1.0))
     mismatched = CanonicalInputRecord(
-        canonical_input_schema_version=(
-            "numerical.root_finding.canonical-input/9.9.9"
-        ),
+        canonical_input_schema_version=("numerical.root_finding.canonical-input/9.9.9"),
         canonical_payload=valid.canonical_payload,
         canonical_payload_hash=valid.canonical_payload_hash,
         model_snapshot_hash=valid.model_snapshot_hash,
@@ -183,9 +178,7 @@ def test_execute_rejects_outer_canonical_schema_version_before_evaluation(
         evaluations += 1
         raise AssertionError("schema mismatch reached numerical evaluation")
 
-    monkeypatch.setattr(
-        SolverEvaluator, "evaluate", forbidden_evaluation
-    )
+    monkeypatch.setattr(SolverEvaluator, "evaluate", forbidden_evaluation)
 
     with pytest.raises(InputValidationError) as caught:
         capability.execute(mismatched, _context())
@@ -406,9 +399,7 @@ def test_residual_precedes_interval_tolerance() -> None:
     )
 
     assert outcome.result_kind == "success"
-    assert outcome.result_payload.data.termination_reason == (
-        "residual_tolerance"
-    )
+    assert outcome.result_payload.data.termination_reason == ("residual_tolerance")
 
 
 def test_interval_success_preserves_real_midpoint_value_and_exact_counts() -> None:
@@ -483,13 +474,7 @@ def test_control_is_checked_at_every_evaluation_transition(
     cancellation = _Cancellation(
         cancel_on_check=check_index if control == "cancel" else None
     )
-    clock = _Clock(
-        iter(
-            [0.0] * (check_index - 1)
-            + [10.0]
-            + [10.0] * 8
-        )
-    )
+    clock = _Clock(iter([0.0] * (check_index - 1) + [10.0] + [10.0] * 8))
     evaluations = 0
 
     def controlled_evaluation(
@@ -503,9 +488,7 @@ def test_control_is_checked_at_every_evaluation_transition(
         evaluations += 1
         return x
 
-    monkeypatch.setattr(
-        SolverEvaluator, "evaluate", controlled_evaluation
-    )
+    monkeypatch.setattr(SolverEvaluator, "evaluate", controlled_evaluation)
     context = _context(
         clock=clock,
         cancellation=cancellation,
@@ -513,9 +496,7 @@ def test_control_is_checked_at_every_evaluation_transition(
     )
 
     expected_exception = (
-        EvaluationCancelled
-        if control == "cancel"
-        else EvaluationDeadlineExceeded
+        EvaluationCancelled if control == "cancel" else EvaluationDeadlineExceeded
     )
     with pytest.raises(expected_exception):
         capability.execute(canonical, context)
@@ -551,13 +532,9 @@ def test_control_is_checked_before_success_and_failure_final_return(
                 cancellation.cancelled = True
         return 0.0 if result_path == "success" else 1.0
 
-    monkeypatch.setattr(
-        SolverEvaluator, "evaluate", evaluation_then_stop
-    )
+    monkeypatch.setattr(SolverEvaluator, "evaluate", evaluation_then_stop)
     expected_exception = (
-        EvaluationCancelled
-        if control == "cancel"
-        else EvaluationDeadlineExceeded
+        EvaluationCancelled if control == "cancel" else EvaluationDeadlineExceeded
     )
 
     with pytest.raises(expected_exception):
@@ -700,9 +677,7 @@ def test_unexpected_evaluator_exception_propagates_unchanged(
 def test_result_payload_has_exact_fields_and_only_finite_numbers(
     expression: str, lower: float, upper: float
 ) -> None:
-    payload = _execute(expression, lower, upper).result_payload.model_dump(
-        mode="json"
-    )
+    payload = _execute(expression, lower, upper).result_payload.model_dump(mode="json")
 
     assert set(payload) == {
         "result_schema_version",
@@ -723,9 +698,7 @@ def test_result_payload_has_exact_fields_and_only_finite_numbers(
 
 
 def test_numerical_failure_payload_has_exact_fields() -> None:
-    payload = _execute("x*x+1", -1.0, 1.0).result_payload.model_dump(
-        mode="json"
-    )
+    payload = _execute("x*x+1", -1.0, 1.0).result_payload.model_dump(mode="json")
 
     assert set(payload) == {
         "result_schema_version",
@@ -743,18 +716,13 @@ def test_numerical_failure_payload_has_exact_fields() -> None:
 
 def test_descriptor_has_fixed_identity_limits_and_packaged_schema_hashes() -> None:
     descriptor = BisectionRootFindingCapability().descriptor
-    root = files("modeling_capabilities.root_finding").joinpath(
-        "schemas", "0.1.0"
-    )
+    root = files("modeling_capabilities.root_finding").joinpath("schemas", "0.1.0")
 
     assert descriptor.kind == "built_in"
     assert descriptor.capability_api_version == "modeling-capability/0.1.0"
     assert descriptor.capability_id == "numerical.root_finding"
     assert descriptor.contract_version == "0.1.0"
-    assert (
-        descriptor.implementation_id
-        == "builtin.numerical.root_finding.bisection"
-    )
+    assert descriptor.implementation_id == "builtin.numerical.root_finding.bisection"
     assert descriptor.implementation_version == "0.1.0"
     assert descriptor.category == "numerical"
     assert descriptor.determinism == "deterministic"
@@ -773,13 +741,8 @@ def test_descriptor_has_fixed_identity_limits_and_packaged_schema_hashes() -> No
     assert len(descriptor.validators) == 1
     validator = descriptor.validators[0]
     assert validator.validator_id == "numerical.root_finding.residual"
-    assert tuple(policy.policy_version for policy in validator.policies) == (
-        "0.1.0",
-    )
-    assert (
-        validator.report_schema_version
-        == "modeling-validation-report/0.1.0"
-    )
+    assert tuple(policy.policy_version for policy in validator.policies) == ("0.1.0",)
+    assert validator.report_schema_version == "modeling-validation-report/0.1.0"
     for reference, name in (
         (descriptor.input_schema, "input.schema.json"),
         (descriptor.canonical_input_schema, "canonical-input.schema.json"),
@@ -787,9 +750,7 @@ def test_descriptor_has_fixed_identity_limits_and_packaged_schema_hashes() -> No
         (descriptor.failure_schema, "failure-data.schema.json"),
     ):
         assert root.joinpath(name).is_file()
-        disk_schema = json.loads(
-            root.joinpath(name).read_text(encoding="utf-8")
-        )
+        disk_schema = json.loads(root.joinpath(name).read_text(encoding="utf-8"))
         assert reference.schema == disk_schema
         assert reference.schema_hash == sha256_json(reference.schema)
 

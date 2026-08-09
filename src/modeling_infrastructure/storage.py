@@ -286,9 +286,7 @@ def load_storage_metadata(
             "storage instance ID is invalid",
             details={"subject": "project_metadata"},
         )
-    user_version, database_metadata = _read_database_metadata(
-        paths.database, versions
-    )
+    user_version, database_metadata = _read_database_metadata(paths.database, versions)
     expected = {
         "project_format_version": versions.project_format_version,
         "canonicalization_version": versions.canonicalization_version,

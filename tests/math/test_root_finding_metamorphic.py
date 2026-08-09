@@ -47,9 +47,7 @@ def _root(expression: str, lower: float, upper: float) -> float:
             seed=None,
             deadline=10.0,
             clock=_Clock(),
-            cancellation=cast(
-                CancellationSignal, _NeverCancelled()
-            ),
+            cancellation=cast(CancellationSignal, _NeverCancelled()),
         ),
     )
     assert outcome.result_kind == "success"
@@ -60,9 +58,7 @@ def test_translation_shifts_root_by_same_amount() -> None:
     original = _root("x*x-2", 0.0, 2.0)
     shifted = _root("(x-3)*(x-3)-2", 3.0, 5.0)
 
-    assert shifted == pytest.approx(
-        original + 3.0, rel=0.0, abs=1e-9
-    )
+    assert shifted == pytest.approx(original + 3.0, rel=0.0, abs=1e-9)
 
 
 @pytest.mark.parametrize("scale", [7.0, -3.0])
@@ -70,9 +66,7 @@ def test_nonzero_scale_and_sign_flip_preserve_root(scale: float) -> None:
     original = _root("x*x-2", 0.0, 2.0)
     transformed = _root(f"{scale}*(x*x-2)", 0.0, 2.0)
 
-    assert transformed == pytest.approx(
-        original, rel=0.0, abs=1e-9
-    )
+    assert transformed == pytest.approx(original, rel=0.0, abs=1e-9)
 
 
 def test_narrowed_valid_bracket_preserves_root() -> None:

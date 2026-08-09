@@ -35,8 +35,7 @@ TOOL_ERROR_CODES: dict[str, frozenset[str]] = {
     "health_check": frozenset(
         {"INVALID_REQUEST", "RESOURCE_LIMIT_EXCEEDED", "INTERNAL_ERROR"}
     ),
-    "create_project": ALL_ERROR_CODES
-    - frozenset({"NOT_FOUND"}),
+    "create_project": ALL_ERROR_CODES - frozenset({"NOT_FOUND"}),
     "get_project_status": ALL_ERROR_CODES
     - frozenset({"CONFLICT", "SECURITY_VIOLATION"}),
     "list_capabilities": ALL_ERROR_CODES

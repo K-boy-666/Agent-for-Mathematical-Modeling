@@ -154,9 +154,7 @@ class _ValidationResultFields(_CommonFields):
 
 
 def _millisecond_utc(value: datetime) -> datetime:
-    return value.astimezone(UTC).replace(
-        microsecond=(value.microsecond // 1000) * 1000
-    )
+    return value.astimezone(UTC).replace(microsecond=(value.microsecond // 1000) * 1000)
 
 
 def _timestamp(value: datetime) -> str:
@@ -220,7 +218,9 @@ def _attempt_trace(attempt: Attempt) -> AttemptTrace:
         result=result,
         system_error=attempt.system_error,
         numerical_failure=attempt.numerical_failure,
-        terminal_reason=attempt.terminal_reason.value if attempt.terminal_reason else None,
+        terminal_reason=attempt.terminal_reason.value
+        if attempt.terminal_reason
+        else None,
     )
 
 
@@ -240,13 +240,17 @@ def _validation_trace(validation: Validation) -> ValidationTrace:
         status=validation.status.value,
         created_at=_timestamp(validation.created_at),
         started_at=_timestamp(validation.started_at) if validation.started_at else None,
-        finished_at=_timestamp(validation.finished_at) if validation.finished_at else None,
+        finished_at=_timestamp(validation.finished_at)
+        if validation.finished_at
+        else None,
         outcome=validation.outcome.value if validation.outcome else None,
         metrics=validation.metrics,
         validation_report_hash=validation.validation_report_hash,
         report_payload=validation.report_payload,
         operational_error=validation.operational_error,
-        terminal_reason=validation.terminal_reason.value if validation.terminal_reason else None,
+        terminal_reason=validation.terminal_reason.value
+        if validation.terminal_reason
+        else None,
     )
 
 
@@ -384,7 +388,10 @@ class ModelingApplication(ApplicationFacade):
                 correlation_id=correlation_id,
                 code="PRECONDITION_FAILED",
                 message="project is not ready",
-                details={"condition": "project_not_ready", "current_state": inspection.state.value},
+                details={
+                    "condition": "project_not_ready",
+                    "current_state": inspection.state.value,
+                },
             )
         if inspection.project.project_id != project_id:
             self._raise_error(
@@ -451,11 +458,18 @@ class ModelingApplication(ApplicationFacade):
                     correlation_id=correlation_id,
                     code="PRECONDITION_FAILED",
                     message="project is degraded",
-                    details={"condition": "project_degraded", "current_state": "DEGRADED"},
+                    details={
+                        "condition": "project_degraded",
+                        "current_state": "DEGRADED",
+                    },
                 )
             display_name = request.display_name
             if display_name is None:
-                display_name = inspection.project.display_name if inspection.project else self._default_display_name
+                display_name = (
+                    inspection.project.display_name
+                    if inspection.project
+                    else self._default_display_name
+                )
             command = CreateProjectCommand(
                 operation=WriteOperation(
                     operation_id=request.operation_id,
@@ -507,7 +521,9 @@ class ModelingApplication(ApplicationFacade):
         finally:
             self._release_write()
 
-    def get_project_status(self, request: GetProjectStatusRequest) -> GetProjectStatusResult:
+    def get_project_status(
+        self, request: GetProjectStatusRequest
+    ) -> GetProjectStatusResult:
         common = self._common()
         correlation_id = common["correlation_id"]
         self._require_ready(request.project_id, correlation_id)
@@ -522,11 +538,15 @@ class ModelingApplication(ApplicationFacade):
                     validation_status_counts=snapshot.validation_status_counts,
                     registry_fingerprint=self._registry_summary.fingerprint,
                     last_activity_at=_timestamp(snapshot.last_activity_at),
-                    experiments=ExperimentItems(items=snapshot.experiments, truncated=snapshot.truncated),
+                    experiments=ExperimentItems(
+                        items=snapshot.experiments, truncated=snapshot.truncated
+                    ),
                 )
             assert isinstance(request, GetProjectStatusExperimentRequest)
             trace = self._store.get_experiment_trace(
-                ExperimentTraceQuery(project_id=request.project_id, experiment_id=request.experiment_id)
+                ExperimentTraceQuery(
+                    project_id=request.project_id, experiment_id=request.experiment_id
+                )
             )
         except ProjectStoreError as error:
             self._raise_store(error, correlation_id)
@@ -551,7 +571,9 @@ class ModelingApplication(ApplicationFacade):
             trace=tuple(records),
         )
 
-    def list_capabilities(self, request: ListCapabilitiesRequest) -> ListCapabilitiesResult:
+    def list_capabilities(
+        self, request: ListCapabilitiesRequest
+    ) -> ListCapabilitiesResult:
         common = self._common()
         correlation_id = common["correlation_id"]
         state = self._store.inspect_project_state().state
@@ -572,7 +594,11 @@ class ModelingApplication(ApplicationFacade):
                 **common,
                 detail="summary",
                 registry=self._registry_summary,
-                capabilities=tuple(self._registry.list_summaries(request.category, request.capability_id)),
+                capabilities=tuple(
+                    self._registry.list_summaries(
+                        request.category, request.capability_id
+                    )
+                ),
             )
         assert isinstance(request, ListCapabilitiesContractRequest)
         available = self._registry.list_summaries(None, request.capability_id)
@@ -581,7 +607,10 @@ class ModelingApplication(ApplicationFacade):
                 correlation_id=correlation_id,
                 code="NOT_FOUND",
                 message="capability was not found",
-                details={"resource_type": "capability", "resource_id": request.capability_id},
+                details={
+                    "resource_type": "capability",
+                    "resource_id": request.capability_id,
+                },
             )
         if all(item.contract_version != request.contract_version for item in available):
             self._raise_error(
@@ -597,9 +626,16 @@ class ModelingApplication(ApplicationFacade):
                 ),
             )
         try:
-            descriptor = self._registry.resolve(request.capability_id, request.contract_version).descriptor
+            descriptor = self._registry.resolve(
+                request.capability_id, request.contract_version
+            ).descriptor
         except RegistryError as error:
-            self._raise_error(correlation_id=correlation_id, code=error.code, message=str(error), details=cast(JsonObject, error.details))
+            self._raise_error(
+                correlation_id=correlation_id,
+                code=error.code,
+                message=str(error),
+                details=cast(JsonObject, error.details),
+            )
         capability = CapabilityContract(
             capability_id=descriptor.capability_id,
             contract_version=descriptor.contract_version,
@@ -630,7 +666,12 @@ class ModelingApplication(ApplicationFacade):
             validators=descriptor.validators,
             context_ref=descriptor.context_ref,
         )
-        return ListCapabilitiesContractResult(**common, detail="contract", registry=self._registry_summary, capability=capability)
+        return ListCapabilitiesContractResult(
+            **common,
+            detail="contract",
+            registry=self._registry_summary,
+            capability=capability,
+        )
 
     def _run_result(
         self,
@@ -793,9 +834,7 @@ class ModelingApplication(ApplicationFacade):
                 capability_id=descriptor.capability_id,
                 contract_version=descriptor.contract_version,
                 canonical_input_schema_version=cast(
-                    Literal[
-                        "numerical.root_finding.canonical-input/0.1.0"
-                    ],
+                    Literal["numerical.root_finding.canonical-input/0.1.0"],
                     canonical.canonical_input_schema_version,
                 ),
                 canonical_payload=CanonicalRootFindingInput.model_validate(
@@ -877,9 +916,7 @@ class ModelingApplication(ApplicationFacade):
                     JsonObject,
                     outcome.result_payload.model_dump(mode="python"),
                 )
-                strict_result_payload: (
-                    SuccessResultPayload | FailureResultPayload
-                )
+                strict_result_payload: SuccessResultPayload | FailureResultPayload
                 if outcome.result_kind == "success":
                     strict_result_payload = SuccessResultPayload.model_validate(
                         result_document, strict=True
@@ -906,12 +943,8 @@ class ModelingApplication(ApplicationFacade):
                     final_status = AttemptStatus.SUCCEEDED
                 else:
                     final_status = AttemptStatus.NUMERICAL_FAILURE
-                    if not isinstance(
-                        strict_result_payload, FailureResultPayload
-                    ):
-                        raise ValueError(
-                            "numerical failure has the wrong payload type"
-                        )
+                    if not isinstance(strict_result_payload, FailureResultPayload):
+                        raise ValueError("numerical failure has the wrong payload type")
                     numerical_failure = strict_result_payload.data
             except ExecutionDeadlineExceeded:
                 final_status = AttemptStatus.TIMED_OUT
@@ -994,9 +1027,7 @@ class ModelingApplication(ApplicationFacade):
             "attempt_id": validation.attempt_id,
             "result_hash": validation.result_hash,
             "validator_id": validation.validator_id,
-            "validator_implementation_id": (
-                validation.validator_implementation_id
-            ),
+            "validator_implementation_id": (validation.validator_implementation_id),
             "validator_implementation_version": (
                 validation.validator_implementation_version
             ),
@@ -1075,11 +1106,9 @@ class ModelingApplication(ApplicationFacade):
             ]
             observed_data_hash = sha256_json(data_documents)
             if (
-                observed_input_hash
-                != source.experiment.canonical_payload_hash
+                observed_input_hash != source.experiment.canonical_payload_hash
                 or observed_model_hash != source.experiment.model_snapshot_hash
-                or observed_data_hash
-                != source.experiment.data_snapshot_set_hash
+                or observed_data_hash != source.experiment.data_snapshot_set_hash
             ):
                 self._raise_error(
                     correlation_id=correlation_id,
@@ -1108,8 +1137,7 @@ class ModelingApplication(ApplicationFacade):
             observed_result_hash = sha256_json(result_document)
             if (
                 observed_result_hash != source.attempt.result.result_hash
-                or request.expected_result_hash
-                != source.attempt.result.result_hash
+                or request.expected_result_hash != source.attempt.result.result_hash
             ):
                 self._raise_error(
                     correlation_id=correlation_id,
@@ -1183,9 +1211,7 @@ class ModelingApplication(ApplicationFacade):
                     Literal["numerical.root_finding.residual"],
                     validator.descriptor.validator_id,
                 ),
-                validator_implementation_id=(
-                    validator.descriptor.implementation_id
-                ),
+                validator_implementation_id=(validator.descriptor.implementation_id),
                 validator_implementation_version=(
                     validator.descriptor.implementation_version
                 ),
@@ -1214,9 +1240,7 @@ class ModelingApplication(ApplicationFacade):
 
             started_at = _millisecond_utc(self._clock.utc_now())
             try:
-                self._store.mark_validation_running(
-                    pending.validation_id, started_at
-                )
+                self._store.mark_validation_running(pending.validation_id, started_at)
             except ProjectStoreError as error:
                 self._raise_store(error, correlation_id)
             deadline = self._clock.monotonic() + (
@@ -1237,9 +1261,7 @@ class ModelingApplication(ApplicationFacade):
                 raw_report_payload = validator.validate(
                     canonical,
                     ResultSnapshotView(
-                        result_snapshot_id=(
-                            source.attempt.result.result_snapshot_id
-                        ),
+                        result_snapshot_id=(source.attempt.result.result_snapshot_id),
                         capability_id=source.experiment.capability_id,
                         contract_version=source.experiment.contract_version,
                         result_schema_version=(
@@ -1256,9 +1278,7 @@ class ModelingApplication(ApplicationFacade):
                     ),
                 )
                 report_payload = ValidationReportPayload.model_validate(
-                    raw_report_payload.model_dump(
-                        mode="python", warnings="none"
-                    ),
+                    raw_report_payload.model_dump(mode="python", warnings="none"),
                     strict=True,
                 )
                 outcome = ValidationOutcome(report_payload.outcome)
@@ -1303,9 +1323,7 @@ class ModelingApplication(ApplicationFacade):
                 expected_result_hash=pending.expected_result_hash,
                 result_hash=pending.result_hash,
                 validator_id=pending.validator_id,
-                validator_implementation_id=(
-                    pending.validator_implementation_id
-                ),
+                validator_implementation_id=(pending.validator_implementation_id),
                 validator_implementation_version=(
                     pending.validator_implementation_version
                 ),

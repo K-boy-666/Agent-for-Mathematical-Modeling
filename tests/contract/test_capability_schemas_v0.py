@@ -136,7 +136,9 @@ def test_packaged_descriptor_schema_is_draft_2020_12_and_strict(
     assert list(validator.iter_errors(invalid))
 
 
-def test_descriptor_schemas_reject_non_object_references_and_non_m1a_artifacts() -> None:
+def test_descriptor_schemas_reject_non_object_references_and_non_m1a_artifacts() -> (
+    None
+):
     catalog = SchemaCatalog.load_packaged("0.1.0")
     capability_schema = catalog.common_schemas[_CAPABILITY_ID]
     instance = capability_instance()
@@ -164,9 +166,7 @@ def test_root_finding_contract_corpus_matches_the_packaged_strict_schemas() -> N
         "input": cast(
             JsonObject,
             json.loads(
-                schema_root.joinpath("input.schema.json").read_text(
-                    encoding="utf-8"
-                )
+                schema_root.joinpath("input.schema.json").read_text(encoding="utf-8")
             ),
         ),
         "canonical-input": cast(
@@ -194,9 +194,7 @@ def test_root_finding_contract_corpus_matches_the_packaged_strict_schemas() -> N
             ),
         ),
     }
-    corpus_path = (
-        Path(__file__).parent / "corpus" / "root-finding" / "0.1.0.json"
-    )
+    corpus_path = Path(__file__).parent / "corpus" / "root-finding" / "0.1.0.json"
     corpus = cast(
         list[dict[str, object]],
         json.loads(corpus_path.read_text(encoding="utf-8")),
@@ -219,9 +217,7 @@ def test_root_finding_result_data_and_common_result_schemas_are_strict() -> None
     capability_root = files("modeling_capabilities.root_finding").joinpath(
         "schemas", "0.1.0"
     )
-    core_root = files("modeling_core.contracts").joinpath(
-        "schemas", "common", "0.1.0"
-    )
+    core_root = files("modeling_core.contracts").joinpath("schemas", "common", "0.1.0")
     success_schema = cast(
         JsonObject,
         json.loads(
@@ -285,9 +281,7 @@ def test_root_finding_result_data_and_common_result_schemas_are_strict() -> None
 
     invalid_success = dict(success_data)
     invalid_success["unexpected"] = True
-    assert list(
-        Draft202012Validator(success_schema).iter_errors(invalid_success)
-    )
+    assert list(Draft202012Validator(success_schema).iter_errors(invalid_success))
     invalid_payload = dict(success_payload)
     invalid_payload["unexpected"] = True
     assert list(result_validator.iter_errors(invalid_payload))
@@ -304,9 +298,7 @@ def test_success_schema_accepts_every_declared_termination_reason(
         "schemas", "0.1.0"
     )
     success_schema = json.loads(
-        schema_root.joinpath("success-data.schema.json").read_text(
-            encoding="utf-8"
-        )
+        schema_root.joinpath("success-data.schema.json").read_text(encoding="utf-8")
     )
     result_schema = json.loads(
         files("modeling_core.contracts")
@@ -352,9 +344,7 @@ def test_failure_schema_accepts_every_declared_failure_code(
         "schemas", "0.1.0"
     )
     failure_schema = json.loads(
-        schema_root.joinpath("failure-data.schema.json").read_text(
-            encoding="utf-8"
-        )
+        schema_root.joinpath("failure-data.schema.json").read_text(encoding="utf-8")
     )
     result_schema = json.loads(
         files("modeling_core.contracts")
@@ -425,13 +415,9 @@ def test_result_data_schemas_reject_unknown_enums(
         .read_text(encoding="utf-8")
     )
 
-    assert list(
-        Draft202012Validator(packaged_schema).iter_errors(invalid_data)
-    )
+    assert list(Draft202012Validator(packaged_schema).iter_errors(invalid_data))
     result_kind = (
-        "success"
-        if schema_name.startswith("success")
-        else "numerical_failure"
+        "success" if schema_name.startswith("success") else "numerical_failure"
     )
     invalid_payload: JsonObject = {
         "result_schema_version": "modeling-result/0.1.0",
@@ -440,6 +426,4 @@ def test_result_data_schemas_reject_unknown_enums(
         "result_kind": result_kind,
         "data": invalid_data,
     }
-    assert list(
-        Draft202012Validator(result_schema).iter_errors(invalid_payload)
-    )
+    assert list(Draft202012Validator(result_schema).iter_errors(invalid_payload))

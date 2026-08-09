@@ -229,7 +229,9 @@ def test_atomic_publish_race_uses_complete_winner_and_removes_loser(
 
     original_rename = storage.os.rename
 
-    def publish_winner_then_lose(source: str | bytes, destination: str | bytes) -> NoReturn:
+    def publish_winner_then_lose(
+        source: str | bytes, destination: str | bytes
+    ) -> NoReturn:
         source_path = Path(source)
         destination_path = Path(destination)
         shutil.copytree(source_path, destination_path)

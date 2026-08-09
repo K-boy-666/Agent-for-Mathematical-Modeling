@@ -128,7 +128,9 @@ def metrics() -> ValidationMetrics:
     )
 
 
-def report(outcome: ValidationOutcome = ValidationOutcome.PASSED) -> ValidationReportPayload:
+def report(
+    outcome: ValidationOutcome = ValidationOutcome.PASSED,
+) -> ValidationReportPayload:
     return ValidationReportPayload(
         report_schema_version="modeling-validation-report/0.1.0",
         validator_id="numerical.root_finding.residual",

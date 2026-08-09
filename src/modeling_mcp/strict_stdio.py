@@ -103,9 +103,12 @@ async def strict_stdio_server(
         try:
             async with write_stream_reader:
                 async for session_message in write_stream_reader:
-                    frame = session_message.message.model_dump_json(
-                        by_alias=True, exclude_none=True
-                    ).encode("utf-8") + b"\n"
+                    frame = (
+                        session_message.message.model_dump_json(
+                            by_alias=True, exclude_none=True
+                        ).encode("utf-8")
+                        + b"\n"
+                    )
                     await stdout.write(frame)
                     await stdout.flush()
         except anyio.ClosedResourceError:  # pragma: no cover

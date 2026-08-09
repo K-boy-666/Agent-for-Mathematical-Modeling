@@ -62,9 +62,7 @@ def _validator_binary(op: str, left: float, right: float) -> float:
             "validator evaluator encountered an undefined arithmetic operation"
         ) from error
     except OverflowError as error:
-        raise EvaluationNonFiniteError(
-            "validator evaluator overflowed"
-        ) from error
+        raise EvaluationNonFiniteError("validator evaluator overflowed") from error
     return _validator_finite(result)
 
 
@@ -133,26 +131,20 @@ def _validator_node(
             ast.name,
             _validator_node(ast.argument, x, budget, depth + 1),
         )
-    raise EvaluationDomainError(
-        "validator evaluator received an unknown AST node"
-    )
+    raise EvaluationDomainError("validator evaluator received an unknown AST node")
 
 
 class ValidatorEvaluator:
     """Evaluate one AST independently for residual validation."""
 
-    def evaluate(
-        self, ast: ExpressionAst, x: float, budget: EvaluationBudget
-    ) -> float:
+    def evaluate(self, ast: ExpressionAst, x: float, budget: EvaluationBudget) -> float:
         budget.begin_evaluation()
         if (
             isinstance(x, bool)
             or not isinstance(x, (int, float))
             or not math.isfinite(float(x))
         ):
-            raise EvaluationNonFiniteError(
-                "validator x must be finite binary64"
-            )
+            raise EvaluationNonFiniteError("validator x must be finite binary64")
         return _validator_node(ast, float(x), budget, 1)
 
 

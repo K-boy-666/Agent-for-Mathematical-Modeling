@@ -106,9 +106,7 @@ class RootFindingInput(StrictModel):
 
 class ExecutionOptions(StrictModel):
     timeout_ms: Annotated[int, Field(ge=1, le=60000)] = 10000
-    seed: Annotated[int | None, Field(ge=-9007199254740991, le=9007199254740991)] = (
-        None
-    )
+    seed: Annotated[int | None, Field(ge=-9007199254740991, le=9007199254740991)] = None
 
 
 class RunExperimentRequest(StrictModel):
@@ -421,9 +419,9 @@ class AttemptTrace(StrictModel):
     result: ResultTrace | None
     system_error: ErrorResponse | None
     numerical_failure: NumericalFailureData | None
-    terminal_reason: Literal[
-        "deadline_exceeded", "host_cancelled", "server_recovery"
-    ] | None
+    terminal_reason: (
+        Literal["deadline_exceeded", "host_cancelled", "server_recovery"] | None
+    )
 
     @model_validator(mode="after")
     def validate_status_outputs(self) -> AttemptTrace:
@@ -434,10 +432,18 @@ class AttemptTrace(StrictModel):
             and self.terminal_reason is None
         )
         if self.status == "PENDING":
-            if self.started_at is not None or self.finished_at is not None or not no_outputs:
+            if (
+                self.started_at is not None
+                or self.finished_at is not None
+                or not no_outputs
+            ):
                 raise ValueError("PENDING attempt has no timestamps or outputs")
         elif self.status == "RUNNING":
-            if self.started_at is None or self.finished_at is not None or not no_outputs:
+            if (
+                self.started_at is None
+                or self.finished_at is not None
+                or not no_outputs
+            ):
                 raise ValueError("RUNNING attempt requires only started_at")
         elif self.status == "SUCCEEDED":
             if (
@@ -566,9 +572,9 @@ class ValidationTrace(StrictModel):
     validation_report_hash: Hash | None
     report_payload: ValidationReportPayload | None
     operational_error: ErrorResponse | None
-    terminal_reason: Literal[
-        "deadline_exceeded", "host_cancelled", "server_recovery"
-    ] | None
+    terminal_reason: (
+        Literal["deadline_exceeded", "host_cancelled", "server_recovery"] | None
+    )
 
     @model_validator(mode="after")
     def validate_empty_m1a_policy(self) -> ValidationTrace:
@@ -587,10 +593,18 @@ class ValidationTrace(StrictModel):
             and self.terminal_reason is None
         )
         if self.status == "PENDING":
-            if self.started_at is not None or self.finished_at is not None or not no_outputs:
+            if (
+                self.started_at is not None
+                or self.finished_at is not None
+                or not no_outputs
+            ):
                 raise ValueError("PENDING validation has no timestamps or outputs")
         elif self.status == "RUNNING":
-            if self.started_at is None or self.finished_at is not None or not no_outputs:
+            if (
+                self.started_at is None
+                or self.finished_at is not None
+                or not no_outputs
+            ):
                 raise ValueError("RUNNING validation requires only started_at")
         elif self.status == "SUCCEEDED":
             if (
@@ -767,9 +781,7 @@ class RunExperimentErroredResult(RunResultBase):
 
 class RunExperimentStoppedResult(RunResultBase):
     attempt_status: Literal["TIMED_OUT", "ABANDONED"]
-    terminal_reason: Literal[
-        "deadline_exceeded", "host_cancelled", "server_recovery"
-    ]
+    terminal_reason: Literal["deadline_exceeded", "host_cancelled", "server_recovery"]
 
 
 RunExperimentResult: TypeAlias = (
@@ -805,9 +817,7 @@ class ValidateExperimentErroredResult(ValidationResultBase):
 
 class ValidateExperimentStoppedResult(ValidationResultBase):
     validation_status: Literal["TIMED_OUT", "ABANDONED"]
-    terminal_reason: Literal[
-        "deadline_exceeded", "host_cancelled", "server_recovery"
-    ]
+    terminal_reason: Literal["deadline_exceeded", "host_cancelled", "server_recovery"]
 
 
 ValidateExperimentResult: TypeAlias = (

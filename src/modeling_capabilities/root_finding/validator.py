@@ -42,9 +42,7 @@ from modeling_core.contracts.tools import (
 EMPTY_POLICY_HASH = (
     "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
 )
-_CAPABILITY_ID: Literal["numerical.root_finding"] = (
-    "numerical.root_finding"
-)
+_CAPABILITY_ID: Literal["numerical.root_finding"] = "numerical.root_finding"
 _CONTRACT_VERSION: Literal["0.1.0"] = "0.1.0"
 _RESULT_SCHEMA_VERSION = "modeling-result/0.1.0"
 _FailedCheck: TypeAlias = Literal[
@@ -69,14 +67,10 @@ def _check_control(context: ValidationContext) -> None:
     if context.cancellation.is_cancelled():
         raise EvaluationCancelled("root-finding validation cancelled")
     if context.clock.monotonic() >= context.deadline:
-        raise EvaluationDeadlineExceeded(
-            "root-finding validation deadline exceeded"
-        )
+        raise EvaluationDeadlineExceeded("root-finding validation deadline exceeded")
 
 
-def _require_identity(
-    actual: object, expected: str, field_path: str
-) -> None:
+def _require_identity(actual: object, expected: str, field_path: str) -> None:
     if actual != expected:
         raise ValidationInputError(field_path, "identity mismatch")
 
@@ -166,9 +160,7 @@ class ResidualRootFindingValidator:
     ) -> ValidationReport:
         _check_control(context)
         if type(policy) is not dict or policy:
-            raise ValidationInputError(
-                "policy", "must be exactly an empty object"
-            )
+            raise ValidationInputError("policy", "must be exactly an empty object")
         typed_input = _validated_input(canonical_input)
         result_payload = _validated_success_result(result_snapshot)
         ast = ast_from_canonical_json(
@@ -232,9 +224,7 @@ class ResidualRootFindingValidator:
         return ValidationReportPayload(
             report_schema_version="modeling-validation-report/0.1.0",
             validator_id="numerical.root_finding.residual",
-            validator_implementation_id=(
-                "builtin.numerical.root_finding.residual"
-            ),
+            validator_implementation_id=("builtin.numerical.root_finding.residual"),
             validator_implementation_version="0.1.0",
             policy_version="0.1.0",
             policy={},

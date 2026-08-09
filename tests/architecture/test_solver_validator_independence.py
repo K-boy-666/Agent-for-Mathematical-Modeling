@@ -13,10 +13,7 @@ _ALLOWED_ROOT_FINDING_MODULES = {
     "modeling_capabilities.root_finding.contracts",
     "modeling_capabilities.root_finding.expression",
     "modeling_capabilities.root_finding.expression.syntax",
-    (
-        "modeling_capabilities.root_finding.expression."
-        "validator_evaluator"
-    ),
+    ("modeling_capabilities.root_finding.expression.validator_evaluator"),
 }
 
 
@@ -37,7 +34,7 @@ def _imports(module: str, path: Path) -> set[str]:
             result.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
             if node.level:
-                base = module.split(".")[:-node.level]
+                base = module.split(".")[: -node.level]
                 imported = ".".join((*base, node.module or ""))
             else:
                 imported = node.module or ""
@@ -74,10 +71,10 @@ def _local_import_graph(entry: str) -> dict[str, set[str]]:
 def test_validator_real_import_graph_has_only_explicitly_allowed_modules() -> None:
     graph = _local_import_graph(_ENTRY)
     local_modules = set(graph) | {
-        imported for imports in graph.values() for imported in imports
-        if imported.startswith(
-            ("modeling_capabilities.", "modeling_core.")
-        )
+        imported
+        for imports in graph.values()
+        for imported in imports
+        if imported.startswith(("modeling_capabilities.", "modeling_core."))
     }
     root_finding_modules = {
         module
@@ -85,9 +82,7 @@ def test_validator_real_import_graph_has_only_explicitly_allowed_modules() -> No
         if module.startswith("modeling_capabilities.root_finding")
     }
     core_modules = {
-        module
-        for module in local_modules
-        if module.startswith("modeling_core.")
+        module for module in local_modules if module.startswith("modeling_core.")
     }
     assert root_finding_modules - _ALLOWED_ROOT_FINDING_MODULES == set()
     assert {

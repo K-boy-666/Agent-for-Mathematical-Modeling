@@ -181,9 +181,7 @@ def _experiment(
         project_id=project_id,
         capability_id="numerical.root_finding",
         contract_version="0.1.0",
-        canonical_input_schema_version=(
-            "numerical.root_finding.canonical-input/0.1.0"
-        ),
+        canonical_input_schema_version=("numerical.root_finding.canonical-input/0.1.0"),
         canonical_payload=CanonicalRootFindingInput(
             canonical_input_schema_version=(
                 "numerical.root_finding.canonical-input/0.1.0"
@@ -383,11 +381,12 @@ def test_schema_one_has_required_tables_columns_foreign_keys_and_unique_key(
             "validations": {("attempts", "attempt_id", "attempt_id")},
         }
 
-        indexes = connection.execute("PRAGMA index_list(idempotency_records)").fetchall()
+        indexes = connection.execute(
+            "PRAGMA index_list(idempotency_records)"
+        ).fetchall()
         unique_columns = {
             tuple(
-                row[2]
-                for row in connection.execute(f"PRAGMA index_info({index[1]})")
+                row[2] for row in connection.execute(f"PRAGMA index_info({index[1]})")
             )
             for index in indexes
             if index[2] == 1
@@ -578,18 +577,24 @@ def test_run_commands_require_parent_consistency_pending_and_terminal_states() -
     pending = _attempt()
     terminal = _attempt(status=AttemptStatus.ABANDONED)
 
-    assert BeginRunCommand(
-        operation=_operation(), experiment=experiment, attempt=pending
-    ).attempt is pending
-    assert BeginRunResult(
-        experiment=experiment, attempt=pending, replayed=False
-    ).replayed is False
-    assert BeginRunResult(
-        experiment=experiment, attempt=terminal, replayed=True
-    ).replayed is True
-    assert CompleteAttemptCommand(
-        operation=_operation(), attempt=terminal
-    ).attempt is terminal
+    assert (
+        BeginRunCommand(
+            operation=_operation(), experiment=experiment, attempt=pending
+        ).attempt
+        is pending
+    )
+    assert (
+        BeginRunResult(experiment=experiment, attempt=pending, replayed=False).replayed
+        is False
+    )
+    assert (
+        BeginRunResult(experiment=experiment, attempt=terminal, replayed=True).replayed
+        is True
+    )
+    assert (
+        CompleteAttemptCommand(operation=_operation(), attempt=terminal).attempt
+        is terminal
+    )
     assert StoredRunResult(attempt=terminal).attempt is terminal
 
     with pytest.raises(ValueError):
@@ -651,32 +656,28 @@ def test_validation_commands_enforce_pending_replay_and_terminal_states() -> Non
     pending = _validation()
     terminal = _validation(status=ValidationStatus.ABANDONED)
 
-    assert BeginValidationCommand(
-        operation=_operation(), validation=pending
-    ).validation is pending
-    assert BeginValidationResult(
-        validation=pending, replayed=False
-    ).replayed is False
-    assert BeginValidationResult(
-        validation=terminal, replayed=True
-    ).replayed is True
-    assert CompleteValidationCommand(
-        operation=_operation(), validation=terminal
-    ).validation is terminal
+    assert (
+        BeginValidationCommand(operation=_operation(), validation=pending).validation
+        is pending
+    )
+    assert BeginValidationResult(validation=pending, replayed=False).replayed is False
+    assert BeginValidationResult(validation=terminal, replayed=True).replayed is True
+    assert (
+        CompleteValidationCommand(
+            operation=_operation(), validation=terminal
+        ).validation
+        is terminal
+    )
     assert StoredValidationResult(validation=terminal).validation is terminal
 
     with pytest.raises(ValueError):
-        BeginValidationCommand(
-            operation=_operation(), validation=terminal
-        )
+        BeginValidationCommand(operation=_operation(), validation=terminal)
     with pytest.raises(ValueError):
         BeginValidationResult(validation=terminal, replayed=False)
     with pytest.raises(ValueError):
         BeginValidationResult(validation=pending, replayed=True)
     with pytest.raises(ValueError):
-        CompleteValidationCommand(
-            operation=_operation(), validation=pending
-        )
+        CompleteValidationCommand(operation=_operation(), validation=pending)
     with pytest.raises(ValueError):
         StoredValidationResult(validation=pending)
 
@@ -770,7 +771,9 @@ def test_trace_query_and_trace_enforce_all_parent_and_uniqueness_relations() -> 
             ExperimentTrace(**arguments)
 
 
-def test_project_store_error_is_validated_deep_immutable_and_retryable_only_for_transients() -> None:
+def test_project_store_error_is_validated_deep_immutable_and_retryable_only_for_transients() -> (
+    None
+):
     source_details = {
         "conflict_type": "operation_in_progress",
         "nested": {"items": [1]},

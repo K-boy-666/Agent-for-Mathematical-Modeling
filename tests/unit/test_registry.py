@@ -237,9 +237,7 @@ def test_capability_and_compatible_validator_register_before_seal() -> None:
     catalog = registry()
     validator = FakeValidator(validator_descriptor())
     capability = FakeCapability(
-        capability_descriptor(
-            validators=(advertised_validator(validator.descriptor),)
-        )
+        capability_descriptor(validators=(advertised_validator(validator.descriptor),))
     )
 
     catalog.register_capability(capability)
@@ -249,11 +247,14 @@ def test_capability_and_compatible_validator_register_before_seal() -> None:
     assert summary.sealed is True
     assert summary.capability_count == 1
     assert catalog.resolve(*_ROOT_KEY).descriptor == capability.descriptor
-    assert catalog.resolve_validator(
-        "numerical.root_finding.residual",
-        *_ROOT_KEY,
-        "0.1.0",
-    ).descriptor == validator.descriptor
+    assert (
+        catalog.resolve_validator(
+            "numerical.root_finding.residual",
+            *_ROOT_KEY,
+            "0.1.0",
+        ).descriptor
+        == validator.descriptor
+    )
 
 
 @pytest.mark.parametrize(
@@ -335,9 +336,7 @@ def test_incompatible_capability_api_is_unsupported() -> None:
 
 def test_incompatible_validator_contract_range_is_unsupported() -> None:
     catalog = registry()
-    validator = FakeValidator(
-        validator_descriptor(minimum="0.2.0", maximum="0.3.0")
-    )
+    validator = FakeValidator(validator_descriptor(minimum="0.2.0", maximum="0.3.0"))
     catalog.register_capability(
         FakeCapability(
             capability_descriptor(
@@ -350,9 +349,7 @@ def test_incompatible_validator_contract_range_is_unsupported() -> None:
     with pytest.raises(RegistryError) as captured:
         catalog.seal(frozenset({_ROOT_KEY}))
 
-    assert_registry_error(
-        captured, "UNSUPPORTED_VERSION", "requested_version", "0.1.0"
-    )
+    assert_registry_error(captured, "UNSUPPORTED_VERSION", "requested_version", "0.1.0")
 
 
 def test_every_declared_validator_contract_range_must_be_compatible() -> None:
@@ -532,9 +529,7 @@ def test_fingerprint_is_the_ordered_versioned_hash_projection() -> None:
                             "policies": [
                                 {
                                     "policy_schema_hash": (
-                                        validator_summary.policies[
-                                            0
-                                        ].policy_schema_hash
+                                        validator_summary.policies[0].policy_schema_hash
                                     ),
                                     "policy_version": "0.1.0",
                                 }
@@ -578,7 +573,9 @@ def test_fingerprint_is_the_ordered_versioned_hash_projection() -> None:
     assert summary.fingerprint == expected
 
 
-def test_fingerprint_includes_capability_validator_summary_versions_and_hashes() -> None:
+def test_fingerprint_includes_capability_validator_summary_versions_and_hashes() -> (
+    None
+):
     matching_descriptor = validator_descriptor()
     validator_summary = advertised_validator(matching_descriptor)
     without_summary = registry()
@@ -642,7 +639,9 @@ def test_m1a_descriptor_and_contexts_are_strictly_immutable() -> None:
         replace(context, deadline=3.0).deadline = 4.0
 
 
-def test_descriptor_nested_schemas_and_validator_summaries_are_deeply_immutable() -> None:
+def test_descriptor_nested_schemas_and_validator_summaries_are_deeply_immutable() -> (
+    None
+):
     policy = schema("residual.policy")
     report = schema("residual.report")
     summary = ValidatorSummary(
@@ -721,8 +720,7 @@ def test_registry_snapshots_descriptors_at_registration() -> None:
         ("numerical.root_finding", "Bisection root finding")
     ]
     assert [
-        (item.capability_id, item.title)
-        for item in catalog.list_summaries(None, None)
+        (item.capability_id, item.title) for item in catalog.list_summaries(None, None)
     ] == [("numerical.root_finding", "Bisection root finding")]
     resolved_capability = catalog.resolve(*_ROOT_KEY)
     resolved_validator = catalog.resolve_validator(
@@ -798,9 +796,7 @@ def test_advertised_validator_contract_must_exactly_match_registration(
         summary = summary.model_copy(
             update={
                 "policies": (
-                    summary.policies[0].model_copy(
-                        update={"policy_version": "0.2.0"}
-                    ),
+                    summary.policies[0].model_copy(update={"policy_version": "0.2.0"}),
                 )
             }
         )

@@ -86,9 +86,7 @@ def test_distinct_experiments_preserve_deterministic_identity_and_result(
 ) -> None:
     """Catches repeated runs that drift in contracts, hashes, or root value."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(1))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(1)))
 
     selection = CapabilitySelection(
         capability_id="numerical.root_finding",

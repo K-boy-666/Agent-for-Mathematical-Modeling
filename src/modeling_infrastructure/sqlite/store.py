@@ -262,7 +262,9 @@ class SQLiteProjectStore:
                 connection.close()
 
     @contextmanager
-    def _write(self, *, degrade_on_failure: bool = False) -> Iterator[sqlite3.Connection]:
+    def _write(
+        self, *, degrade_on_failure: bool = False
+    ) -> Iterator[sqlite3.Connection]:
         connection: sqlite3.Connection | None = None
         try:
             self.start_writer_session()
@@ -279,10 +281,10 @@ class SQLiteProjectStore:
             if connection is not None and connection.in_transaction:
                 connection.execute("ROLLBACK")
             error_code = getattr(error, "sqlite_errorcode", 0) or 0
-            if (
-                not degrade_on_failure
-                and error_code & 0xFF in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
-            ):
+            if not degrade_on_failure and error_code & 0xFF in {
+                sqlite3.SQLITE_BUSY,
+                sqlite3.SQLITE_LOCKED,
+            }:
                 raise ProjectStoreError(
                     "CONFLICT",
                     "project storage is busy",
@@ -314,7 +316,9 @@ class SQLiteProjectStore:
 
     def _now(self) -> datetime:
         value = self._clock.utc_now() if self._clock is not None else datetime.now(UTC)
-        return value.astimezone(UTC).replace(microsecond=(value.microsecond // 1000) * 1000)
+        return value.astimezone(UTC).replace(
+            microsecond=(value.microsecond // 1000) * 1000
+        )
 
     def _new_id(self) -> str:
         return (
@@ -662,7 +666,9 @@ class SQLiteProjectStore:
             ).fetchone()
             if project_row is None:
                 raise ProjectStoreError(
-                    "NOT_FOUND", "project was not found", False,
+                    "NOT_FOUND",
+                    "project was not found",
+                    False,
                     {"resource_type": "project", "resource_id": project_id},
                 )
             attempt_rows = connection.execute(
@@ -760,7 +766,9 @@ class SQLiteProjectStore:
             ).fetchone()
             if project_row is None or experiment_row is None:
                 raise ProjectStoreError(
-                    "NOT_FOUND", "experiment was not found", False,
+                    "NOT_FOUND",
+                    "experiment was not found",
+                    False,
                     {"resource_type": "experiment", "resource_id": query.experiment_id},
                 )
             attempt_rows = connection.execute(
@@ -786,9 +794,7 @@ class SQLiteProjectStore:
             return ExperimentTrace(
                 project=self._project_from_row(project_row),
                 experiment=self._experiment_from_row(experiment_row),
-                attempts=tuple(
-                    self._attempt_from_row(row) for row in attempt_rows
-                ),
+                attempts=tuple(self._attempt_from_row(row) for row in attempt_rows),
                 validations=tuple(
                     self._validation_from_row(row) for row in validation_rows
                 ),
@@ -802,7 +808,9 @@ class SQLiteProjectStore:
                 {"subject": "database_relation"},
             ) from error
 
-    def get_validation_source(self, project_id: str, attempt_id: str) -> ValidationSource:
+    def get_validation_source(
+        self, project_id: str, attempt_id: str
+    ) -> ValidationSource:
         with self._read() as connection:
             attempt_row = self._attempt_row(connection, attempt_id)
             experiment_row = connection.execute(
@@ -811,7 +819,9 @@ class SQLiteProjectStore:
             ).fetchone()
             if experiment_row is None:
                 raise ProjectStoreError(
-                    "NOT_FOUND", "attempt was not found in project", False,
+                    "NOT_FOUND",
+                    "attempt was not found in project",
+                    False,
                     {"resource_type": "attempt", "resource_id": attempt_id},
                 )
         try:
@@ -829,8 +839,13 @@ class SQLiteProjectStore:
             return ValidationSource(experiment=experiment, attempt=attempt)
         except ValueError as error:
             raise ProjectStoreError(
-                "PRECONDITION_FAILED", "attempt is not eligible for validation", False,
-                {"condition": "attempt_not_succeeded", "current_state": attempt_row["status"]},
+                "PRECONDITION_FAILED",
+                "attempt is not eligible for validation",
+                False,
+                {
+                    "condition": "attempt_not_succeeded",
+                    "current_state": attempt_row["status"],
+                },
             ) from error
 
     @staticmethod
@@ -846,12 +861,21 @@ class SQLiteProjectStore:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                item.experiment_id, item.project_id, item.capability_id,
-                item.contract_version, item.canonical_input_schema_version,
+                item.experiment_id,
+                item.project_id,
+                item.capability_id,
+                item.contract_version,
+                item.canonical_input_schema_version,
                 _json(item.canonical_payload.model_dump(mode="json")),
-                item.canonical_payload_hash, "canonical-json/0.1.0",
+                item.canonical_payload_hash,
+                "canonical-json/0.1.0",
                 item.model_snapshot_hash,
-                _json([ref.model_dump(mode="json") for ref in item.data_snapshot_references]),
+                _json(
+                    [
+                        ref.model_dump(mode="json")
+                        for ref in item.data_snapshot_references
+                    ]
+                ),
                 item.data_snapshot_set_hash,
                 _json(item.execution_policy.model_dump(mode="json")),
                 _timestamp(item.created_at),
@@ -870,21 +894,32 @@ class SQLiteProjectStore:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                item.attempt_id, item.experiment_id, item.implementation_id,
+                item.attempt_id,
+                item.experiment_id,
+                item.implementation_id,
                 item.implementation_version,
                 _json(item.environment_summary.model_dump(mode="json")),
-                item.randomness, item.seed, item.session_id, item.status.value,
-                _timestamp(item.created_at), None, None,
+                item.randomness,
+                item.seed,
+                item.session_id,
+                item.status.value,
+                _timestamp(item.created_at),
+                None,
+                None,
                 _json([warning.model_dump(mode="json") for warning in item.warnings]),
-                None, None, None,
+                None,
+                None,
+                None,
             ),
         )
 
     def begin_run(self, command: BeginRunCommand) -> BeginRunResult:
         with self._write() as connection:
             replay = self._idempotency_replay(
-                connection, scope_id=command.experiment.project_id,
-                tool_name="run_experiment", operation=command.operation,
+                connection,
+                scope_id=command.experiment.project_id,
+                tool_name="run_experiment",
+                operation=command.operation,
             )
             if replay is not None:
                 experiment_id = replay.get("experiment_id")
@@ -928,21 +963,32 @@ class SQLiteProjectStore:
                     }
                 ):
                     raise ProjectStoreError(
-                        "INTEGRITY_FAILURE", "completed run references missing state", False,
+                        "INTEGRITY_FAILURE",
+                        "completed run references missing state",
+                        False,
                         {"subject": "database_relation"},
                     )
                 attempt = self._attempt_from_row(attempt_row)
                 return BeginRunResult(
                     experiment=self._experiment_from_row(experiment_row),
-                    attempt=attempt, replayed=True,
+                    attempt=attempt,
+                    replayed=True,
                 )
-            if connection.execute(
-                "SELECT 1 FROM projects WHERE project_id=?",
-                (command.experiment.project_id,),
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM projects WHERE project_id=?",
+                    (command.experiment.project_id,),
+                ).fetchone()
+                is None
+            ):
                 raise ProjectStoreError(
-                    "NOT_FOUND", "project was not found", False,
-                    {"resource_type": "project", "resource_id": command.experiment.project_id},
+                    "NOT_FOUND",
+                    "project was not found",
+                    False,
+                    {
+                        "resource_type": "project",
+                        "resource_id": command.experiment.project_id,
+                    },
                 )
             connection.execute(
                 """
@@ -975,7 +1021,9 @@ class SQLiteProjectStore:
             )
             if cursor.rowcount != 1:
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "attempt transition was rejected", False,
+                    "INTEGRITY_FAILURE",
+                    "attempt transition was rejected",
+                    False,
                     {"subject": "database_relation"},
                 )
 
@@ -996,7 +1044,9 @@ class SQLiteProjectStore:
             item = command.attempt
             if row is None or row["status"] != "RUNNING":
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "attempt completion state is invalid", False,
+                    "INTEGRITY_FAILURE",
+                    "attempt completion state is invalid",
+                    False,
                     {"subject": "database_relation"},
                 )
             if (
@@ -1012,7 +1062,9 @@ class SQLiteProjectStore:
                 or row["started_at"] != _timestamp(cast(datetime, item.started_at))
             ):
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "attempt provenance is invalid", False,
+                    "INTEGRITY_FAILURE",
+                    "attempt provenance is invalid",
+                    False,
                     {"subject": "database_relation"},
                 )
             idem = connection.execute(
@@ -1022,11 +1074,18 @@ class SQLiteProjectStore:
                 """,
                 (row["project_id"], command.operation.operation_id),
             ).fetchone()
-            if idem is None or idem["status"] != "IN_PROGRESS" or (
-                idem["canonical_request_hash"] != command.operation.canonical_request_hash
+            if (
+                idem is None
+                or idem["status"] != "IN_PROGRESS"
+                or (
+                    idem["canonical_request_hash"]
+                    != command.operation.canonical_request_hash
+                )
             ):
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "run idempotency state is invalid", False,
+                    "INTEGRITY_FAILURE",
+                    "run idempotency state is invalid",
+                    False,
                     {"subject": "database_relation"},
                 )
             if item.result is not None:
@@ -1035,15 +1094,19 @@ class SQLiteProjectStore:
                     INSERT INTO result_snapshots VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        item.result.result_snapshot_id, item.attempt_id,
-                        item.result.result_kind.value, item.result.result_schema_version,
+                        item.result.result_snapshot_id,
+                        item.attempt_id,
+                        item.result.result_kind.value,
+                        item.result.result_schema_version,
                         item.result.result_hash,
                         _json(item.result.result_payload.model_dump(mode="json")),
                     ),
                 )
                 if result_cursor.rowcount != 1:
                     raise ProjectStoreError(
-                        "INTEGRITY_FAILURE", "result completion was rejected", False,
+                        "INTEGRITY_FAILURE",
+                        "result completion was rejected",
+                        False,
                         {"subject": "database_relation"},
                     )
             attempt_cursor = connection.execute(
@@ -1053,17 +1116,26 @@ class SQLiteProjectStore:
                  WHERE attempt_id=? AND status='RUNNING'
                 """,
                 (
-                    item.status.value, _timestamp(cast(datetime, item.finished_at)),
-                    _json([warning.model_dump(mode="json") for warning in item.warnings]),
-                    _json(item.system_error.model_dump(mode="json")) if item.system_error else None,
-                    _json(item.numerical_failure.model_dump(mode="json")) if item.numerical_failure else None,
+                    item.status.value,
+                    _timestamp(cast(datetime, item.finished_at)),
+                    _json(
+                        [warning.model_dump(mode="json") for warning in item.warnings]
+                    ),
+                    _json(item.system_error.model_dump(mode="json"))
+                    if item.system_error
+                    else None,
+                    _json(item.numerical_failure.model_dump(mode="json"))
+                    if item.numerical_failure
+                    else None,
                     item.terminal_reason.value if item.terminal_reason else None,
                     item.attempt_id,
                 ),
             )
             if attempt_cursor.rowcount != 1:
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "attempt completion was rejected", False,
+                    "INTEGRITY_FAILURE",
+                    "attempt completion was rejected",
+                    False,
                     {"subject": "database_relation"},
                 )
             refs: JsonObject = {
@@ -1078,13 +1150,17 @@ class SQLiteProjectStore:
                    AND status='IN_PROGRESS' AND canonical_request_hash=?
                 """,
                 (
-                    _json(refs), row["project_id"], command.operation.operation_id,
+                    _json(refs),
+                    row["project_id"],
+                    command.operation.operation_id,
                     command.operation.canonical_request_hash,
                 ),
             )
             if idempotency_cursor.rowcount != 1:
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "run idempotency completion was rejected", False,
+                    "INTEGRITY_FAILURE",
+                    "run idempotency completion was rejected",
+                    False,
                     {"subject": "database_relation"},
                 )
             return StoredRunResult(attempt=item)
@@ -1102,13 +1178,20 @@ class SQLiteProjectStore:
             ).fetchone()
             if row is None:
                 raise ProjectStoreError(
-                    "NOT_FOUND", "attempt was not found", False,
-                    {"resource_type": "attempt", "resource_id": command.validation.attempt_id},
+                    "NOT_FOUND",
+                    "attempt was not found",
+                    False,
+                    {
+                        "resource_type": "attempt",
+                        "resource_id": command.validation.attempt_id,
+                    },
                 )
             project_id = row["project_id"]
             replay = self._idempotency_replay(
-                connection, scope_id=project_id,
-                tool_name="validate_experiment", operation=command.operation,
+                connection,
+                scope_id=project_id,
+                tool_name="validate_experiment",
+                operation=command.operation,
             )
             if replay is not None:
                 validation_id = replay.get("validation_id")
@@ -1124,7 +1207,9 @@ class SQLiteProjectStore:
                     not in {"SUCCEEDED", "ERRORED", "TIMED_OUT", "ABANDONED"}
                 ):
                     raise ProjectStoreError(
-                        "INTEGRITY_FAILURE", "completed validation references missing state", False,
+                        "INTEGRITY_FAILURE",
+                        "completed validation references missing state",
+                        False,
                         {"subject": "database_relation"},
                     )
                 replayed_validation = self._validation_from_row(stored)
@@ -1158,7 +1243,11 @@ class SQLiteProjectStore:
                     ?, 'validate_experiment', ?, ?, 'IN_PROGRESS', '{}'
                 )
                 """,
-                (project_id, command.operation.operation_id, command.operation.canonical_request_hash),
+                (
+                    project_id,
+                    command.operation.operation_id,
+                    command.operation.canonical_request_hash,
+                ),
             )
             item = command.validation
             connection.execute(
@@ -1171,18 +1260,22 @@ class SQLiteProjectStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
                 """,
                 (
-                    item.validation_id, item.attempt_id, item.expected_result_hash,
-                    item.result_hash, item.validator_id,
+                    item.validation_id,
+                    item.attempt_id,
+                    item.expected_result_hash,
+                    item.result_hash,
+                    item.validator_id,
                     item.validator_implementation_id,
-                    item.validator_implementation_version, item.policy_version,
-                    _json(item.policy), item.policy_hash, _timestamp(item.created_at),
+                    item.validator_implementation_version,
+                    item.policy_version,
+                    _json(item.policy),
+                    item.policy_hash,
+                    _timestamp(item.created_at),
                 ),
             )
             return BeginValidationResult(validation=item, replayed=False)
 
-    def mark_validation_running(
-        self, validation_id: str, started_at: datetime
-    ) -> None:
+    def mark_validation_running(self, validation_id: str, started_at: datetime) -> None:
         with self._write() as connection:
             cursor = connection.execute(
                 "UPDATE validations SET status='RUNNING', started_at=? "
@@ -1191,7 +1284,9 @@ class SQLiteProjectStore:
             )
             if cursor.rowcount != 1:
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "validation transition was rejected", False,
+                    "INTEGRITY_FAILURE",
+                    "validation transition was rejected",
+                    False,
                     {"subject": "database_relation"},
                 )
 
@@ -1216,7 +1311,9 @@ class SQLiteProjectStore:
             item = command.validation
             if row is None or row["status"] != "RUNNING":
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "validation completion state is invalid", False,
+                    "INTEGRITY_FAILURE",
+                    "validation completion state is invalid",
+                    False,
                     {"subject": "database_relation"},
                 )
             if (
@@ -1235,7 +1332,9 @@ class SQLiteProjectStore:
                 or row["started_at"] != _timestamp(cast(datetime, item.started_at))
             ):
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "validation provenance is invalid", False,
+                    "INTEGRITY_FAILURE",
+                    "validation provenance is invalid",
+                    False,
                     {"subject": "database_relation"},
                 )
             idem = connection.execute(
@@ -1245,11 +1344,18 @@ class SQLiteProjectStore:
                 """,
                 (row["project_id"], command.operation.operation_id),
             ).fetchone()
-            if idem is None or idem["status"] != "IN_PROGRESS" or (
-                idem["canonical_request_hash"] != command.operation.canonical_request_hash
+            if (
+                idem is None
+                or idem["status"] != "IN_PROGRESS"
+                or (
+                    idem["canonical_request_hash"]
+                    != command.operation.canonical_request_hash
+                )
             ):
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "validation idempotency state is invalid", False,
+                    "INTEGRITY_FAILURE",
+                    "validation idempotency state is invalid",
+                    False,
                     {"subject": "database_relation"},
                 )
             validation_cursor = connection.execute(
@@ -1260,19 +1366,28 @@ class SQLiteProjectStore:
                  WHERE validation_id=? AND status='RUNNING'
                 """,
                 (
-                    item.status.value, _timestamp(cast(datetime, item.finished_at)),
+                    item.status.value,
+                    _timestamp(cast(datetime, item.finished_at)),
                     item.outcome.value if item.outcome else None,
-                    _json(item.metrics.model_dump(mode="json")) if item.metrics else None,
+                    _json(item.metrics.model_dump(mode="json"))
+                    if item.metrics
+                    else None,
                     item.validation_report_hash,
-                    _json(item.report_payload.model_dump(mode="json")) if item.report_payload else None,
-                    _json(item.operational_error.model_dump(mode="json")) if item.operational_error else None,
+                    _json(item.report_payload.model_dump(mode="json"))
+                    if item.report_payload
+                    else None,
+                    _json(item.operational_error.model_dump(mode="json"))
+                    if item.operational_error
+                    else None,
                     item.terminal_reason.value if item.terminal_reason else None,
                     item.validation_id,
                 ),
             )
             if validation_cursor.rowcount != 1:
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "validation completion was rejected", False,
+                    "INTEGRITY_FAILURE",
+                    "validation completion was rejected",
+                    False,
                     {"subject": "database_relation"},
                 )
             refs: JsonObject = {"validation_id": item.validation_id}
@@ -1284,13 +1399,17 @@ class SQLiteProjectStore:
                    AND status='IN_PROGRESS' AND canonical_request_hash=?
                 """,
                 (
-                    _json(refs), row["project_id"], command.operation.operation_id,
+                    _json(refs),
+                    row["project_id"],
+                    command.operation.operation_id,
                     command.operation.canonical_request_hash,
                 ),
             )
             if idempotency_cursor.rowcount != 1:
                 raise ProjectStoreError(
-                    "INTEGRITY_FAILURE", "validation idempotency completion was rejected", False,
+                    "INTEGRITY_FAILURE",
+                    "validation idempotency completion was rejected",
+                    False,
                     {"subject": "database_relation"},
                 )
             return StoredValidationResult(validation=item)
@@ -1298,27 +1417,44 @@ class SQLiteProjectStore:
     def inspect_integrity(self, deep: bool) -> StoreIntegrityReport:
         inspection = self.inspect_project_state()
         if inspection.state is ProjectState.DEGRADED:
-            return StoreIntegrityReport(state=ProjectState.DEGRADED, issues=("project_state",))
+            return StoreIntegrityReport(
+                state=ProjectState.DEGRADED, issues=("project_state",)
+            )
         if inspection.state is ProjectState.UNINITIALIZED:
             return StoreIntegrityReport(state=inspection.state, issues=())
         issues: list[str] = []
         try:
             with self._read() as connection:
-                if deep and connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                if (
+                    deep
+                    and connection.execute("PRAGMA quick_check").fetchone()[0] != "ok"
+                ):
                     issues.append("sqlite_quick_check")
-                if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                if (
+                    connection.execute("PRAGMA foreign_key_check").fetchone()
+                    is not None
+                ):
                     issues.append("foreign_key")
-                if connection.execute(
-                    "SELECT 1 FROM attempts WHERE status IN ('PENDING','RUNNING') LIMIT 1"
-                ).fetchone() is not None:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM attempts WHERE status IN ('PENDING','RUNNING') LIMIT 1"
+                    ).fetchone()
+                    is not None
+                ):
                     issues.append("stale_attempt")
-                if connection.execute(
-                    "SELECT 1 FROM validations WHERE status IN ('PENDING','RUNNING') LIMIT 1"
-                ).fetchone() is not None:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM validations WHERE status IN ('PENDING','RUNNING') LIMIT 1"
+                    ).fetchone()
+                    is not None
+                ):
                     issues.append("stale_validation")
-                if connection.execute(
-                    "SELECT 1 FROM idempotency_records WHERE status='IN_PROGRESS' LIMIT 1"
-                ).fetchone() is not None:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM idempotency_records WHERE status='IN_PROGRESS' LIMIT 1"
+                    ).fetchone()
+                    is not None
+                ):
                     issues.append("stale_operation")
         except (ProjectStoreError, OSError, sqlite3.DatabaseError, ValueError):
             issues.append("database_relation")
@@ -1329,9 +1465,7 @@ class SQLiteProjectStore:
 
 
 if TYPE_CHECKING:
-    _project_store_contract: ProjectStore = SQLiteProjectStore(
-        Path(), VersionSet.m1a()
-    )
+    _project_store_contract: ProjectStore = SQLiteProjectStore(Path(), VersionSet.m1a())
 
 
 __all__ = ["SQLiteProjectStore"]

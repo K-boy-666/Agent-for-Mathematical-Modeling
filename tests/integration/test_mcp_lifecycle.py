@@ -252,9 +252,9 @@ def test_late_second_first_create_with_live_wal_reports_project_busy(
     assert replayed.created is False
     assert replayed.replayed is True
     with closing(sqlite3.connect(modeling / "state.sqlite3")) as connection:
-        assert connection.execute(
-            "SELECT display_name FROM projects"
-        ).fetchall() == [("Published project",)]
+        assert connection.execute("SELECT display_name FROM projects").fetchall() == [
+            ("Published project",)
+        ]
         assert connection.execute(
             "SELECT operation_id FROM idempotency_records "
             "WHERE tool_name='create_project' ORDER BY operation_id"
@@ -300,7 +300,9 @@ def test_omitted_display_name_is_resolved_from_project_after_degraded_handoff(
         return report
 
     monkeypatch.setattr(publisher.store, "_write", pause_publisher_before_commit)
-    monkeypatch.setattr(follower.store, "inspect_integrity", pause_after_degraded_preflight)
+    monkeypatch.setattr(
+        follower.store, "inspect_integrity", pause_after_degraded_preflight
+    )
     publisher_outcome: list[CreateProjectResult | BaseException] = []
     follower_outcome: list[CreateProjectResult | BaseException] = []
 
@@ -369,10 +371,7 @@ def test_omitted_display_name_is_resolved_from_project_after_degraded_handoff(
         explicit_conflict.close()
     assert captured.value.response.code == "CONFLICT"
     assert captured.value.response.retryable is False
-    assert (
-        captured.value.response.details.conflict_type
-        == "project_metadata_mismatch"
-    )
+    assert captured.value.response.details.conflict_type == "project_metadata_mismatch"
     with closing(
         sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
     ) as connection:
@@ -380,8 +379,7 @@ def test_omitted_display_name_is_resolved_from_project_after_degraded_handoff(
             "SELECT canonical_request_hash FROM idempotency_records "
             "WHERE operation_id='00000000-0000-4000-8000-000000000007'"
         ).fetchone() == (
-            "sha256:6e09b10abf7a225afce1842ccef1e335"
-            "47051bca91c3d343ff4e310c607b8ee7",
+            "sha256:6e09b10abf7a225afce1842ccef1e33547051bca91c3d343ff4e310c607b8ee7",
         )
 
 
@@ -486,9 +484,7 @@ def test_real_mcp_process_serves_read_only_health_for_degraded_storage(
     else:
         (modeling / "unexpected.bin").write_bytes(b"preserve-me")
     before_evidence = tuple(
-        item
-        for item in _tree_snapshot(tmp_path)
-        if item[0] != ".modeling/project.lock"
+        item for item in _tree_snapshot(tmp_path) if item[0] != ".modeling/project.lock"
     )
     project_id = "00000000-0000-4000-8000-000000000080"
 
@@ -570,9 +566,7 @@ def test_real_mcp_process_serves_read_only_health_for_degraded_storage(
     asyncio.run(exercise_process())
 
     after_evidence = tuple(
-        item
-        for item in _tree_snapshot(tmp_path)
-        if item[0] != ".modeling/project.lock"
+        item for item in _tree_snapshot(tmp_path) if item[0] != ".modeling/project.lock"
     )
     assert after_evidence == before_evidence
     replacement = ProjectLock(

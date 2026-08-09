@@ -37,6 +37,8 @@ from modeling_core.domain.states import (
 
 DisplayName = Annotated[str, Field(min_length=1, max_length=128)]
 Seed = Annotated[int | None, Field(ge=-9007199254740991, le=9007199254740991)]
+
+
 def _validate(value: object, annotation: Any) -> Any:
     return cast(Any, TypeAdapter(annotation).validate_python(value, strict=True))
 
@@ -69,7 +71,9 @@ class Project:
             "project_format_version",
             _validate(self.project_format_version, Literal["modeling-project/0.1.0"]),
         )
-        object.__setattr__(self, "display_name", _validate(self.display_name, DisplayName))
+        object.__setattr__(
+            self, "display_name", _validate(self.display_name, DisplayName)
+        )
         object.__setattr__(self, "created_at", _validate_timestamp(self.created_at))
 
 
@@ -91,10 +95,14 @@ class Experiment:
     created_at: datetime
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "experiment_id", _validate(self.experiment_id, EntityId))
+        object.__setattr__(
+            self, "experiment_id", _validate(self.experiment_id, EntityId)
+        )
         object.__setattr__(self, "project_id", _validate(self.project_id, EntityId))
         object.__setattr__(self, "capability_id", _validate(self.capability_id, str))
-        object.__setattr__(self, "contract_version", _validate(self.contract_version, Version))
+        object.__setattr__(
+            self, "contract_version", _validate(self.contract_version, Version)
+        )
         object.__setattr__(
             self,
             "canonical_input_schema_version",
@@ -111,7 +119,9 @@ class Experiment:
         object.__setattr__(
             self, "canonical_payload_hash", _validate(self.canonical_payload_hash, Hash)
         )
-        object.__setattr__(self, "model_snapshot_hash", _validate(self.model_snapshot_hash, Hash))
+        object.__setattr__(
+            self, "model_snapshot_hash", _validate(self.model_snapshot_hash, Hash)
+        )
         object.__setattr__(
             self,
             "data_snapshot_references",
@@ -176,15 +186,21 @@ class Attempt:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "attempt_id", _validate(self.attempt_id, EntityId))
-        object.__setattr__(self, "experiment_id", _validate(self.experiment_id, EntityId))
+        object.__setattr__(
+            self, "experiment_id", _validate(self.experiment_id, EntityId)
+        )
         object.__setattr__(
             self, "implementation_id", _validate(self.implementation_id, str)
         )
         object.__setattr__(
-            self, "implementation_version", _validate(self.implementation_version, Version)
+            self,
+            "implementation_version",
+            _validate(self.implementation_version, Version),
         )
         object.__setattr__(
-            self, "environment_summary", _validate(self.environment_summary, EnvironmentSummary)
+            self,
+            "environment_summary",
+            _validate(self.environment_summary, EnvironmentSummary),
         )
         object.__setattr__(self, "randomness", _validate(self.randomness, str))
         object.__setattr__(self, "seed", _validate(self.seed, Seed))
@@ -194,12 +210,18 @@ class Attempt:
         if self.started_at is not None:
             object.__setattr__(self, "started_at", _validate_timestamp(self.started_at))
         if self.finished_at is not None:
-            object.__setattr__(self, "finished_at", _validate_timestamp(self.finished_at))
-        object.__setattr__(self, "warnings", _validate(self.warnings, tuple[Warning, ...]))
+            object.__setattr__(
+                self, "finished_at", _validate_timestamp(self.finished_at)
+            )
+        object.__setattr__(
+            self, "warnings", _validate(self.warnings, tuple[Warning, ...])
+        )
         if self.result is not None:
             object.__setattr__(self, "result", _validate(self.result, ResultSnapshot))
         if self.system_error is not None:
-            object.__setattr__(self, "system_error", _validate(self.system_error, ErrorResponse))
+            object.__setattr__(
+                self, "system_error", _validate(self.system_error, ErrorResponse)
+            )
         if self.numerical_failure is not None:
             object.__setattr__(
                 self,
@@ -222,10 +244,18 @@ class Attempt:
             and self.terminal_reason is None
         )
         if self.status is AttemptStatus.PENDING:
-            if self.started_at is not None or self.finished_at is not None or not no_outputs:
+            if (
+                self.started_at is not None
+                or self.finished_at is not None
+                or not no_outputs
+            ):
                 raise ValueError("PENDING attempt has no timestamps or outputs")
         elif self.status is AttemptStatus.RUNNING:
-            if self.started_at is None or self.finished_at is not None or not no_outputs:
+            if (
+                self.started_at is None
+                or self.finished_at is not None
+                or not no_outputs
+            ):
                 raise ValueError("RUNNING attempt requires only started_at")
         elif self.status is AttemptStatus.SUCCEEDED:
             if (
@@ -307,7 +337,9 @@ class Validation:
     terminal_reason: TerminalReason | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "validation_id", _validate(self.validation_id, EntityId))
+        object.__setattr__(
+            self, "validation_id", _validate(self.validation_id, EntityId)
+        )
         object.__setattr__(self, "attempt_id", _validate(self.attempt_id, EntityId))
         object.__setattr__(
             self, "expected_result_hash", _validate(self.expected_result_hash, Hash)
@@ -319,14 +351,18 @@ class Validation:
             _validate(self.validator_id, Literal["numerical.root_finding.residual"]),
         )
         object.__setattr__(
-            self, "validator_implementation_id", _validate(self.validator_implementation_id, str)
+            self,
+            "validator_implementation_id",
+            _validate(self.validator_implementation_id, str),
         )
         object.__setattr__(
             self,
             "validator_implementation_version",
             _validate(self.validator_implementation_version, Version),
         )
-        object.__setattr__(self, "policy_version", _validate(self.policy_version, Literal["0.1.0"]))
+        object.__setattr__(
+            self, "policy_version", _validate(self.policy_version, Literal["0.1.0"])
+        )
         object.__setattr__(self, "policy", _validate(self.policy, JsonObject))
         object.__setattr__(self, "policy_hash", _validate(self.policy_hash, Hash))
         object.__setattr__(self, "status", _validate(self.status, ValidationStatus))
@@ -334,13 +370,17 @@ class Validation:
         if self.started_at is not None:
             object.__setattr__(self, "started_at", _validate_timestamp(self.started_at))
         if self.finished_at is not None:
-            object.__setattr__(self, "finished_at", _validate_timestamp(self.finished_at))
+            object.__setattr__(
+                self, "finished_at", _validate_timestamp(self.finished_at)
+            )
         if self.outcome is not None:
             object.__setattr__(
                 self, "outcome", _validate(self.outcome, ValidationOutcome)
             )
         if self.metrics is not None:
-            object.__setattr__(self, "metrics", _validate(self.metrics, ValidationMetrics))
+            object.__setattr__(
+                self, "metrics", _validate(self.metrics, ValidationMetrics)
+            )
         if self.validation_report_hash is not None:
             object.__setattr__(
                 self,
@@ -375,10 +415,18 @@ class Validation:
             and self.terminal_reason is None
         )
         if self.status is ValidationStatus.PENDING:
-            if self.started_at is not None or self.finished_at is not None or not no_outputs:
+            if (
+                self.started_at is not None
+                or self.finished_at is not None
+                or not no_outputs
+            ):
                 raise ValueError("PENDING validation has no timestamps or outputs")
         elif self.status is ValidationStatus.RUNNING:
-            if self.started_at is None or self.finished_at is not None or not no_outputs:
+            if (
+                self.started_at is None
+                or self.finished_at is not None
+                or not no_outputs
+            ):
                 raise ValueError("RUNNING validation requires only started_at")
         elif self.status is ValidationStatus.SUCCEEDED:
             if (

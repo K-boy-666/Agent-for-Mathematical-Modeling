@@ -32,9 +32,7 @@ _CONCRETE_MODULES = {
     "modeling_mcp.adapter": frozenset({"ModelingMcpAdapter"}),
 }
 _CONCRETE_REFERENCES = frozenset(
-    f"{module}.{name}"
-    for module, names in _CONCRETE_MODULES.items()
-    for name in names
+    f"{module}.{name}" for module, names in _CONCRETE_MODULES.items() for name in names
 )
 _PURE_REEXPORTS = {
     "modeling_core/application/__init__.py": frozenset(
@@ -115,10 +113,11 @@ def test_concrete_assembly_imports_and_calls_exist_only_at_composition_boundary(
                     imported = f"{node.module}.{alias.name}"
                     imports_concrete_module = imported in _CONCRETE_MODULES
                     if (
-                        imported in _CONCRETE_REFERENCES
-                        or imports_concrete_module
+                        imported in _CONCRETE_REFERENCES or imports_concrete_module
                     ) and imported not in allowed_reexports:
-                        violations.append(f"{relative}:{node.lineno}: import {imported}")
+                        violations.append(
+                            f"{relative}:{node.lineno}: import {imported}"
+                        )
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name in _CONCRETE_MODULES:

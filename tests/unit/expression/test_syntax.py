@@ -55,10 +55,7 @@ class _Cancellation:
 
     def is_cancelled(self) -> bool:
         self.checks += 1
-        return (
-            self.cancel_on_check is not None
-            and self.checks >= self.cancel_on_check
-        )
+        return self.cancel_on_check is not None and self.checks >= self.cancel_on_check
 
 
 def _budget(
@@ -342,9 +339,7 @@ def test_expression_limits_cannot_weaken_the_fixed_security_caps(
 def test_numeric_literal_limit_accepts_64_and_rejects_65_before_conversion() -> None:
     accepted = "9" * 64
     assert math.isfinite(
-        ast_to_canonical_json(
-            parse_expression(accepted, ExpressionLimits())
-        )["value"]
+        ast_to_canonical_json(parse_expression(accepted, ExpressionLimits()))["value"]
     )
 
     with pytest.raises(ExpressionLimitError, match="numeric_literal_chars"):
@@ -355,10 +350,7 @@ def _balanced_sum(leaf_count: int) -> str:
     if leaf_count == 1:
         return "x"
     left_count = leaf_count // 2
-    return (
-        f"({_balanced_sum(left_count)}"
-        f"+{_balanced_sum(leaf_count - left_count)})"
-    )
+    return f"({_balanced_sum(left_count)}+{_balanced_sum(leaf_count - left_count)})"
 
 
 def test_ast_node_limit_accepts_exactly_256_and_rejects_257() -> None:
@@ -378,9 +370,10 @@ def test_ast_depth_limit_accepts_32_and_rejects_33() -> None:
 def test_parentheses_do_not_consume_canonical_ast_depth() -> None:
     source = "(" * 1000 + "x" + ")" * 1000
 
-    assert ast_to_canonical_json(
-        parse_expression(source, ExpressionLimits())
-    ) == {"kind": "variable", "name": "x"}
+    assert ast_to_canonical_json(parse_expression(source, ExpressionLimits())) == {
+        "kind": "variable",
+        "name": "x",
+    }
 
 
 def test_parser_returns_immutable_ast_nodes() -> None:
@@ -397,13 +390,9 @@ def test_parser_returns_immutable_ast_nodes() -> None:
 def test_canonical_ast_decoder_round_trips_all_six_node_kinds(
     source: str,
 ) -> None:
-    canonical = ast_to_canonical_json(
-        parse_expression(source, ExpressionLimits())
-    )
+    canonical = ast_to_canonical_json(parse_expression(source, ExpressionLimits()))
 
-    assert ast_to_canonical_json(
-        ast_from_canonical_json(canonical)
-    ) == canonical
+    assert ast_to_canonical_json(ast_from_canonical_json(canonical)) == canonical
 
 
 @pytest.mark.parametrize(
@@ -450,9 +439,7 @@ def test_canonical_ast_decoder_rejects_forged_shapes_and_values(
 
 def test_canonical_ast_decoder_normalizes_numbers_to_binary64_and_zero() -> None:
     integer = ast_from_canonical_json({"kind": "number", "value": 2})
-    negative_zero = ast_from_canonical_json(
-        {"kind": "number", "value": -0.0}
-    )
+    negative_zero = ast_from_canonical_json({"kind": "number", "value": -0.0})
 
     assert ast_to_canonical_json(integer) == {
         "kind": "number",
@@ -462,9 +449,7 @@ def test_canonical_ast_decoder_normalizes_numbers_to_binary64_and_zero() -> None
         "kind": "number",
         "value": 0.0,
     }
-    assert math.copysign(
-        1.0, ast_to_canonical_json(negative_zero)["value"]
-    ) == 1.0
+    assert math.copysign(1.0, ast_to_canonical_json(negative_zero)["value"]) == 1.0
 
 
 def _balanced_ast_json(leaf_count: int) -> dict[str, object]:
@@ -732,9 +717,7 @@ def test_evaluator_modules_do_not_import_each_other_or_shared_numeric_helpers() 
 
 
 def test_expression_implementation_contains_no_dynamic_python_evaluation() -> None:
-    package = importlib.import_module(
-        "modeling_capabilities.root_finding.expression"
-    )
+    package = importlib.import_module("modeling_capabilities.root_finding.expression")
     assert package.__file__ is not None
     source_root = Path(package.__file__).parent
     forbidden_calls = {"eval", "exec", "compile"}

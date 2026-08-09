@@ -20,18 +20,14 @@ from modeling_core.contracts.tools import (
     ValidatorSummary,
 )
 
-_VALIDATOR_SUMMARY = (
-    "Independently recompute the reported root residual."
-)
+_VALIDATOR_SUMMARY = "Independently recompute the reported root residual."
 
 
 def _packaged_schema(name: str, schema_version: str) -> SchemaReference:
     asset = files("modeling_capabilities.root_finding").joinpath(
         "schemas", "0.1.0", name
     )
-    schema = cast(
-        JsonObject, json.loads(asset.read_text(encoding="utf-8"))
-    )
+    schema = cast(JsonObject, json.loads(asset.read_text(encoding="utf-8")))
     return SchemaReference(
         schema_version=schema_version,
         schema=schema,

@@ -45,6 +45,7 @@ from modeling_core.contracts.canonical_json import (
 from modeling_core.contracts.common import JsonObject
 from modeling_core.contracts.versions import VersionSet
 from modeling_core.registry import CapabilityRegistry
+
 _FIXTURE_SPEC = spec_from_file_location(
     "a8_forged_results",
     Path(__file__).parents[2] / "fixtures" / "forged_results.py",
@@ -57,9 +58,7 @@ numerical_failure_snapshot = _FIXTURES.numerical_failure_snapshot
 success_snapshot = _FIXTURES.success_snapshot
 
 _DRAFT = "https://json-schema.org/draft/2020-12/schema"
-_POLICY_HASH = (
-    "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
-)
+_POLICY_HASH = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
 
 
 class _Clock:
@@ -87,8 +86,7 @@ class _Cancellation:
     def is_cancelled(self) -> bool:
         self.checks += 1
         return self.cancelled or (
-            self.cancel_on_check is not None
-            and self.checks >= self.cancel_on_check
+            self.cancel_on_check is not None and self.checks >= self.cancel_on_check
         )
 
 
@@ -101,9 +99,7 @@ def _context(
     return ValidationContext(
         deadline=deadline,
         clock=clock or _Clock(),
-        cancellation=cast(
-            CancellationSignal, cancellation or _Cancellation()
-        ),
+        cancellation=cast(CancellationSignal, cancellation or _Cancellation()),
     )
 
 
@@ -146,9 +142,7 @@ def test_golden_success_is_passed_with_exact_metrics_and_hashes() -> None:
     )
     assert report.canonical_payload_hash == canonical.canonical_payload_hash
     assert report.model_snapshot_hash == canonical.model_snapshot_hash
-    assert (
-        report.data_snapshot_set_hash == canonical.data_snapshot_set_hash
-    )
+    assert report.data_snapshot_set_hash == canonical.data_snapshot_set_hash
     assert report.result_hash == result.result_hash
     assert report.policy_hash == _POLICY_HASH == EMPTY_POLICY_HASH
     assert report.policy == {}
@@ -181,9 +175,7 @@ def test_undefined_or_nonfinite_recomputation_has_three_null_metrics(
         upper=root + 1.0,
     )
 
-    report = _validate(
-        canonical, success_snapshot(root=root, function_value=0.0)
-    )
+    report = _validate(canonical, success_snapshot(root=root, function_value=0.0))
 
     assert report.outcome == "FAILED"
     assert report.metrics.recomputed_function_value is None
@@ -217,9 +209,7 @@ def test_excessive_residual_is_detected_even_when_reported_value_matches() -> No
 
     assert report.metrics.absolute_reported_delta == 0.0
     assert report.metrics.absolute_residual == 0.5
-    assert report.metrics.failed_checks == (
-        "residual_exceeds_tolerance",
-    )
+    assert report.metrics.failed_checks == ("residual_exceeds_tolerance",)
 
 
 def test_simultaneous_finite_failures_have_fixed_order() -> None:
@@ -262,9 +252,7 @@ def test_self_consistent_forged_result_hash_still_fails_mathematically() -> None
 
     assert report.result_hash == result.result_hash
     assert report.outcome == "FAILED"
-    assert report.metrics.failed_checks == (
-        "residual_exceeds_tolerance",
-    )
+    assert report.metrics.failed_checks == ("residual_exceeds_tolerance",)
 
 
 def test_legal_interval_tolerance_success_can_validate_failed() -> None:
@@ -283,9 +271,7 @@ def test_legal_interval_tolerance_success_can_validate_failed() -> None:
     )
 
     assert report.outcome == "FAILED"
-    assert report.metrics.failed_checks == (
-        "residual_exceeds_tolerance",
-    )
+    assert report.metrics.failed_checks == ("residual_exceeds_tolerance",)
 
 
 @pytest.mark.parametrize(
@@ -432,17 +418,9 @@ def test_mid_validation_and_final_return_control_checks_propagate(
     cancellation = _Cancellation(
         cancel_on_check=check_index if control == "cancel" else None
     )
-    clock = _Clock(
-        iter(
-            [0.0] * (check_index - 1)
-            + [10.0]
-            + [10.0] * 8
-        )
-    )
+    clock = _Clock(iter([0.0] * (check_index - 1) + [10.0] + [10.0] * 8))
     expected = (
-        EvaluationCancelled
-        if control == "cancel"
-        else EvaluationDeadlineExceeded
+        EvaluationCancelled if control == "cancel" else EvaluationDeadlineExceeded
     )
 
     with pytest.raises(expected):
@@ -510,9 +488,7 @@ def test_recomputation_uses_one_fresh_bounded_budget(
 
 def test_finite_subtraction_overflow_is_mismatch_not_nonfinite_value() -> None:
     report = _validate(
-        canonical_input(
-            expression="x", lower=-1.7e308, upper=1.7e308
-        ),
+        canonical_input(expression="x", lower=-1.7e308, upper=1.7e308),
         success_snapshot(root=1.7e308, function_value=-1.7e308),
     )
 
@@ -532,9 +508,7 @@ def test_validator_descriptor_and_capability_summary_reconcile_exactly() -> None
     descriptor = validator.descriptor
     capability = build_root_finding_descriptor()
     assert descriptor.validator_id == "numerical.root_finding.residual"
-    assert descriptor.implementation_id == (
-        "builtin.numerical.root_finding.residual"
-    )
+    assert descriptor.implementation_id == ("builtin.numerical.root_finding.residual")
     assert descriptor.implementation_version == "0.1.0"
     assert descriptor.policy_version == "0.1.0"
     assert len(descriptor.supported_capabilities) == 1
@@ -551,9 +525,7 @@ def test_validator_descriptor_and_capability_summary_reconcile_exactly() -> None
     summary = capability.validators[0]
     assert summary.validator_id == descriptor.validator_id
     assert summary.summary == descriptor.summary
-    assert summary.report_schema_version == (
-        descriptor.report_schema.schema_version
-    )
+    assert summary.report_schema_version == (descriptor.report_schema.schema_version)
     assert summary.report_schema == descriptor.report_schema.schema
     assert summary.report_schema_hash == descriptor.report_schema.schema_hash
     assert len(summary.policies) == 1
@@ -563,10 +535,7 @@ def test_validator_descriptor_and_capability_summary_reconcile_exactly() -> None
     assert canonical_json_bytes(advertised_policy.policy_schema) == (
         descriptor.policy_schema.schema_bytes
     )
-    assert (
-        advertised_policy.policy_schema_hash
-        == descriptor.policy_schema.schema_hash
-    )
+    assert advertised_policy.policy_schema_hash == descriptor.policy_schema.schema_hash
     assert canonical_json_bytes(summary.report_schema) == (
         descriptor.report_schema.schema_bytes
     )
@@ -578,9 +547,7 @@ def test_test_local_registry_seals_and_resolves_exact_validator() -> None:
     registry = CapabilityRegistry(VersionSet.m1a())
     registry.register_capability(capability)
     registry.register_validator(validator)
-    summary = registry.seal(
-        frozenset({("numerical.root_finding", "0.1.0")})
-    )
+    summary = registry.seal(frozenset({("numerical.root_finding", "0.1.0")}))
 
     assert summary.sealed is True
     resolved = registry.resolve_validator(
@@ -595,9 +562,7 @@ def test_test_local_registry_seals_and_resolves_exact_validator() -> None:
 def _load_schema(package: str, *parts: str) -> JsonObject:
     return cast(
         JsonObject,
-        json.loads(
-            files(package).joinpath(*parts).read_text(encoding="utf-8")
-        ),
+        json.loads(files(package).joinpath(*parts).read_text(encoding="utf-8")),
     )
 
 
@@ -690,9 +655,7 @@ def test_report_schemas_bind_outcome_to_empty_or_nonempty_checks() -> None:
     )
 
     passed_with_failure = json.loads(json.dumps(passed))
-    passed_with_failure["metrics"]["failed_checks"] = [
-        "residual_exceeds_tolerance"
-    ]
+    passed_with_failure["metrics"]["failed_checks"] = ["residual_exceeds_tolerance"]
     failed_without_failure = json.loads(json.dumps(failed))
     failed_without_failure["metrics"]["failed_checks"] = []
 

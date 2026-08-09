@@ -99,9 +99,7 @@ class _CommitFailingConnection:
     def __setattr__(self, name: str, value: object) -> None:
         setattr(self._connection, name, value)
 
-    def execute(
-        self, sql: str, parameters: object = ()
-    ) -> sqlite3.Cursor:
+    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
         if sql == "COMMIT":
             raise sqlite3.OperationalError("injected final commit failure")
         return self._connection.execute(sql, parameters)  # type: ignore[arg-type]
@@ -120,9 +118,7 @@ class _CommitErrorConnection:
     def __setattr__(self, name: str, value: object) -> None:
         setattr(self._connection, name, value)
 
-    def execute(
-        self, sql: str, parameters: object = ()
-    ) -> sqlite3.Cursor:
+    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
         if sql == "COMMIT":
             raise self._error
         return self._connection.execute(sql, parameters)  # type: ignore[arg-type]
@@ -186,9 +182,7 @@ def test_six_use_cases_reconstruct_a_validated_root_finding_trace(
     assert created.created is True
     assert created.replayed is False
 
-    capabilities = application.list_capabilities(
-        ListCapabilitiesSummaryRequest()
-    )
+    capabilities = application.list_capabilities(ListCapabilitiesSummaryRequest())
     assert [item.capability_id for item in capabilities.capabilities] == [
         "numerical.root_finding"
     ]
@@ -287,9 +281,7 @@ def test_stale_active_state_degrades_health_and_refuses_new_writes(
     versions = VersionSet.m1a()
     store = SQLiteProjectStore(tmp_path, versions)
     application = _build_application(tmp_path, store=store)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(10))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(10)))
 
     def leave_running_attempt(*_args: object, **_kwargs: object) -> object:
         raise ProjectStoreError(
@@ -333,9 +325,7 @@ def test_stale_active_state_degrades_health_and_refuses_new_writes(
     assert list_error.value.response.code == "PRECONDITION_FAILED"
 
     with pytest.raises(ModelingError) as create_error:
-        restarted.create_project(
-            CreateProjectRequest(operation_id=_uuid(13))
-        )
+        restarted.create_project(CreateProjectRequest(operation_id=_uuid(13)))
     assert create_error.value.response.code == "PRECONDITION_FAILED"
 
     with pytest.raises(ModelingError) as captured:
@@ -370,9 +360,7 @@ def test_application_normalizes_realistic_clock_to_utc_milliseconds(
         tmp_path,
         clock_start=datetime(2026, 7, 17, 1, 2, 3, 123456, tzinfo=UTC),
     )
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(20))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(20)))
     run = application.run_experiment(
         RunExperimentRequest(
             operation_id=_uuid(21),
@@ -417,9 +405,7 @@ def test_create_replay_rejects_malformed_created_reference(
             "UPDATE idempotency_records SET result_entity_references=? "
             "WHERE tool_name='create_project' AND operation_id=?",
             (
-                '{"created":"yes","project_id":"'
-                + created.project_id
-                + '"}',
+                '{"created":"yes","project_id":"' + created.project_id + '"}',
                 request.operation_id,
             ),
         )
@@ -438,9 +424,7 @@ def test_run_replay_rejects_cross_experiment_references(
 ) -> None:
     """Catches completed run refs that mix two valid provenance chains."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(40))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(40)))
     selection = CapabilitySelection(
         capability_id="numerical.root_finding",
         contract_version="0.1.0",
@@ -450,18 +434,14 @@ def test_run_replay_rejects_cross_experiment_references(
         project_id=project.project_id,
         mode="new",
         capability=selection,
-        payload=RootFindingInput(
-            expression="x*x - 2", lower=0.0, upper=2.0
-        ),
+        payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
     )
     second_request = RunExperimentRequest(
         operation_id=_uuid(42),
         project_id=project.project_id,
         mode="new",
         capability=selection,
-        payload=RootFindingInput(
-            expression="x - 1", lower=0.0, upper=2.0
-        ),
+        payload=RootFindingInput(expression="x - 1", lower=0.0, upper=2.0),
     )
     first = application.run_experiment(first_request)
     second = application.run_experiment(second_request)
@@ -495,9 +475,7 @@ def test_run_replay_rejects_extra_response_reference_keys(
 ) -> None:
     """Catches completed run refs accepting an ambiguous expanded shape."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(43))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(43)))
     request = RunExperimentRequest(
         operation_id=_uuid(44),
         project_id=project.project_id,
@@ -506,9 +484,7 @@ def test_run_replay_rejects_extra_response_reference_keys(
             capability_id="numerical.root_finding",
             contract_version="0.1.0",
         ),
-        payload=RootFindingInput(
-            expression="x*x - 2", lower=0.0, upper=2.0
-        ),
+        payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
     )
     first = application.run_experiment(request)
     assert isinstance(first, RunExperimentSucceededResult)
@@ -540,9 +516,7 @@ def test_run_replay_rejects_missing_attempt_reference_as_integrity_failure(
 ) -> None:
     """Catches a dangling COMPLETED reference being reported as user absence."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(45))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(45)))
     request = RunExperimentRequest(
         operation_id=_uuid(46),
         project_id=project.project_id,
@@ -551,9 +525,7 @@ def test_run_replay_rejects_missing_attempt_reference_as_integrity_failure(
             capability_id="numerical.root_finding",
             contract_version="0.1.0",
         ),
-        payload=RootFindingInput(
-            expression="x*x - 2", lower=0.0, upper=2.0
-        ),
+        payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
     )
     first = application.run_experiment(request)
     assert isinstance(first, RunExperimentSucceededResult)
@@ -580,9 +552,7 @@ def test_validation_replay_rejects_cross_attempt_reference(
 ) -> None:
     """Catches a validation replay returning another Attempt's evidence."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(50))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(50)))
     selection = CapabilitySelection(
         capability_id="numerical.root_finding",
         contract_version="0.1.0",
@@ -628,9 +598,7 @@ def test_validation_replay_rejects_cross_attempt_reference(
             "UPDATE idempotency_records SET result_entity_references=? "
             "WHERE tool_name='validate_experiment' AND operation_id=?",
             (
-                '{"validation_id":"'
-                + validations[1].validation_id
-                + '"}',
+                '{"validation_id":"' + validations[1].validation_id + '"}',
                 requests[0].operation_id,
             ),
         )
@@ -650,9 +618,7 @@ def test_run_terminal_commit_failure_rolls_back_and_degrades_store(
     versions = VersionSet.m1a()
     store = SQLiteProjectStore(tmp_path, versions)
     application = _build_application(tmp_path, store=store)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(60))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(60)))
     original_connect = store._connect
     original_complete = store.complete_attempt
     armed = False
@@ -681,9 +647,7 @@ def test_run_terminal_commit_failure_rolls_back_and_degrades_store(
             capability_id="numerical.root_finding",
             contract_version="0.1.0",
         ),
-        payload=RootFindingInput(
-            expression="x*x - 2", lower=0.0, upper=2.0
-        ),
+        payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
     )
     with pytest.raises(ModelingError) as captured:
         application.run_experiment(request)
@@ -747,9 +711,7 @@ def test_terminal_busy_or_locked_commit_failure_degrades_store(
                     capability_id="numerical.root_finding",
                     contract_version="0.1.0",
                 ),
-                payload=RootFindingInput(
-                    expression="x*x - 2", lower=0.0, upper=2.0
-                ),
+                payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
             )
         )
 
@@ -765,9 +727,7 @@ def test_terminal_connection_failure_is_translated_and_degrades_store(
     versions = VersionSet.m1a()
     store = SQLiteProjectStore(tmp_path, versions)
     application = _build_application(tmp_path, store=store)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(66))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(66)))
     original_connect = store._connect
     original_complete = store.complete_attempt
     armed = False
@@ -797,9 +757,7 @@ def test_terminal_connection_failure_is_translated_and_degrades_store(
                     capability_id="numerical.root_finding",
                     contract_version="0.1.0",
                 ),
-                payload=RootFindingInput(
-                    expression="x*x - 2", lower=0.0, upper=2.0
-                ),
+                payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
             )
         )
 
@@ -823,9 +781,7 @@ def test_create_commit_failure_rolls_back_and_degrades_store(
     original_connect = store._connect
 
     def connect(*, named_rows: bool = False) -> sqlite3.Connection:
-        return _CommitFailingConnection(
-            original_connect(named_rows=named_rows)
-        )  # type: ignore[return-value]
+        return _CommitFailingConnection(original_connect(named_rows=named_rows))  # type: ignore[return-value]
 
     monkeypatch.setattr(store, "_connect", connect)
     with pytest.raises(ModelingError) as captured:
@@ -854,9 +810,7 @@ def test_validation_terminal_commit_failure_rolls_back_and_degrades_store(
     versions = VersionSet.m1a()
     store = SQLiteProjectStore(tmp_path, versions)
     application = _build_application(tmp_path, store=store)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(80))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(80)))
     run = application.run_experiment(
         RunExperimentRequest(
             operation_id=_uuid(81),
@@ -866,9 +820,7 @@ def test_validation_terminal_commit_failure_rolls_back_and_degrades_store(
                 capability_id="numerical.root_finding",
                 contract_version="0.1.0",
             ),
-            payload=RootFindingInput(
-                expression="x*x - 2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
         )
     )
     assert isinstance(run, RunExperimentSucceededResult)
@@ -891,9 +843,7 @@ def test_validation_terminal_commit_failure_rolls_back_and_degrades_store(
             armed = False
 
     monkeypatch.setattr(store, "_connect", connect)
-    monkeypatch.setattr(
-        store, "complete_validation", complete_with_failed_commit
-    )
+    monkeypatch.setattr(store, "complete_validation", complete_with_failed_commit)
     request = ValidateExperimentRequest(
         operation_id=_uuid(82),
         project_id=project.project_id,
@@ -925,9 +875,7 @@ def test_corrupt_experiment_json_returns_stable_integrity_error(
 ) -> None:
     """Catches raw SQLite/reconstruction errors escaping the store port."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(90))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(90)))
     run = application.run_experiment(
         RunExperimentRequest(
             operation_id=_uuid(91),
@@ -937,17 +885,14 @@ def test_corrupt_experiment_json_returns_stable_integrity_error(
                 capability_id="numerical.root_finding",
                 contract_version="0.1.0",
             ),
-            payload=RootFindingInput(
-                expression="x*x - 2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
         )
     )
     assert isinstance(run, RunExperimentSucceededResult)
     database = tmp_path / ".modeling" / "state.sqlite3"
     with closing(sqlite3.connect(database)) as connection:
         connection.execute(
-            "UPDATE experiments SET canonical_payload='[]' "
-            "WHERE experiment_id=?",
+            "UPDATE experiments SET canonical_payload='[]' WHERE experiment_id=?",
             (run.experiment_id,),
         )
         connection.commit()
@@ -970,9 +915,7 @@ def test_corrupt_project_status_reconstruction_returns_stable_integrity_error(
     """Catches status reconstruction leaking a stored timestamp error."""
     store = SQLiteProjectStore(tmp_path, VersionSet.m1a())
     application = _build_application(tmp_path, store=store)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(95))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(95)))
     database = tmp_path / ".modeling" / "state.sqlite3"
     with closing(sqlite3.connect(database)) as connection:
         connection.execute(
@@ -993,9 +936,7 @@ def test_validation_source_corruption_returns_stable_integrity_error(
 ) -> None:
     """Catches corrupt source provenance masquerading as ineligible validation."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(96))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(96)))
     run = application.run_experiment(
         RunExperimentRequest(
             operation_id=_uuid(97),
@@ -1005,9 +946,7 @@ def test_validation_source_corruption_returns_stable_integrity_error(
                 capability_id="numerical.root_finding",
                 contract_version="0.1.0",
             ),
-            payload=RootFindingInput(
-                expression="x*x - 2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
         )
     )
     assert isinstance(run, RunExperimentSucceededResult)
@@ -1054,7 +993,9 @@ def test_create_project_bootstraps_true_uninitialized_storage_and_replays(
     assert replayed.project_id == created.project_id
     assert replayed.created is True
     assert replayed.replayed is True
-    with closing(sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")) as connection:
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
         assert connection.execute("SELECT COUNT(*) FROM projects").fetchone() == (1,)
 
 
@@ -1074,9 +1015,7 @@ def test_completed_write_replay_is_side_effect_free(
             capability_id="numerical.root_finding",
             contract_version="0.1.0",
         ),
-        payload=RootFindingInput(
-            expression="x*x - 2", lower=0.0, upper=2.0
-        ),
+        payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
     )
     run = application.run_experiment(run_request)
     assert isinstance(run, RunExperimentSucceededResult)
@@ -1109,7 +1048,9 @@ def test_completed_write_replay_is_side_effect_free(
     assert isinstance(validation_replay, ValidateExperimentSucceededResult)
     assert validation_replay.replayed is True
     assert validation_replay.validation_id == validation.validation_id
-    with closing(sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")) as connection:
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
         counts = tuple(
             connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in (
@@ -1157,9 +1098,7 @@ def test_write_idempotency_mismatch_fails_without_new_entities(
         project_id=project.project_id,
         mode="new",
         capability=selection,
-        payload=RootFindingInput(
-            expression="x*x - 2", lower=0.0, upper=2.0
-        ),
+        payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
     )
     run = application.run_experiment(run_request)
     assert isinstance(run, RunExperimentSucceededResult)
@@ -1170,9 +1109,7 @@ def test_write_idempotency_mismatch_fails_without_new_entities(
                 project_id=project.project_id,
                 mode="new",
                 capability=selection,
-                payload=RootFindingInput(
-                    expression="x - 1", lower=0.0, upper=2.0
-                ),
+                payload=RootFindingInput(expression="x - 1", lower=0.0, upper=2.0),
             )
         )
     assert run_error.value.response.code == "CONFLICT"
@@ -1199,12 +1136,13 @@ def test_write_idempotency_mismatch_fails_without_new_entities(
     assert validation_error.value.response.code == "CONFLICT"
     assert validation_error.value.response.retryable is False
     assert (
-        validation_error.value.response.details.conflict_type
-        == "idempotency_mismatch"
+        validation_error.value.response.details.conflict_type == "idempotency_mismatch"
     )
 
     assert application.health_check(HealthCheckRequest()).project_state == "READY"
-    with closing(sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")) as connection:
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
         counts = tuple(
             connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in (
@@ -1227,16 +1165,12 @@ def test_write_idempotency_mismatch_fails_without_new_entities(
             "INVALID_REQUEST",
         ),
         (
-            RootFindingInput(
-                expression="x.__class__", lower=0.0, upper=1.0
-            ),
+            RootFindingInput(expression="x.__class__", lower=0.0, upper=1.0),
             None,
             "SECURITY_VIOLATION",
         ),
         (
-            RootFindingInput(
-                expression=(" " * 4096) + "x", lower=0.0, upper=1.0
-            ),
+            RootFindingInput(expression=(" " * 4096) + "x", lower=0.0, upper=1.0),
             None,
             "RESOURCE_LIMIT_EXCEEDED",
         ),
@@ -1255,9 +1189,7 @@ def test_pre_execution_rejections_leave_zero_provenance(
 ) -> None:
     """Catches rejected input creating Experiment or Attempt evidence."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(130))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(130)))
     with pytest.raises(ModelingError) as captured:
         application.run_experiment(
             RunExperimentRequest(
@@ -1274,7 +1206,9 @@ def test_pre_execution_rejections_leave_zero_provenance(
         )
     assert captured.value.response.code == expected_code
 
-    with closing(sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")) as connection:
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
         counts = tuple(
             connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in (
@@ -1285,8 +1219,7 @@ def test_pre_execution_rejections_leave_zero_provenance(
             )
         )
         run_idempotency = connection.execute(
-            "SELECT COUNT(*) FROM idempotency_records "
-            "WHERE tool_name='run_experiment'"
+            "SELECT COUNT(*) FROM idempotency_records WHERE tool_name='run_experiment'"
         ).fetchone()
     assert counts == (0, 0, 0, 0)
     assert run_idempotency == (0,)
@@ -1297,9 +1230,7 @@ def test_expected_result_hash_mismatch_creates_no_validation(
 ) -> None:
     """Catches validation evidence created before result integrity checks."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(140))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(140)))
     run = application.run_experiment(
         RunExperimentRequest(
             operation_id=_uuid(141),
@@ -1309,9 +1240,7 @@ def test_expected_result_hash_mismatch_creates_no_validation(
                 capability_id="numerical.root_finding",
                 contract_version="0.1.0",
             ),
-            payload=RootFindingInput(
-                expression="x*x - 2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
         )
     )
     assert isinstance(run, RunExperimentSucceededResult)
@@ -1330,7 +1259,9 @@ def test_expected_result_hash_mismatch_creates_no_validation(
     assert captured.value.response.code == "INTEGRITY_FAILURE"
     assert captured.value.response.details.subject == "result_hash"
 
-    with closing(sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")) as connection:
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
         assert connection.execute("SELECT COUNT(*) FROM validations").fetchone() == (0,)
         assert connection.execute(
             "SELECT COUNT(*) FROM idempotency_records "
@@ -1343,9 +1274,7 @@ def test_numerical_failure_is_durable_and_replayable(
 ) -> None:
     """Catches expected numerical failure being treated as system error."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(150))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(150)))
     request = RunExperimentRequest(
         operation_id=_uuid(151),
         project_id=project.project_id,
@@ -1354,9 +1283,7 @@ def test_numerical_failure_is_durable_and_replayable(
             capability_id="numerical.root_finding",
             contract_version="0.1.0",
         ),
-        payload=RootFindingInput(
-            expression="x*x + 1", lower=-1.0, upper=1.0
-        ),
+        payload=RootFindingInput(expression="x*x + 1", lower=-1.0, upper=1.0),
     )
     first = application.run_experiment(request)
     second = application.run_experiment(request)
@@ -1383,9 +1310,7 @@ def test_numerical_failure_is_durable_and_replayable(
             "host_cancelled",
         ),
         (
-            ExecutionResourceLimitExceeded(
-                "function_evaluations", 100, 101
-            ),
+            ExecutionResourceLimitExceeded("function_evaluations", 100, 101),
             "ERRORED",
             "RESOURCE_LIMIT_EXCEEDED",
         ),
@@ -1409,9 +1334,7 @@ def test_solver_terminal_errors_are_durable_and_replayable(
 
     monkeypatch.setattr(BisectionRootFindingCapability, "execute", fail_once)
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(160))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(160)))
     request = RunExperimentRequest(
         operation_id=_uuid(161),
         project_id=project.project_id,
@@ -1467,13 +1390,9 @@ def test_solver_output_is_strictly_reconstructed_before_commit(
         )
         return ExecutionOutcome.success(payload)
 
-    monkeypatch.setattr(
-        BisectionRootFindingCapability, "execute", malformed_output
-    )
+    monkeypatch.setattr(BisectionRootFindingCapability, "execute", malformed_output)
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(165))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(165)))
     request = RunExperimentRequest(
         operation_id=_uuid(166),
         project_id=project.project_id,
@@ -1525,17 +1444,11 @@ def test_validator_failed_report_round_trips_and_replays(
                 "failed_checks": ("residual_exceeds_tolerance",),
             }
         )
-        return report.model_copy(
-            update={"outcome": "FAILED", "metrics": metrics}
-        )
+        return report.model_copy(update={"outcome": "FAILED", "metrics": metrics})
 
-    monkeypatch.setattr(
-        ResidualRootFindingValidator, "validate", return_failed
-    )
+    monkeypatch.setattr(ResidualRootFindingValidator, "validate", return_failed)
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(170))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(170)))
     run = application.run_experiment(
         RunExperimentRequest(
             operation_id=_uuid(171),
@@ -1545,9 +1458,7 @@ def test_validator_failed_report_round_trips_and_replays(
                 capability_id="numerical.root_finding",
                 contract_version="0.1.0",
             ),
-            payload=RootFindingInput(
-                expression="x*x - 2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
         )
     )
     assert isinstance(run, RunExperimentSucceededResult)
@@ -1598,9 +1509,7 @@ def test_validator_exception_is_durable_and_replayable(
 
     monkeypatch.setattr(ResidualRootFindingValidator, "validate", fail)
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(180))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(180)))
     run = application.run_experiment(
         RunExperimentRequest(
             operation_id=_uuid(181),
@@ -1610,9 +1519,7 @@ def test_validator_exception_is_durable_and_replayable(
                 capability_id="numerical.root_finding",
                 contract_version="0.1.0",
             ),
-            payload=RootFindingInput(
-                expression="x*x - 2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
         )
     )
     assert isinstance(run, RunExperimentSucceededResult)
@@ -1655,13 +1562,9 @@ def test_validator_output_is_strictly_reconstructed_before_commit(
         document["metrics"] = "not-validation-metrics"
         return ValidationReportPayload.model_construct(**document)
 
-    monkeypatch.setattr(
-        ResidualRootFindingValidator, "validate", malformed_report
-    )
+    monkeypatch.setattr(ResidualRootFindingValidator, "validate", malformed_report)
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(185))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(185)))
     run = application.run_experiment(
         RunExperimentRequest(
             operation_id=_uuid(186),
@@ -1671,9 +1574,7 @@ def test_validator_output_is_strictly_reconstructed_before_commit(
                 capability_id="numerical.root_finding",
                 contract_version="0.1.0",
             ),
-            payload=RootFindingInput(
-                expression="x*x - 2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
         )
     )
     assert isinstance(run, RunExperimentSucceededResult)
@@ -1723,13 +1624,9 @@ def test_concurrent_write_gate_always_reports_project_busy(
             raise AssertionError("test did not release blocked execution")
         return original_execute(self, *args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(
-        BisectionRootFindingCapability, "execute", blocked_execute
-    )
+    monkeypatch.setattr(BisectionRootFindingCapability, "execute", blocked_execute)
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(190))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(190)))
     request = RunExperimentRequest(
         operation_id=_uuid(191),
         project_id=project.project_id,
@@ -1738,9 +1635,7 @@ def test_concurrent_write_gate_always_reports_project_busy(
             capability_id="numerical.root_finding",
             contract_version="0.1.0",
         ),
-        payload=RootFindingInput(
-            expression="x*x - 2", lower=0.0, upper=2.0
-        ),
+        payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
     )
     outcome: list[object] = []
 
@@ -1758,10 +1653,7 @@ def test_concurrent_write_gate_always_reports_project_busy(
             application.run_experiment(request)
         assert same_operation.value.response.code == "CONFLICT"
         assert same_operation.value.response.retryable is True
-        assert (
-            same_operation.value.response.details.conflict_type
-            == "project_busy"
-        )
+        assert same_operation.value.response.details.conflict_type == "project_busy"
 
         with pytest.raises(ModelingError) as project_busy:
             application.run_experiment(
@@ -1777,12 +1669,13 @@ def test_concurrent_write_gate_always_reports_project_busy(
     assert not worker.is_alive()
     assert len(outcome) == 1
     assert isinstance(outcome[0], RunExperimentSucceededResult)
-    with closing(sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")) as connection:
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
         assert connection.execute("SELECT COUNT(*) FROM experiments").fetchone() == (1,)
         assert connection.execute("SELECT COUNT(*) FROM attempts").fetchone() == (1,)
         assert connection.execute(
-            "SELECT COUNT(*) FROM idempotency_records "
-            "WHERE tool_name='run_experiment'"
+            "SELECT COUNT(*) FROM idempotency_records WHERE tool_name='run_experiment'"
         ).fetchone() == (1,)
 
 
@@ -1811,9 +1704,7 @@ def test_pre_persistence_gate_loser_defers_idempotency_to_store(
         blocked_normalize,
     )
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(193))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(193)))
     request = RunExperimentRequest(
         operation_id=_uuid(194),
         project_id=project.project_id,
@@ -1822,9 +1713,7 @@ def test_pre_persistence_gate_loser_defers_idempotency_to_store(
             capability_id="numerical.root_finding",
             contract_version="0.1.0",
         ),
-        payload=RootFindingInput(
-            expression="x*x - 2", lower=0.0, upper=2.0
-        ),
+        payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
     )
     outcome: list[object] = []
 
@@ -1916,9 +1805,7 @@ def test_no_sqlite_transaction_is_open_during_solver_or_validator(
 ) -> None:
     """Catches mathematical execution occurring inside a DB transaction."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(200))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(200)))
     database = tmp_path / ".modeling" / "state.sqlite3"
     original_execute = BisectionRootFindingCapability.execute
     original_validate = ResidualRootFindingValidator.validate
@@ -1944,12 +1831,8 @@ def test_no_sqlite_transaction_is_open_during_solver_or_validator(
         assert_write_available()
         return original_validate(self, *args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(
-        BisectionRootFindingCapability, "execute", checked_execute
-    )
-    monkeypatch.setattr(
-        ResidualRootFindingValidator, "validate", checked_validate
-    )
+    monkeypatch.setattr(BisectionRootFindingCapability, "execute", checked_execute)
+    monkeypatch.setattr(ResidualRootFindingValidator, "validate", checked_validate)
     run = application.run_experiment(
         RunExperimentRequest(
             operation_id=_uuid(201),
@@ -1959,9 +1842,7 @@ def test_no_sqlite_transaction_is_open_during_solver_or_validator(
                 capability_id="numerical.root_finding",
                 contract_version="0.1.0",
             ),
-            payload=RootFindingInput(
-                expression="x*x - 2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
         )
     )
     assert isinstance(run, RunExperimentSucceededResult)
@@ -1984,9 +1865,7 @@ def test_summary_is_capped_at_twenty_and_reports_truncation(
 ) -> None:
     """Catches unbounded summaries or a lost truncation marker."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(210))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(210)))
     for index in range(21):
         result = application.run_experiment(
             RunExperimentRequest(
@@ -2025,9 +1904,7 @@ def test_run_replay_materializes_defaults_before_hashing(
 ) -> None:
     """Catches semantically equal requests hashing by raw formatting/defaults."""
     application = _build_application(tmp_path)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(250))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(250)))
     selection = CapabilitySelection(
         capability_id="numerical.root_finding",
         contract_version="0.1.0",
@@ -2038,9 +1915,7 @@ def test_run_replay_materializes_defaults_before_hashing(
             project_id=project.project_id,
             mode="new",
             capability=selection,
-            payload=RootFindingInput(
-                expression="x*x-2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x*x-2", lower=0.0, upper=2.0),
         )
     )
     second = application.run_experiment(
@@ -2049,9 +1924,7 @@ def test_run_replay_materializes_defaults_before_hashing(
             project_id=project.project_id,
             mode="new",
             capability=selection,
-            payload=RootFindingInput(
-                expression="x * x - 2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x * x - 2", lower=0.0, upper=2.0),
             execution=ExecutionOptions(
                 timeout_ms=10_000,
                 seed=None,
@@ -2073,9 +1946,7 @@ def test_store_rejects_terminal_attempt_with_changed_provenance(
     versions = VersionSet.m1a()
     store = SQLiteProjectStore(tmp_path, versions)
     application = _build_application(tmp_path, store=store)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(260))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(260)))
     original_complete = store.complete_attempt
 
     def complete_tampered(
@@ -2096,15 +1967,15 @@ def test_store_rejects_terminal_attempt_with_changed_provenance(
             capability_id="numerical.root_finding",
             contract_version="0.1.0",
         ),
-        payload=RootFindingInput(
-            expression="x*x - 2", lower=0.0, upper=2.0
-        ),
+        payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
     )
     with pytest.raises(ModelingError) as captured:
         application.run_experiment(request)
     assert captured.value.response.code == "INTEGRITY_FAILURE"
 
-    with closing(sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")) as connection:
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
         assert connection.execute(
             "SELECT COUNT(*) FROM result_snapshots"
         ).fetchone() == (0,)
@@ -2123,9 +1994,7 @@ def test_store_rejects_terminal_validation_with_changed_provenance(
     versions = VersionSet.m1a()
     store = SQLiteProjectStore(tmp_path, versions)
     application = _build_application(tmp_path, store=store)
-    project = application.create_project(
-        CreateProjectRequest(operation_id=_uuid(270))
-    )
+    project = application.create_project(CreateProjectRequest(operation_id=_uuid(270)))
     run = application.run_experiment(
         RunExperimentRequest(
             operation_id=_uuid(271),
@@ -2135,9 +2004,7 @@ def test_store_rejects_terminal_validation_with_changed_provenance(
                 capability_id="numerical.root_finding",
                 contract_version="0.1.0",
             ),
-            payload=RootFindingInput(
-                expression="x*x - 2", lower=0.0, upper=2.0
-            ),
+            payload=RootFindingInput(expression="x*x - 2", lower=0.0, upper=2.0),
         )
     )
     assert isinstance(run, RunExperimentSucceededResult)
@@ -2163,7 +2030,9 @@ def test_store_rejects_terminal_validation_with_changed_provenance(
         application.validate_experiment(request)
     assert captured.value.response.code == "INTEGRITY_FAILURE"
 
-    with closing(sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")) as connection:
+    with closing(
+        sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3")
+    ) as connection:
         assert connection.execute(
             "SELECT status FROM validations WHERE attempt_id=?", (run.attempt_id,)
         ).fetchone() == ("RUNNING",)

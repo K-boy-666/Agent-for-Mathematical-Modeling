@@ -85,9 +85,7 @@ def _schema_references(value: object) -> list[str]:
 def _reference_target(reference: str, base_uri: str) -> tuple[str, str]:
     document_uri, fragment = urldefrag(urljoin(base_uri, reference))
     if fragment and not fragment.startswith("/"):
-        raise ValueError(
-            "advertised schema reference uses a non-JSON-Pointer fragment"
-        )
+        raise ValueError("advertised schema reference uses a non-JSON-Pointer fragment")
     return document_uri, fragment
 
 
@@ -132,9 +130,10 @@ def _self_contained_advertised_schema(
     occupied = set(existing_defs or {})
     resource_keys: dict[str, str] = {}
     for resource_uri in sorted(discovered):
-        preferred = _EXTERNAL_SCHEMA_PREFIX + hashlib.sha256(
-            resource_uri.encode("utf-8")
-        ).hexdigest()
+        preferred = (
+            _EXTERNAL_SCHEMA_PREFIX
+            + hashlib.sha256(resource_uri.encode("utf-8")).hexdigest()
+        )
         resource_key = preferred
         suffix = 1
         while resource_key in occupied:
@@ -198,13 +197,9 @@ def _schema_error_location(
     error: JsonSchemaValidationError,
 ) -> tuple[str, InvalidRequestReason]:
     path: list[object] = list(error.absolute_path)
-    if error.validator == "additionalProperties" and isinstance(
-        error.instance, dict
-    ):
+    if error.validator == "additionalProperties" and isinstance(error.instance, dict):
         properties = (
-            error.schema.get("properties", {})
-            if isinstance(error.schema, dict)
-            else {}
+            error.schema.get("properties", {}) if isinstance(error.schema, dict) else {}
         )
         unexpected = sorted(set(error.instance) - set(properties))
         if unexpected:

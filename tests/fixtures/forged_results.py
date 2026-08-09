@@ -66,12 +66,8 @@ def canonical_input(
     lower: float = 0.0,
     upper: float = 2.0,
     function_tolerance: float = 1e-10,
-    outer_schema_version: str = (
-        "numerical.root_finding.canonical-input/0.1.0"
-    ),
-    inner_schema_version: str = (
-        "numerical.root_finding.canonical-input/0.1.0"
-    ),
+    outer_schema_version: str = ("numerical.root_finding.canonical-input/0.1.0"),
+    inner_schema_version: str = ("numerical.root_finding.canonical-input/0.1.0"),
 ) -> CanonicalInputRecord:
     payload: JsonObject = {
         "canonical_input_schema_version": inner_schema_version,
@@ -135,9 +131,7 @@ def success_snapshot(
     }
     if inner_result_kind != "success":
         return ResultSnapshotView.model_construct(**snapshot_fields)
-    return ResultSnapshotView(
-        **snapshot_fields
-    )
+    return ResultSnapshotView(**snapshot_fields)
 
 
 def numerical_failure_snapshot() -> ResultSnapshotView:
@@ -157,9 +151,7 @@ def numerical_failure_snapshot() -> ResultSnapshotView:
         capability_id="numerical.root_finding",
         contract_version="0.1.0",
         result_schema_version="modeling-result/0.1.0",
-        result_hash=sha256_json(
-            cast(JsonObject, payload.model_dump(mode="json"))
-        ),
+        result_hash=sha256_json(cast(JsonObject, payload.model_dump(mode="json"))),
         result_payload=payload,
     )
 

@@ -156,9 +156,12 @@ def test_canonicalization_is_repeatable_in_a_fresh_process() -> None:
     expected = subprocess.check_output(
         [sys.executable, "-c", code], text=True, encoding="utf-8"
     ).strip()
-    assert expected == subprocess.check_output(
-        [sys.executable, "-c", code], text=True, encoding="utf-8"
-    ).strip()
+    assert (
+        expected
+        == subprocess.check_output(
+            [sys.executable, "-c", code], text=True, encoding="utf-8"
+        ).strip()
+    )
     assert json.loads(expected)[0] == '{"n":0,"é":"é"}'
 
 
@@ -403,9 +406,7 @@ def test_canonical_input_record_deeply_seals_payload_and_data_references() -> No
     expected_data_hash = sha256_json([data_reference])  # type: ignore[list-item]
 
     record = CanonicalInputRecord(
-        canonical_input_schema_version=(
-            "numerical.root_finding.canonical-input/0.1.0"
-        ),
+        canonical_input_schema_version=("numerical.root_finding.canonical-input/0.1.0"),
         canonical_payload=payload,  # type: ignore[arg-type]
         canonical_payload_hash=expected_payload_hash,
         model_snapshot_hash=digest,
@@ -435,10 +436,7 @@ def test_canonical_input_record_deeply_seals_payload_and_data_references() -> No
     assert record.canonical_payload_hash == expected_payload_hash
     assert record.data_snapshot_set_hash == expected_data_hash
     assert record.canonical_payload is not record.canonical_payload
-    assert (
-        record.data_snapshot_references[0]
-        is not record.data_snapshot_references[0]
-    )
+    assert record.data_snapshot_references[0] is not record.data_snapshot_references[0]
 
     dumped = record.model_dump(mode="json")
     assert set(dumped) == {
@@ -449,12 +447,8 @@ def test_canonical_input_record_deeply_seals_payload_and_data_references() -> No
         "data_snapshot_references",
         "data_snapshot_set_hash",
     }
-    assert dumped["canonical_payload"] == strict_json_loads(
-        expected_payload_bytes
-    )
+    assert dumped["canonical_payload"] == strict_json_loads(expected_payload_bytes)
     assert dumped["data_snapshot_references"] == [
         strict_json_loads(expected_reference_bytes)
     ]
-    assert CanonicalInputRecord.model_validate(dumped).model_dump(
-        mode="json"
-    ) == dumped
+    assert CanonicalInputRecord.model_validate(dumped).model_dump(mode="json") == dumped

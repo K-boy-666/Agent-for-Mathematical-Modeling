@@ -42,9 +42,7 @@ class SchemaCatalog:
             schema_id = schema["$id"]
             common_schemas[schema_id] = schema
             fingerprint_input[f"common/{asset.name}"] = schema
-            registry = registry.with_resource(
-                schema_id, Resource.from_contents(schema)
-            )
+            registry = registry.with_resource(schema_id, Resource.from_contents(schema))
 
         for asset in sorted(tool_root.iterdir(), key=lambda item: item.name):
             if not asset.name.endswith(".schema.json"):
@@ -72,11 +70,17 @@ class SchemaCatalog:
             "run_experiment",
             "validate_experiment",
         }
-        expected = {(tool, kind) for tool in expected_tools for kind in ("request", "result", "error")}
+        expected = {
+            (tool, kind)
+            for tool in expected_tools
+            for kind in ("request", "result", "error")
+        }
         if set(tool_schemas) != expected:
             missing = sorted(expected - set(tool_schemas))
             extra = sorted(set(tool_schemas) - expected)
-            raise ValueError(f"incomplete tool schema catalog; missing={missing}, extra={extra}")
+            raise ValueError(
+                f"incomplete tool schema catalog; missing={missing}, extra={extra}"
+            )
         return cls(
             tool_schemas=tool_schemas,
             common_schemas=common_schemas,

@@ -9,12 +9,8 @@ from typing import ClassVar, Literal, TypeAlias, cast
 from modeling_core.contracts.common import JsonObject
 
 UnaryOperator: TypeAlias = Literal["positive", "negative"]
-BinaryOperator: TypeAlias = Literal[
-    "add", "subtract", "multiply", "divide", "power"
-]
-FunctionName: TypeAlias = Literal[
-    "abs", "sqrt", "exp", "log", "sin", "cos", "tan"
-]
+BinaryOperator: TypeAlias = Literal["add", "subtract", "multiply", "divide", "power"]
+FunctionName: TypeAlias = Literal["abs", "sqrt", "exp", "log", "sin", "cos", "tan"]
 ConstantName: TypeAlias = Literal["pi", "e"]
 
 
@@ -103,12 +99,7 @@ class CallNode:
 
 
 ExpressionAst: TypeAlias = (
-    NumberNode
-    | VariableNode
-    | ConstantNode
-    | UnaryNode
-    | BinaryNode
-    | CallNode
+    NumberNode | VariableNode | ConstantNode | UnaryNode | BinaryNode | CallNode
 )
 
 
@@ -154,9 +145,7 @@ class ExpressionForbiddenSyntaxError(ExpressionSyntaxError):
 class ExpressionLimitError(ValueError):
     """The source or resulting canonical AST exceeds a fixed limit."""
 
-    def __init__(
-        self, resource: str, limit: int, observed: int | None = None
-    ) -> None:
+    def __init__(self, resource: str, limit: int, observed: int | None = None) -> None:
         self.resource = resource
         self.limit = limit
         self.observed = observed
@@ -273,8 +262,7 @@ def _tokenize(source: str, limits: ExpressionLimits) -> tuple[_Token, ...]:
         if _is_ascii_letter(char):
             end = index + 1
             while end < len(source) and (
-                _is_ascii_letter(source[end])
-                or _is_ascii_digit(source[end])
+                _is_ascii_letter(source[end]) or _is_ascii_digit(source[end])
             ):
                 end += 1
             tokens.append(_Token("NAME", source[index:end], index))
@@ -285,9 +273,7 @@ def _tokenize(source: str, limits: ExpressionLimits) -> tuple[_Token, ...]:
             index += 2
             continue
         if source.startswith("//", index):
-            raise ExpressionForbiddenSyntaxError(
-                "unknown operator", index
-            )
+            raise ExpressionForbiddenSyntaxError("unknown operator", index)
         token_kind = _SINGLE_TOKENS.get(char)
         if token_kind is not None:
             tokens.append(_Token(token_kind, char, index))
@@ -330,15 +316,11 @@ def _collapse_redundant_parentheses(
             redundant.update({opening, closing})
     if not redundant:
         return tokens
-    return tuple(
-        token for index, token in enumerate(tokens) if index not in redundant
-    )
+    return tuple(token for index, token in enumerate(tokens) if index not in redundant)
 
 
 class _Parser:
-    def __init__(
-        self, tokens: tuple[_Token, ...], limits: ExpressionLimits
-    ) -> None:
+    def __init__(self, tokens: tuple[_Token, ...], limits: ExpressionLimits) -> None:
         self._tokens = tokens
         self._limits = limits
         self._index = 0
@@ -360,17 +342,11 @@ class _Parser:
         self._index += 1
         return token
 
-    def _checked(
-        self, node: ExpressionAst, nodes: int, depth: int
-    ) -> _Parsed:
+    def _checked(self, node: ExpressionAst, nodes: int, depth: int) -> _Parsed:
         if nodes > self._limits.max_ast_nodes:
-            raise ExpressionLimitError(
-                "ast_nodes", self._limits.max_ast_nodes, nodes
-            )
+            raise ExpressionLimitError("ast_nodes", self._limits.max_ast_nodes, nodes)
         if depth > self._limits.max_ast_depth:
-            raise ExpressionLimitError(
-                "ast_depth", self._limits.max_ast_depth, depth
-            )
+            raise ExpressionLimitError("ast_depth", self._limits.max_ast_depth, depth)
         return _Parsed(node=node, nodes=nodes, depth=depth)
 
     def _leaf(self, node: ExpressionAst) -> _Parsed:
@@ -383,9 +359,7 @@ class _Parser:
             operand.depth + 1,
         )
 
-    def _binary(
-        self, op: BinaryOperator, left: _Parsed, right: _Parsed
-    ) -> _Parsed:
+    def _binary(self, op: BinaryOperator, left: _Parsed, right: _Parsed) -> _Parsed:
         return self._checked(
             BinaryNode(op=op, left=left.node, right=right.node),
             left.nodes + right.nodes + 1,
@@ -409,11 +383,7 @@ class _Parser:
             if left_binding_power < minimum_binding_power:
                 break
             operator_token = self._advance()
-            if (
-                operator == "power"
-                and self._peek().kind
-                in {"STAR", "SLASH", "POWER"}
-            ):
+            if operator == "power" and self._peek().kind in {"STAR", "SLASH", "POWER"}:
                 raise ExpressionForbiddenSyntaxError(
                     "power exponent uses a forbidden operator",
                     self._peek().position,
@@ -437,12 +407,8 @@ class _Parser:
         if token.kind in {"PLUS", "MINUS"}:
             directly_targets_number = self._peek().kind == "NUMBER"
             operand = self._parse_bp(_UNARY_BINDING_POWER)
-            operator: UnaryOperator = (
-                "positive" if token.kind == "PLUS" else "negative"
-            )
-            if directly_targets_number and isinstance(
-                operand.node, NumberNode
-            ):
+            operator: UnaryOperator = "positive" if token.kind == "PLUS" else "negative"
+            if directly_targets_number and isinstance(operand.node, NumberNode):
                 sign = 1.0 if operator == "positive" else -1.0
                 return self._leaf(NumberNode(sign * operand.node.value))
             return self._unary(operator, operand)
@@ -459,9 +425,7 @@ class _Parser:
             if token.text == "x":
                 return self._leaf(VariableNode())
             if token.text in _CONSTANTS:
-                constant: ConstantName = (
-                    "pi" if token.text == "pi" else "e"
-                )
+                constant: ConstantName = "pi" if token.text == "pi" else "e"
                 return self._leaf(ConstantNode(name=constant))
             if token.text in _FUNCTIONS:
                 opening = self._peek()
@@ -497,15 +461,11 @@ class _Parser:
                 else:
                     function = "tan"
                 return self._call(function, argument)
-            raise ExpressionForbiddenSyntaxError(
-                "unknown name", token.position
-            )
+            raise ExpressionForbiddenSyntaxError("unknown name", token.position)
         raise ExpressionSyntaxError("expected expression", token.position)
 
 
-def parse_expression(
-    source: str, limits: ExpressionLimits
-) -> ExpressionAst:
+def parse_expression(source: str, limits: ExpressionLimits) -> ExpressionAst:
     """Parse untrusted math-expr-v1 source without Python execution."""
 
     if not isinstance(source, str):
@@ -513,23 +473,17 @@ def parse_expression(
     try:
         encoded = source.encode("utf-8", errors="strict")
     except UnicodeEncodeError as error:
-        raise ExpressionSyntaxError(
-            "expression must be valid Unicode"
-        ) from error
+        raise ExpressionSyntaxError("expression must be valid Unicode") from error
     byte_count = len(encoded)
     if byte_count > limits.max_utf8_bytes:
         raise ExpressionLimitError(
             "expression_bytes", limits.max_utf8_bytes, byte_count
         )
     try:
-        tokens = _collapse_redundant_parentheses(
-            _tokenize(source, limits)
-        )
+        tokens = _collapse_redundant_parentheses(_tokenize(source, limits))
         return _Parser(tokens, limits).parse()
     except RecursionError as error:
-        raise ExpressionLimitError(
-            "ast_depth", limits.max_ast_depth
-        ) from error
+        raise ExpressionLimitError("ast_depth", limits.max_ast_depth) from error
 
 
 def ast_to_canonical_json(ast: ExpressionAst) -> JsonObject:
@@ -576,18 +530,12 @@ def _decoded_node(
     return _Parsed(node=node, nodes=nodes, depth=depth)
 
 
-def _require_node_fields(
-    document: dict[str, object], expected: frozenset[str]
-) -> None:
+def _require_node_fields(document: dict[str, object], expected: frozenset[str]) -> None:
     if set(document) != expected:
-        raise ExpressionSyntaxError(
-            "canonical AST node has missing or unknown fields"
-        )
+        raise ExpressionSyntaxError("canonical AST node has missing or unknown fields")
 
 
-def _decode_canonical_node(
-    value: object, limits: ExpressionLimits
-) -> _Parsed:
+def _decode_canonical_node(value: object, limits: ExpressionLimits) -> _Parsed:
     if type(value) is not dict:
         raise ExpressionSyntaxError("canonical AST node must be an object")
     document = cast(dict[str, object], value)
@@ -604,9 +552,7 @@ def _decode_canonical_node(
             int,
             float,
         }:
-            raise ExpressionSyntaxError(
-                "canonical number must be finite binary64"
-            )
+            raise ExpressionSyntaxError("canonical number must be finite binary64")
         try:
             number = float(cast(int | float, raw_number))
         except (OverflowError, TypeError, ValueError) as error:
@@ -614,9 +560,7 @@ def _decode_canonical_node(
                 "canonical number must be finite binary64"
             ) from error
         if not math.isfinite(number):
-            raise ExpressionSyntaxError(
-                "canonical number must be finite binary64"
-            )
+            raise ExpressionSyntaxError("canonical number must be finite binary64")
         if type(raw_number) is int and int(number) != raw_number:
             raise ExpressionSyntaxError(
                 "canonical integer is not exactly representable as binary64"
@@ -634,14 +578,10 @@ def _decode_canonical_node(
         name = document["name"]
         if type(name) is not str or name not in {"pi", "e"}:
             raise ExpressionSyntaxError("unknown canonical constant")
-        return _decoded_node(
-            ConstantNode(name=cast(ConstantName, name)), 1, 1, limits
-        )
+        return _decoded_node(ConstantNode(name=cast(ConstantName, name)), 1, 1, limits)
 
     if kind == "unary":
-        _require_node_fields(
-            document, frozenset({"kind", "op", "operand"})
-        )
+        _require_node_fields(document, frozenset({"kind", "op", "operand"}))
         op = document["op"]
         if type(op) is not str or op not in {"positive", "negative"}:
             raise ExpressionSyntaxError("unknown canonical unary operator")
@@ -654,9 +594,7 @@ def _decode_canonical_node(
         )
 
     if kind == "binary":
-        _require_node_fields(
-            document, frozenset({"kind", "op", "left", "right"})
-        )
+        _require_node_fields(document, frozenset({"kind", "op", "left", "right"}))
         op = document["op"]
         allowed_binary = {
             "add",
@@ -688,17 +626,13 @@ def _decode_canonical_node(
         )
 
     if kind == "call":
-        _require_node_fields(
-            document, frozenset({"kind", "name", "argument"})
-        )
+        _require_node_fields(document, frozenset({"kind", "name", "argument"}))
         name = document["name"]
         if type(name) is not str or name not in _FUNCTIONS:
             raise ExpressionSyntaxError("unknown canonical function")
         argument = _decode_canonical_node(document["argument"], limits)
         return _decoded_node(
-            CallNode(
-                name=cast(FunctionName, name), argument=argument.node
-            ),
+            CallNode(name=cast(FunctionName, name), argument=argument.node),
             argument.nodes + 1,
             argument.depth + 1,
             limits,
@@ -715,9 +649,7 @@ def ast_from_canonical_json(
     try:
         return _decode_canonical_node(value, limits).node
     except RecursionError as error:
-        raise ExpressionLimitError(
-            "ast_depth", limits.max_ast_depth
-        ) from error
+        raise ExpressionLimitError("ast_depth", limits.max_ast_depth) from error
 
 
 __all__ = [

@@ -137,8 +137,7 @@ def test_advertised_request_and_result_schemas_are_offline_self_contained() -> N
             assert schema["$id"] == canonical_schema["$id"]
             Draft202012Validator.check_schema(schema)
             assert all(
-                reference.startswith("#")
-                for reference in _schema_references(schema)
+                reference.startswith("#") for reference in _schema_references(schema)
             ), f"{tool.name}.{kind} contains a non-local reference"
 
             canonical_validator = catalog.validator(tool.name, kind)
@@ -176,16 +175,14 @@ def test_advertisement_preserves_packaged_schemas_and_catalog_fingerprint(
     assert catalog.common_schemas == original_common_schemas
 
 
-def test_advertised_schema_bundler_preserves_existing_namespace_on_collision() -> (
-    None
-):
+def test_advertised_schema_bundler_preserves_existing_namespace_on_collision() -> None:
     common_uri = (
         "https://schemas.math-modeling-mcp.local/common/0.1.0/"
         "modeling-error.schema.json"
     )
-    preferred_key = "__mcp_external_" + hashlib.sha256(
-        common_uri.encode("utf-8")
-    ).hexdigest()
+    preferred_key = (
+        "__mcp_external_" + hashlib.sha256(common_uri.encode("utf-8")).hexdigest()
+    )
     root = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "https://schemas.math-modeling-mcp.local/test/collision.schema.json",
@@ -240,9 +237,10 @@ def test_modeling_mcp_is_in_the_locked_editable_wheel_configuration() -> None:
         (Path(__file__).parents[2] / "pyproject.toml").read_text(encoding="utf-8")
     )
 
-    assert "src/modeling_mcp" in project["tool"]["hatch"]["build"]["targets"][
-        "wheel"
-    ]["packages"]
+    assert (
+        "src/modeling_mcp"
+        in project["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
+    )
     assert importlib.util.find_spec("modeling_mcp") is not None
 
 
@@ -285,16 +283,12 @@ def test_valid_create_project_call_invokes_the_typed_facade_once() -> None:
 
 
 def test_valid_get_project_status_call_invokes_the_typed_facade_once() -> None:
-    request_data = _corpus_instance(
-        "get_project_status", "request", "valid_request"
-    )
+    request_data = _corpus_instance("get_project_status", "request", "valid_request")
     expected_request = TypeAdapter(GetProjectStatusRequest).validate_json(
         json.dumps(request_data)
     )
     expected_result = TypeAdapter(GetProjectStatusResult).validate_json(
-        json.dumps(
-            _corpus_instance("get_project_status", "result", "valid_result")
-        )
+        json.dumps(_corpus_instance("get_project_status", "result", "valid_result"))
     )
     facade = Mock(spec=ApplicationFacade)
     facade.get_project_status.return_value = expected_result
@@ -313,9 +307,7 @@ def test_valid_list_capabilities_call_invokes_the_typed_facade_once() -> None:
         json.dumps(request_data)
     )
     expected_result = TypeAdapter(ListCapabilitiesResult).validate_json(
-        json.dumps(
-            _corpus_instance("list_capabilities", "result", "valid_result")
-        )
+        json.dumps(_corpus_instance("list_capabilities", "result", "valid_result"))
     )
     facade = Mock(spec=ApplicationFacade)
     facade.list_capabilities.return_value = expected_result
@@ -348,16 +340,12 @@ def test_valid_run_experiment_call_invokes_the_typed_facade_once() -> None:
 
 
 def test_valid_validate_experiment_call_invokes_the_typed_facade_once() -> None:
-    request_data = _corpus_instance(
-        "validate_experiment", "request", "valid_request"
-    )
+    request_data = _corpus_instance("validate_experiment", "request", "valid_request")
     expected_request = ValidateExperimentRequest.model_validate_json(
         json.dumps(request_data)
     )
     expected_result = TypeAdapter(ValidateExperimentResult).validate_json(
-        json.dumps(
-            _corpus_instance("validate_experiment", "result", "valid_result")
-        )
+        json.dumps(_corpus_instance("validate_experiment", "result", "valid_result"))
     )
     facade = Mock(spec=ApplicationFacade)
     facade.validate_experiment.return_value = expected_result
@@ -431,9 +419,7 @@ def test_numerical_failure_and_failed_validation_are_normal_mcp_results() -> Non
     numerical_failure = TypeAdapter(RunExperimentResult).validate_json(
         json.dumps(run_data)
     )
-    validate_data = _corpus_instance(
-        "validate_experiment", "result", "valid_result"
-    )
+    validate_data = _corpus_instance("validate_experiment", "result", "valid_result")
     validate_data.pop("terminal_reason")
     validate_data.update(
         {
@@ -502,9 +488,7 @@ def test_request_schema_is_validated_before_facade_dispatch() -> None:
     facade.health_check.assert_not_called()
 
 
-def test_low_level_sdk_returns_structured_invalid_request_for_unknown_field() -> (
-    None
-):
+def test_low_level_sdk_returns_structured_invalid_request_for_unknown_field() -> None:
     facade = Mock(spec=ApplicationFacade)
     adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
 
@@ -564,9 +548,7 @@ def test_low_level_sdk_maps_request_schema_failures_to_stable_details(
     facade.create_project.assert_not_called()
 
 
-def test_low_level_sdk_returns_structured_invalid_request_for_unknown_tool() -> (
-    None
-):
+def test_low_level_sdk_returns_structured_invalid_request_for_unknown_tool() -> None:
     facade = Mock(spec=ApplicationFacade)
     adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
 
@@ -581,9 +563,7 @@ def test_low_level_sdk_returns_structured_invalid_request_for_unknown_tool() -> 
         "reason": "invalid_format",
     }
     assert "not_a_tool" not in result.content[0].text
-    assert not any(
-        getattr(facade, method_name).called for method_name in TOOL_NAMES
-    )
+    assert not any(getattr(facade, method_name).called for method_name in TOOL_NAMES)
 
 
 def test_low_level_sdk_maps_dto_validation_failure_to_invalid_request() -> None:
@@ -659,9 +639,7 @@ def test_low_level_sdk_fails_closed_when_facade_result_breaks_contract() -> None
 
 
 def test_low_level_sdk_fails_closed_when_result_cannot_be_serialized() -> None:
-    result_data = _corpus_instance(
-        "run_experiment", "result", "valid_result"
-    )
+    result_data = _corpus_instance("run_experiment", "result", "valid_result")
     result_data.pop("terminal_reason")
     result_data.update(
         {
@@ -679,13 +657,9 @@ def test_low_level_sdk_fails_closed_when_result_cannot_be_serialized() -> None:
     )
     valid = cast(
         RunExperimentSucceededResult,
-        TypeAdapter(RunExperimentResult).validate_json(
-            json.dumps(result_data)
-        ),
+        TypeAdapter(RunExperimentResult).validate_json(json.dumps(result_data)),
     )
-    forged_summary = valid.result_summary.model_copy(
-        update={"root": float("nan")}
-    )
+    forged_summary = valid.result_summary.model_copy(update={"root": float("nan")})
     facade = Mock(spec=ApplicationFacade)
     facade.run_experiment.return_value = valid.model_copy(
         update={"result_summary": forged_summary}
@@ -710,9 +684,7 @@ def test_low_level_sdk_fails_closed_when_result_cannot_be_serialized() -> None:
 
 
 def test_oversized_schema_valid_result_becomes_bounded_tool_error() -> None:
-    result_data = _corpus_instance(
-        "list_capabilities", "result", "valid_result"
-    )
+    result_data = _corpus_instance("list_capabilities", "result", "valid_result")
     result_data["registry"]["capability_count"] = 1
     digest = "sha256:" + "a" * 64
     result_data["capabilities"] = [
@@ -748,9 +720,7 @@ def test_oversized_schema_valid_result_becomes_bounded_tool_error() -> None:
     assert result.isError is True
     assert result.structuredContent is not None
     assert result.structuredContent["code"] == "RESOURCE_LIMIT_EXCEEDED"
-    assert result.structuredContent["details"]["resource"] == (
-        "inline_response_bytes"
-    )
+    assert result.structuredContent["details"]["resource"] == ("inline_response_bytes")
     assert result.structuredContent["details"]["limit"] == 262144
     assert result.structuredContent["details"]["observed"] > 262144
     SchemaCatalog.load_packaged().validator("list_capabilities", "error").validate(
@@ -759,9 +729,7 @@ def test_oversized_schema_valid_result_becomes_bounded_tool_error() -> None:
 
 
 def test_decomposed_unicode_is_limited_by_the_exact_returned_utf8_bytes() -> None:
-    result_data = _corpus_instance(
-        "list_capabilities", "result", "valid_result"
-    )
+    result_data = _corpus_instance("list_capabilities", "result", "valid_result")
     result_data["registry"]["capability_count"] = 1
     digest = "sha256:" + "a" * 64
     result_data["capabilities"] = [
@@ -787,9 +755,9 @@ def test_decomposed_unicode_is_limited_by_the_exact_returned_utf8_bytes() -> Non
         json.dumps(result_data, ensure_ascii=False)
     )
     structured = oversized.model_dump(mode="json")
-    compact = json.dumps(
-        structured, ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
+    compact = json.dumps(structured, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
     assert len(canonical_json_bytes(structured)) <= 262144
     assert len(compact) > 262144
     facade = Mock(spec=ApplicationFacade)

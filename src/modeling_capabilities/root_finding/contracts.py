@@ -28,9 +28,7 @@ from modeling_core.contracts.capability import (
 from modeling_core.contracts.common import JsonObject, JsonValue
 from modeling_core.ports.clock import Clock
 
-CANONICAL_INPUT_SCHEMA_VERSION = (
-    "numerical.root_finding.canonical-input/0.1.0"
-)
+CANONICAL_INPUT_SCHEMA_VERSION = "numerical.root_finding.canonical-input/0.1.0"
 MAX_FUNCTION_EVALUATIONS = 20_000
 MAX_AST_NODES_PER_EVALUATION = 256
 MAX_AST_DEPTH_PER_EVALUATION = 32
@@ -87,18 +85,14 @@ class EvaluationBudget:
     _nodes_visited: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.deadline, float) or not math.isfinite(
-            self.deadline
-        ):
+        if not isinstance(self.deadline, float) or not math.isfinite(self.deadline):
             raise ValueError("deadline must be a finite float")
         if (
             isinstance(self.max_evaluations, bool)
             or not isinstance(self.max_evaluations, int)
             or not 1 <= self.max_evaluations <= MAX_FUNCTION_EVALUATIONS
         ):
-            raise ValueError(
-                "max_evaluations must be an integer from 1 through 20000"
-            )
+            raise ValueError("max_evaluations must be an integer from 1 through 20000")
 
     @property
     def evaluations_used(self) -> int:
@@ -106,9 +100,7 @@ class EvaluationBudget:
 
     def begin_evaluation(self) -> None:
         if self._evaluations_used >= self.max_evaluations:
-            raise EvaluationBudgetExceeded(
-                "function_evaluations", self.max_evaluations
-            )
+            raise EvaluationBudgetExceeded("function_evaluations", self.max_evaluations)
         self._evaluations_used += 1
         self._nodes_visited = 0
 
@@ -119,13 +111,9 @@ class EvaluationBudget:
             raise EvaluationDeadlineExceeded("evaluation deadline exceeded")
         self._nodes_visited += 1
         if self._nodes_visited > MAX_AST_NODES_PER_EVALUATION:
-            raise EvaluationBudgetExceeded(
-                "ast_nodes", MAX_AST_NODES_PER_EVALUATION
-            )
+            raise EvaluationBudgetExceeded("ast_nodes", MAX_AST_NODES_PER_EVALUATION)
         if depth > MAX_AST_DEPTH_PER_EVALUATION:
-            raise EvaluationBudgetExceeded(
-                "ast_depth", MAX_AST_DEPTH_PER_EVALUATION
-            )
+            raise EvaluationBudgetExceeded("ast_depth", MAX_AST_DEPTH_PER_EVALUATION)
 
 
 _RAW_FIELDS = frozenset(
@@ -262,9 +250,7 @@ def normalize_root_finding_input(
         ) from error
 
     numbers = {
-        field_name: _to_finite_binary64(
-            field_name, materialized[field_name]
-        )
+        field_name: _to_finite_binary64(field_name, materialized[field_name])
         for field_name in _NUMBER_FIELDS
     }
     if numbers["upper"] <= numbers["lower"]:
@@ -281,9 +267,7 @@ def normalize_root_finding_input(
         _validate_tolerance(field_name, numbers[field_name])
 
     max_iterations = materialized["max_iterations"]
-    assert isinstance(max_iterations, int) and not isinstance(
-        max_iterations, bool
-    )
+    assert isinstance(max_iterations, int) and not isinstance(max_iterations, bool)
     if not 1 <= max_iterations <= 10_000:
         raise InputValidationError(
             "/payload/max_iterations",

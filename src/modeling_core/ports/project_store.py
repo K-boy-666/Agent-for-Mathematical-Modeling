@@ -58,9 +58,7 @@ _TERMINAL_VALIDATIONS = frozenset(
         ValidationStatus.ABANDONED,
     }
 )
-_RETRYABLE_CONFLICTS = frozenset(
-    {"operation_in_progress", "project_busy"}
-)
+_RETRYABLE_CONFLICTS = frozenset({"operation_in_progress", "project_busy"})
 
 
 def _validate(value: object, annotation: Any) -> Any:
@@ -78,13 +76,8 @@ def _validate_timestamp(value: object) -> datetime:
 
 
 def _validate_attempt_result_owner(attempt: Attempt) -> None:
-    if (
-        attempt.result is not None
-        and attempt.result.attempt_id != attempt.attempt_id
-    ):
-        raise ValueError(
-            "embedded result snapshot must belong to its owning attempt"
-        )
+    if attempt.result is not None and attempt.result.attempt_id != attempt.attempt_id:
+        raise ValueError("embedded result snapshot must belong to its owning attempt")
 
 
 def _require_terminal_attempt(attempt: Attempt) -> None:
@@ -133,9 +126,7 @@ class CreateProjectCommand:
     display_name: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "operation", _validate(self.operation, WriteOperation)
-        )
+        object.__setattr__(self, "operation", _validate(self.operation, WriteOperation))
         display_name = _validate(self.display_name, _DISPLAY_NAME)
         if unicodedata.normalize("NFC", display_name) != display_name:
             raise ValueError("display_name must be Unicode NFC")
@@ -186,9 +177,7 @@ class ProjectStatusSnapshot:
             "last_activity_at",
             _validate_timestamp(self.last_activity_at),
         )
-        experiments = _validate(
-            self.experiments, tuple[ExperimentSummary, ...]
-        )
+        experiments = _validate(self.experiments, tuple[ExperimentSummary, ...])
         if len(experiments) > 20:
             raise ValueError("project status accepts at most 20 experiments")
         ordered = tuple(
@@ -267,9 +256,7 @@ class BeginRunCommand:
     attempt: Attempt
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "operation", _validate(self.operation, WriteOperation)
-        )
+        object.__setattr__(self, "operation", _validate(self.operation, WriteOperation))
         experiment = _validate(self.experiment, Experiment)
         attempt = _validate(self.attempt, Attempt)
         _validate_attempt_result_owner(attempt)
@@ -309,9 +296,7 @@ class CompleteAttemptCommand:
     attempt: Attempt
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "operation", _validate(self.operation, WriteOperation)
-        )
+        object.__setattr__(self, "operation", _validate(self.operation, WriteOperation))
         attempt = _validate(self.attempt, Attempt)
         _require_terminal_attempt(attempt)
         object.__setattr__(self, "attempt", attempt)
@@ -343,9 +328,7 @@ class ValidationSource:
             or attempt.result is None
             or attempt.result.result_kind is not ResultKind.SUCCESS
         ):
-            raise ValueError(
-                "validation source requires a successful attempt result"
-            )
+            raise ValueError("validation source requires a successful attempt result")
         object.__setattr__(self, "experiment", experiment)
         object.__setattr__(self, "attempt", attempt)
 
@@ -356,9 +339,7 @@ class BeginValidationCommand:
     validation: Validation
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "operation", _validate(self.operation, WriteOperation)
-        )
+        object.__setattr__(self, "operation", _validate(self.operation, WriteOperation))
         validation = _validate(self.validation, Validation)
         if validation.status is not ValidationStatus.PENDING:
             raise ValueError("begin-validation record must be PENDING")
@@ -374,9 +355,7 @@ class BeginValidationResult:
         validation = _validate(self.validation, Validation)
         replayed = _BOOL.validate_python(self.replayed, strict=True)
         if replayed and validation.status not in _TERMINAL_VALIDATIONS:
-            raise ValueError(
-                "replayed begin-validation result must be terminal"
-            )
+            raise ValueError("replayed begin-validation result must be terminal")
         if not replayed and validation.status is not ValidationStatus.PENDING:
             raise ValueError("new begin-validation result must be PENDING")
         object.__setattr__(self, "validation", validation)
@@ -389,9 +368,7 @@ class CompleteValidationCommand:
     validation: Validation
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "operation", _validate(self.operation, WriteOperation)
-        )
+        object.__setattr__(self, "operation", _validate(self.operation, WriteOperation))
         validation = _validate(self.validation, Validation)
         _require_terminal_validation(validation)
         object.__setattr__(self, "validation", validation)
@@ -414,9 +391,7 @@ class StoreIntegrityReport:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "state", _validate(self.state, ProjectState))
-        object.__setattr__(
-            self, "issues", _validate(self.issues, tuple[str, ...])
-        )
+        object.__setattr__(self, "issues", _validate(self.issues, tuple[str, ...]))
 
 
 class ProjectStoreError(Exception):
@@ -440,9 +415,7 @@ class ProjectStoreError(Exception):
             validated_code != "CONFLICT"
             or decoded.get("conflict_type") not in _RETRYABLE_CONFLICTS
         ):
-            raise ValueError(
-                "only transient persistence conflicts can be retryable"
-            )
+            raise ValueError("only transient persistence conflicts can be retryable")
         super().__init__(validated_message)
         self._code = validated_code
         self._message = validated_message
@@ -475,9 +448,7 @@ class ProjectStore(Protocol):
 
     def get_project_status(self, project_id: str) -> ProjectStatusSnapshot: ...
 
-    def get_experiment_trace(
-        self, query: ExperimentTraceQuery
-    ) -> ExperimentTrace: ...
+    def get_experiment_trace(self, query: ExperimentTraceQuery) -> ExperimentTrace: ...
 
     def get_validation_source(
         self, project_id: str, attempt_id: str
@@ -489,9 +460,7 @@ class ProjectStore(Protocol):
         self, attempt_id: str, started_at: datetime, session_id: str
     ) -> None: ...
 
-    def complete_attempt(
-        self, command: CompleteAttemptCommand
-    ) -> StoredRunResult: ...
+    def complete_attempt(self, command: CompleteAttemptCommand) -> StoredRunResult: ...
 
     def begin_validation(
         self, command: BeginValidationCommand

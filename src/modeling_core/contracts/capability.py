@@ -67,12 +67,8 @@ def _require_resource_limit(
         raise ValueError("resource must be a non-empty string")
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
         raise ValueError("limit must be a non-negative integer")
-    if (
-        isinstance(observed, bool)
-        or (
-            observed is not None
-            and (not isinstance(observed, int) or observed < 0)
-        )
+    if isinstance(observed, bool) or (
+        observed is not None and (not isinstance(observed, int) or observed < 0)
     ):
         raise ValueError("observed must be a non-negative integer or None")
 
@@ -288,9 +284,7 @@ class CapabilityDescriptor(StrictModel):
 
     @field_validator("validator_summary_bytes", mode="before")
     @classmethod
-    def store_immutable_validator_summaries(
-        cls, value: object
-    ) -> tuple[bytes, ...]:
+    def store_immutable_validator_summaries(cls, value: object) -> tuple[bytes, ...]:
         if not isinstance(value, (list, tuple)):
             raise ValueError("validators must be an array")
         result: list[bytes] = []
@@ -340,9 +334,7 @@ class CapabilityDescriptor(StrictModel):
 
     @field_validator("artifact_roles")
     @classmethod
-    def validate_m1a_artifact_roles(
-        cls, value: tuple[str, ...]
-    ) -> tuple[str, ...]:
+    def validate_m1a_artifact_roles(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if value:
             raise ValueError("M1a Built-in Capabilities have no artifact roles")
         return value
@@ -350,9 +342,7 @@ class CapabilityDescriptor(StrictModel):
     @model_validator(mode="after")
     def validate_limits(self) -> CapabilityDescriptor:
         for name in ("timeout_ms", "max_iterations", "max_evaluations"):
-            if getattr(self.default_limits, name) > getattr(
-                self.maximum_limits, name
-            ):
+            if getattr(self.default_limits, name) > getattr(self.maximum_limits, name):
                 raise ValueError(f"default {name} exceeds maximum")
         return self
 
@@ -425,9 +415,7 @@ class CanonicalInputRecord(StrictModel):
     )
 
     canonical_input_schema_version: str
-    canonical_payload_bytes: bytes = Field(
-        alias="canonical_payload", repr=False
-    )
+    canonical_payload_bytes: bytes = Field(alias="canonical_payload", repr=False)
     canonical_payload_hash: Hash
     model_snapshot_hash: Hash
     data_snapshot_reference_bytes: tuple[bytes, ...] = Field(
@@ -501,9 +489,7 @@ class CanonicalInputRecord(StrictModel):
         result: list[bytes] = []
         for item in value:
             if not isinstance(item, dict):
-                raise ValueError(
-                    "data snapshot reference must be a JSON object"
-                )
+                raise ValueError("data snapshot reference must be a JSON object")
             result.append(canonical_json_bytes(cast(JsonObject, item)))
         return tuple(result)
 
@@ -511,9 +497,7 @@ class CanonicalInputRecord(StrictModel):
     def serialize_data_snapshot_references(
         self, value: tuple[bytes, ...]
     ) -> list[JsonObject]:
-        return [
-            cast(JsonObject, strict_json_loads(item)) for item in value
-        ]
+        return [cast(JsonObject, strict_json_loads(item)) for item in value]
 
 
 class ExecutionOutcome(StrictModel):

@@ -175,14 +175,12 @@ def test_facade_has_exactly_six_concrete_contract_methods() -> None:
         assert "request" in inspect.signature(method).parameters
 
 
-def test_capability_control_errors_are_host_neutral_without_reversing_dependencies() -> None:
+def test_capability_control_errors_are_host_neutral_without_reversing_dependencies() -> (
+    None
+):
     assert issubclass(EvaluationCancelled, ExecutionCancelled)
-    assert issubclass(
-        EvaluationDeadlineExceeded, ExecutionDeadlineExceeded
-    )
-    assert issubclass(
-        EvaluationBudgetExceeded, ExecutionResourceLimitExceeded
-    )
+    assert issubclass(EvaluationDeadlineExceeded, ExecutionDeadlineExceeded)
+    assert issubclass(EvaluationBudgetExceeded, ExecutionResourceLimitExceeded)
 
     error = EvaluationBudgetExceeded("function_evaluations", 2)
     assert error.resource == "function_evaluations"

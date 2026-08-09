@@ -18,9 +18,7 @@ class ToolAdapter(Protocol):
 
     def list_tools(self) -> list[Tool]: ...
 
-    def call_tool(
-        self, name: str, arguments: dict[str, Any]
-    ) -> CallToolResult: ...
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> CallToolResult: ...
 
 
 def configure_mcp_server(adapter: ToolAdapter, server: object) -> None:
@@ -39,9 +37,7 @@ def configure_mcp_server(adapter: ToolAdapter, server: object) -> None:
         return adapter.call_tool(name, arguments)
 
 
-async def run_mcp_server(
-    server: object, max_request_bytes: int = 1048576
-) -> None:
+async def run_mcp_server(server: object, max_request_bytes: int = 1048576) -> None:
     """Run an already-configured SDK server on the strict STDIO transport."""
     sdk_server = cast(Any, server)
     initialization_options = sdk_server.create_initialization_options(

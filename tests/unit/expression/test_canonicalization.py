@@ -127,9 +127,7 @@ def test_canonical_root_has_exactly_eight_fields_and_no_raw_expression() -> None
 def test_normalized_record_reconstructs_and_evaluates_without_raw_text() -> None:
     record = normalize_root_finding_input(_raw_payload("x*x-2"))
     assert "expression" not in record.canonical_payload
-    expression_ast = cast(
-        JsonObject, record.canonical_payload["expression_ast"]
-    )
+    expression_ast = cast(JsonObject, record.canonical_payload["expression_ast"])
 
     reconstructed = ast_from_canonical_json(expression_ast)
     value = SolverEvaluator().evaluate(
@@ -159,15 +157,11 @@ def test_negative_zero_is_numeric_zero_everywhere() -> None:
     assert left == {"kind": "number", "value": 0.0}
     assert record.canonical_payload["lower"] == 0.0
     assert math.copysign(1.0, cast(float, left["value"])) == 1.0
-    assert math.copysign(
-        1.0, cast(float, record.canonical_payload["lower"])
-    ) == 1.0
+    assert math.copysign(1.0, cast(float, record.canonical_payload["lower"])) == 1.0
 
 
 def test_nfc_equivalent_strings_hash_identically() -> None:
-    assert sha256_json({"label": "\u00e9"}) == sha256_json(
-        {"label": "e\u0301"}
-    )
+    assert sha256_json({"label": "\u00e9"}) == sha256_json({"label": "e\u0301"})
 
 
 def test_schema_integer_stays_integer_and_schema_numbers_become_binary64() -> None:
@@ -345,10 +339,7 @@ def _balanced_sum(leaf_count: int) -> str:
     if leaf_count == 1:
         return "x"
     left_count = leaf_count // 2
-    return (
-        f"({_balanced_sum(left_count)}"
-        f"+{_balanced_sum(leaf_count - left_count)})"
-    )
+    return f"({_balanced_sum(left_count)}+{_balanced_sum(leaf_count - left_count)})"
 
 
 @pytest.mark.parametrize(
@@ -398,6 +389,4 @@ def test_input_and_canonical_schemas_are_strict_draft_2020_12_contracts() -> Non
 
     invalid_canonical = dict(canonical)
     invalid_canonical["expression"] = "x*x-2"
-    assert list(
-        Draft202012Validator(canonical_schema).iter_errors(invalid_canonical)
-    )
+    assert list(Draft202012Validator(canonical_schema).iter_errors(invalid_canonical))

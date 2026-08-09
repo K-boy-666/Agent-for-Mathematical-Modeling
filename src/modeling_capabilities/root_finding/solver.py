@@ -44,9 +44,7 @@ def _check_control(context: ExecutionContext) -> None:
     if context.cancellation.is_cancelled():
         raise EvaluationCancelled("root-finding execution cancelled")
     if context.clock.monotonic() >= context.deadline:
-        raise EvaluationDeadlineExceeded(
-            "root-finding execution deadline exceeded"
-        )
+        raise EvaluationDeadlineExceeded("root-finding execution deadline exceeded")
 
 
 def _success(
@@ -108,9 +106,7 @@ def _different_signs(left: float, right: float) -> bool:
     return math.copysign(1.0, left) != math.copysign(1.0, right)
 
 
-def _midpoint_and_half_width(
-    lower: float, upper: float
-) -> tuple[float, float]:
+def _midpoint_and_half_width(lower: float, upper: float) -> tuple[float, float]:
     if _different_signs(lower, upper):
         return lower / 2.0 + upper / 2.0, upper / 2.0 - lower / 2.0
     difference = upper - lower
@@ -128,9 +124,7 @@ class BisectionRootFindingCapability:
     def descriptor(self) -> CapabilityDescriptor:
         return self._descriptor
 
-    def normalize_and_validate(
-        self, raw_payload: JsonObject
-    ) -> CanonicalInputRecord:
+    def normalize_and_validate(self, raw_payload: JsonObject) -> CanonicalInputRecord:
         return normalize_root_finding_input(raw_payload)
 
     def execute(
@@ -150,9 +144,7 @@ class BisectionRootFindingCapability:
         typed = CanonicalRootFindingInput.model_validate(
             canonical_input.canonical_payload
         )
-        ast_document = cast(
-            JsonObject, typed.expression_ast.model_dump(mode="json")
-        )
+        ast_document = cast(JsonObject, typed.expression_ast.model_dump(mode="json"))
         ast = ast_from_canonical_json(ast_document)
         budget = EvaluationBudget(
             deadline=context.deadline,
@@ -233,9 +225,7 @@ class BisectionRootFindingCapability:
             _check_control(context)
             iterations += 1
             try:
-                midpoint_value = self._evaluator.evaluate(
-                    ast, midpoint, budget
-                )
+                midpoint_value = self._evaluator.evaluate(ast, midpoint, budget)
             except EvaluationDomainError:
                 return _failure(
                     context,
