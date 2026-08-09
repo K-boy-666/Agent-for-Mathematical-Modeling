@@ -191,7 +191,7 @@ class HealthCheckResult(CommonResult):
     versions: HealthVersions
     registry: RegistrySummary
     checks: tuple[HealthCheck, ...]
-    warnings: tuple[Warning, ...]
+    warnings: Annotated[tuple[Warning, ...], Field(max_length=50)]
 
 
 class CreateProjectResult(CommonWriteResult):
@@ -415,7 +415,7 @@ class AttemptTrace(StrictModel):
     created_at: Timestamp
     started_at: Timestamp | None
     finished_at: Timestamp | None
-    warnings: tuple[Warning, ...]
+    warnings: Annotated[tuple[Warning, ...], Field(max_length=50)]
     result: ResultTrace | None
     system_error: ErrorResponse | None
     numerical_failure: NumericalFailureData | None
@@ -757,7 +757,7 @@ class RunResultBase(CommonWriteResult):
     implementation_version: str
     randomness: str
     seed: int | None
-    warnings: tuple[Warning, ...]
+    warnings: Annotated[tuple[Warning, ...], Field(max_length=50)]
 
 
 class RunExperimentSucceededResult(RunResultBase):

@@ -182,7 +182,7 @@
         "created_at": {"$ref": "#/$defs/timestamp"},
         "started_at": {"oneOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]},
         "finished_at": {"oneOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]},
-        "warnings": {"type": "array", "items": {"$ref": "#/$defs/warning"}},
+        "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}},
         "result": {"oneOf": [{"$ref": "#/$defs/resultSuccessTrace"}, {"$ref": "#/$defs/resultFailureTrace"}, {"type": "null"}]},
         "system_error": {"oneOf": [{"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json"}, {"type": "null"}]},
         "numerical_failure": {"oneOf": [{"$ref": "#/$defs/failureData"}, {"type": "null"}]},

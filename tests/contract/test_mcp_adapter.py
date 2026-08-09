@@ -160,7 +160,7 @@ def test_advertisement_preserves_packaged_schemas_and_catalog_fingerprint(
     original_tool_schemas = copy.deepcopy(catalog.tool_schemas)
     original_common_schemas = copy.deepcopy(catalog.common_schemas)
     expected_fingerprint = (
-        "sha256:03fd72b112c695f9cffd7c713fc8201cd9fa1da5cda4d9426b0711729bc9ab5f"
+        "sha256:b5f4f432df459ba103334f099796d8ef0b74e311921abacf6f84ea43bc2c2f6a"
     )
     monkeypatch.setattr(
         SchemaCatalog,

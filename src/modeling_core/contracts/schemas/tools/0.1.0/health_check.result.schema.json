@@ -43,7 +43,7 @@
         "properties": {"name": {"type": "string"}, "status": {"enum": ["OK", "WARN", "FAIL"]}, "code": {"type": "string"}}
       }
     },
-    "warnings": {"type": "array", "items": {"$ref": "#/$defs/warning"}}
+    "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}
   },
   "$defs": {
     "warning": {
