@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import io
 import importlib.util
 import json
@@ -11,6 +13,11 @@ from unittest.mock import Mock
 
 import anyio
 import pytest
+from jsonschema import (  # type: ignore[import-untyped]
+    Draft202012Validator,
+    ValidationError,
+    validate,
+)
 from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from mcp.shared.message import SessionMessage
@@ -45,6 +52,7 @@ from modeling_core.contracts.tools import (
     ValidateExperimentRequest,
     ValidateExperimentResult,
 )
+from modeling_mcp import adapter as adapter_module
 from modeling_mcp.adapter import ModelingMcpAdapter
 from modeling_mcp.server import (
     APPLICATION_VERSION,
@@ -63,6 +71,25 @@ def _corpus_instance(tool: str, kind: str, label: str) -> dict[str, object]:
         for case in cases
         if case["kind"] == kind and case["label"] == label
     )
+
+
+def _corpus_cases(tool: str, kind: str) -> list[dict[str, object]]:
+    cases = json.loads((CORPUS_ROOT / f"{tool}.json").read_text(encoding="utf-8"))
+    return [case for case in cases if case["kind"] == kind]
+
+
+def _schema_references(value: object) -> list[str]:
+    references: list[str] = []
+    if isinstance(value, dict):
+        reference = value.get("$ref")
+        if isinstance(reference, str):
+            references.append(reference)
+        for nested in value.values():
+            references.extend(_schema_references(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            references.extend(_schema_references(nested))
+    return references
 
 
 def _call_through_low_level_sdk(
@@ -95,13 +122,117 @@ def test_tools_list_exposes_exactly_the_six_approved_names_in_order() -> None:
     assert tuple(tool.name for tool in adapter.list_tools()) == TOOL_NAMES
 
 
-def test_tool_request_and_result_schemas_equal_the_packaged_contracts() -> None:
+def test_advertised_request_and_result_schemas_are_offline_self_contained() -> None:
     catalog = SchemaCatalog.load_packaged()
     adapter = ModelingMcpAdapter(cast(ApplicationFacade, object()))
 
     for tool in adapter.list_tools():
-        assert tool.inputSchema == catalog.for_tool(tool.name, "request")
-        assert tool.outputSchema == catalog.for_tool(tool.name, "result")
+        for kind, schema in (
+            ("request", tool.inputSchema),
+            ("result", tool.outputSchema),
+        ):
+            assert schema is not None
+            canonical_schema = catalog.for_tool(tool.name, kind)
+            assert schema["$schema"] == canonical_schema["$schema"]
+            assert schema["$id"] == canonical_schema["$id"]
+            Draft202012Validator.check_schema(schema)
+            assert all(
+                reference.startswith("#")
+                for reference in _schema_references(schema)
+            ), f"{tool.name}.{kind} contains a non-local reference"
+
+            canonical_validator = catalog.validator(tool.name, kind)
+            for case in _corpus_cases(tool.name, kind):
+                instance = case["instance"]
+                if case["valid"]:
+                    canonical_validator.validate(instance)
+                    validate(instance, schema)
+                else:
+                    with pytest.raises(ValidationError):
+                        canonical_validator.validate(instance)
+                    with pytest.raises(ValidationError):
+                        validate(instance, schema)
+
+
+def test_advertisement_preserves_packaged_schemas_and_catalog_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = SchemaCatalog.load_packaged()
+    original_tool_schemas = copy.deepcopy(catalog.tool_schemas)
+    original_common_schemas = copy.deepcopy(catalog.common_schemas)
+    expected_fingerprint = (
+        "sha256:03fd72b112c695f9cffd7c713fc8201cd9fa1da5cda4d9426b0711729bc9ab5f"
+    )
+    monkeypatch.setattr(
+        SchemaCatalog,
+        "load_packaged",
+        classmethod(lambda _cls, _version="0.1.0": catalog),
+    )
+
+    ModelingMcpAdapter(cast(ApplicationFacade, object()))
+
+    assert catalog.fingerprint == expected_fingerprint
+    assert catalog.tool_schemas == original_tool_schemas
+    assert catalog.common_schemas == original_common_schemas
+
+
+def test_advertised_schema_bundler_preserves_existing_namespace_on_collision() -> (
+    None
+):
+    common_uri = (
+        "https://schemas.math-modeling-mcp.local/common/0.1.0/"
+        "modeling-error.schema.json"
+    )
+    preferred_key = "__mcp_external_" + hashlib.sha256(
+        common_uri.encode("utf-8")
+    ).hexdigest()
+    root = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://schemas.math-modeling-mcp.local/test/collision.schema.json",
+        "type": "object",
+        "required": ["entity_id"],
+        "properties": {
+            "entity_id": {"$ref": f"{common_uri}#/$defs/entityId"},
+        },
+        "$defs": {preferred_key: {"const": "sentinel"}},
+    }
+    resources = SchemaCatalog.load_packaged().common_schemas
+    bundle = adapter_module._self_contained_advertised_schema(root, resources)
+
+    assert bundle["$defs"][preferred_key] == {"const": "sentinel"}
+    assert preferred_key + "_1" in bundle["$defs"]
+    validate(
+        {"entity_id": "123e4567-e89b-42d3-a456-426614174000"},
+        bundle,
+    )
+    with pytest.raises(ValidationError):
+        validate({"entity_id": "not-a-uuid"}, bundle)
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "https://schemas.math-modeling-mcp.local/unknown.schema.json#/$defs/id",
+        (
+            "https://schemas.math-modeling-mcp.local/common/0.1.0/"
+            "modeling-error.schema.json#named-anchor"
+        ),
+    ],
+)
+def test_advertised_schema_bundler_rejects_unresolvable_references(
+    reference: str,
+) -> None:
+    root = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://schemas.math-modeling-mcp.local/test/invalid-ref.schema.json",
+        "$ref": reference,
+    }
+
+    with pytest.raises(ValueError, match="advertised schema reference"):
+        adapter_module._self_contained_advertised_schema(
+            root,
+            SchemaCatalog.load_packaged().common_schemas,
+        )
 
 
 def test_modeling_mcp_is_in_the_locked_editable_wheel_configuration() -> None:

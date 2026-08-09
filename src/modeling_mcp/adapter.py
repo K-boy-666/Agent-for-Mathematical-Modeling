@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Literal, cast
+from urllib.parse import urldefrag, urljoin
 
 from jsonschema import (  # type: ignore[import-untyped]
+    Draft202012Validator,
     ValidationError as JsonSchemaValidationError,
 )
 from mcp.types import CallToolResult, TextContent, Tool
@@ -20,6 +24,7 @@ from modeling_core.contracts.errors import (
     ModelingError,
     ResourceLimitExceededDetails,
 )
+from modeling_core.contracts.common import JsonObject
 from modeling_core.contracts.schema_catalog import SchemaCatalog
 from modeling_core.contracts.tools import (
     TOOL_NAMES,
@@ -42,6 +47,7 @@ InvalidRequestReason = Literal[
     "invalid_combination",
 ]
 INLINE_RESPONSE_MAX_BYTES = 262144
+_EXTERNAL_SCHEMA_PREFIX = "__mcp_external_"
 
 _GET_PROJECT_STATUS_REQUEST: TypeAdapter[GetProjectStatusRequest] = TypeAdapter(
     GetProjectStatusRequest
@@ -58,6 +64,128 @@ def _compact_json(value: object) -> str:
         allow_nan=False,
         separators=(",", ":"),
     )
+
+
+def _schema_references(value: object) -> list[str]:
+    references: list[str] = []
+    if isinstance(value, dict):
+        reference = value.get("$ref")
+        if reference is not None:
+            if not isinstance(reference, str):
+                raise ValueError("advertised schema reference must be a string")
+            references.append(reference)
+        for nested in value.values():
+            references.extend(_schema_references(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            references.extend(_schema_references(nested))
+    return references
+
+
+def _reference_target(reference: str, base_uri: str) -> tuple[str, str]:
+    document_uri, fragment = urldefrag(urljoin(base_uri, reference))
+    if fragment and not fragment.startswith("/"):
+        raise ValueError(
+            "advertised schema reference uses a non-JSON-Pointer fragment"
+        )
+    return document_uri, fragment
+
+
+def _self_contained_advertised_schema(
+    schema: JsonObject,
+    resources: Mapping[str, JsonObject],
+) -> JsonObject:
+    """Deep-copy and bundle locally registered resources for MCP clients."""
+    bundled = copy.deepcopy(schema)
+    root_uri_value = bundled.get("$id", "")
+    if not isinstance(root_uri_value, str):
+        raise ValueError("advertised schema $id must be a string")
+    root_uri = root_uri_value
+
+    discovered: set[str] = set()
+    pending: set[str] = set()
+
+    def discover(document: JsonObject, base_uri: str) -> None:
+        for reference in _schema_references(document):
+            target_uri, _ = _reference_target(reference, base_uri)
+            if target_uri in {"", base_uri, root_uri}:
+                continue
+            if target_uri not in resources:
+                raise ValueError(
+                    f"advertised schema reference has unknown resource: {target_uri}"
+                )
+            if target_uri not in discovered:
+                pending.add(target_uri)
+
+    discover(bundled, root_uri)
+    while pending:
+        resource_uri = min(pending)
+        pending.remove(resource_uri)
+        if resource_uri in discovered:
+            continue
+        discovered.add(resource_uri)
+        discover(resources[resource_uri], resource_uri)
+
+    existing_defs = bundled.get("$defs")
+    if existing_defs is not None and not isinstance(existing_defs, dict):
+        raise ValueError("advertised schema $defs must be an object")
+    occupied = set(existing_defs or {})
+    resource_keys: dict[str, str] = {}
+    for resource_uri in sorted(discovered):
+        preferred = _EXTERNAL_SCHEMA_PREFIX + hashlib.sha256(
+            resource_uri.encode("utf-8")
+        ).hexdigest()
+        resource_key = preferred
+        suffix = 1
+        while resource_key in occupied:
+            resource_key = f"{preferred}_{suffix}"
+            suffix += 1
+        occupied.add(resource_key)
+        resource_keys[resource_uri] = resource_key
+
+    def rewrite(value: object, base_uri: str) -> object:
+        if isinstance(value, dict):
+            rewritten: dict[str, object] = {}
+            for key, nested in value.items():
+                if key != "$ref":
+                    rewritten[key] = rewrite(nested, base_uri)
+                    continue
+                if not isinstance(nested, str):
+                    raise ValueError("advertised schema reference must be a string")
+                target_uri, fragment = _reference_target(nested, base_uri)
+                if target_uri in {"", root_uri}:
+                    prefix = "#"
+                else:
+                    resource_key = resource_keys.get(target_uri)
+                    if resource_key is None:
+                        raise ValueError(
+                            "advertised schema reference has unknown resource: "
+                            f"{target_uri}"
+                        )
+                    prefix = f"#/$defs/{resource_key}"
+                rewritten[key] = prefix + fragment
+            return rewritten
+        if isinstance(value, list):
+            return [rewrite(nested, base_uri) for nested in value]
+        return value
+
+    rewritten_root = cast(JsonObject, rewrite(bundled, root_uri))
+    if resource_keys:
+        root_defs = rewritten_root.setdefault("$defs", {})
+        if not isinstance(root_defs, dict):
+            raise ValueError("advertised schema $defs must be an object")
+        for resource_uri in sorted(resource_keys):
+            resource = copy.deepcopy(resources[resource_uri])
+            resource.pop("$id", None)
+            root_defs[resource_keys[resource_uri]] = rewrite(resource, resource_uri)
+
+    Draft202012Validator.check_schema(rewritten_root)
+    if any(
+        not reference.startswith("#")
+        for reference in _schema_references(rewritten_root)
+    ):
+        raise ValueError("advertised schema reference is not document-local")
+    return rewritten_root
 
 
 def _json_pointer(parts: list[object]) -> str:
@@ -218,8 +346,14 @@ class ModelingMcpAdapter:
         self._tools = tuple(
             Tool(
                 name=name,
-                inputSchema=self._catalog.for_tool(name, "request"),
-                outputSchema=self._catalog.for_tool(name, "result"),
+                inputSchema=_self_contained_advertised_schema(
+                    self._catalog.for_tool(name, "request"),
+                    self._catalog.common_schemas,
+                ),
+                outputSchema=_self_contained_advertised_schema(
+                    self._catalog.for_tool(name, "result"),
+                    self._catalog.common_schemas,
+                ),
             )
             for name in TOOL_NAMES
         )

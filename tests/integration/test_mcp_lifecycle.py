@@ -5,6 +5,7 @@ import multiprocessing
 import sqlite3
 import sys
 import threading
+import urllib.request
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
@@ -40,6 +41,44 @@ from modeling_infrastructure.storage import (
     bootstrap_storage,
     load_storage_metadata,
 )
+
+
+def test_official_client_validates_advertised_health_schema_offline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches advertised output schemas requiring remote resolution."""
+
+    def reject_remote_schema_retrieval(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("advertised schema attempted remote retrieval")
+
+    monkeypatch.setattr(urllib.request, "urlopen", reject_remote_schema_retrieval)
+
+    async def exercise_process() -> None:
+        parameters = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "modeling_mcp", "--project-root", str(tmp_path)],
+            env={"UV_OFFLINE": "1"},
+        )
+        async with stdio_client(parameters) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+                assert tuple(tool.name for tool in tools.tools) == (
+                    "health_check",
+                    "create_project",
+                    "get_project_status",
+                    "list_capabilities",
+                    "run_experiment",
+                    "validate_experiment",
+                )
+                result = await session.call_tool("health_check", arguments={})
+                assert result.isError is False
+                assert result.structuredContent is not None
+                assert result.structuredContent["status"] == "OK"
+                assert result.structuredContent["project_state"] == "UNINITIALIZED"
+
+    asyncio.run(exercise_process())
 
 
 def _tree_snapshot(root: Path) -> tuple[tuple[str, str, bytes | None], ...]:
