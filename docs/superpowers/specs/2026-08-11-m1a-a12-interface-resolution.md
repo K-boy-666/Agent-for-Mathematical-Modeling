@@ -129,6 +129,29 @@ offline; design rationale may cite SQLite's official
 [WAL index/concurrency model](https://sqlite.org/wal.html), and
 [URI immutable warning](https://sqlite.org/uri.html).
 
+**Binding Windows probe correction (2026-08-11):** this paragraph supersedes
+every later phrase that permits SQLite to open the copied raw DB or WAL
+read/write. A Windows `CreateFileW` probe established that one raw handle
+cannot simultaneously allow SQLite's read/write checkpoint open and exclude
+an arbitrary second raw writer. A12.1 must instead hold copied
+`state.sqlite3`, an always-present owned-input `state.sqlite3-wal`, and an
+always-present zero-byte owned-input `state.sqlite3-shm` sentinel with
+`GENERIC_READ` plus `FILE_SHARE_READ` only, open that input through SQLite URI
+`mode=ro`, enable and verify connection-local `query_only`, and use
+`sqlite3.Connection.backup` to a distinct normalized output database. If the
+source WAL exists, the owned-input WAL is its verified copy. If source WAL is
+absent, the owned-input WAL is a newly created zero-byte sentinel with bound
+identity, size zero, and SHA-256 of empty bytes. The owned-input SHM is always a
+separately bound zero-byte SHA(empty) sentinel; no source SHM is copied. All
+three DB/WAL/SHM guards bind immediately before SQLite input open and remain
+held until after the input connection closes and their complete identities,
+sizes, and hashes are rechecked. Normal `mode=ro`/`query_only` then uses a
+private heap WAL-index, preserves committed copied-WAL state, and cannot mutate
+the guarded SHM name. This closes both absent-name and writable-WAL-index races;
+an absence recheck or SQLite-created input member is forbidden. Only the
+distinct normalized output may be opened read/write or checkpointed. Source
+files remain outside all SQLite calls.
+
 `diagnostic_snapshot.py` owns the complete executable failure interface:
 
 ```python
@@ -165,11 +188,11 @@ exception-chained internally. Expected classification is exhaustive:
 
 | code | conditions |
 | --- | --- |
-| `snapshot_unstable` | A/B name, presence, identity, size, mtime, persistent hash, or destination-copy mismatch |
-| `snapshot_invalid` | unsafe shape/type/reparse, invalid persistent DB/WAL bytes, non-I/O SQLite format/open semantics, checkpoint tuple/semantics, or exact-layout failure |
-| `snapshot_resource_limit` | source/destination byte bound, cooperative deadline, WAL logical growth, or ENOSPC |
-| `snapshot_unavailable` | permission, sharing, device, or other I/O denial prevents proof without proving invalid bytes |
-| `snapshot_cleanup_failed` | owned staging/snapshot/deep root cannot be fully removed; this supersedes any pending success or other failure |
+| `snapshot_unstable` | A/B name, presence, identity, size, mtime, persistent hash, raw-input DB/WAL/SHM-sentinel post-backup identity/size/hash drift, or destination-copy mismatch |
+| `snapshot_invalid` | unsafe shape/type/reparse/link state, nonempty or wrongly hashed synthetic WAL/SHM sentinel, invalid persistent DB/WAL bytes, non-I/O read-only-open/backup/output-checkpoint semantics, checkpoint tuple/semantics, or exact-layout failure |
+| `snapshot_resource_limit` | source/destination/sidecar/peak byte bound, backup progress bound, cooperative deadline, WAL logical growth, SQLITE_FULL, or ENOSPC |
+| `snapshot_unavailable` | permission, sharing, device, guarded input/WAL-or-SHM-sentinel create/open, backup I/O/BUSY/LOCKED/CANTOPEN/IOERR/PERM, or other I/O denial prevents proof without proving invalid bytes |
+| `snapshot_cleanup_failed` | owned WAL/SHM sentinel, input/staging/snapshot/deep root cannot be identity-bound and fully removed; this supersedes any pending success or other failure |
 
 `run_doctor` separately maps an unexpected non-`DiagnosticSnapshotError`
 exception to fixed redacted `storage-integrity/check_error` UNSAFE/2. The
@@ -220,63 +243,174 @@ prove exact before/after source bytes and members; an active-writer fixture
 does not compare SHM hashes and accepts only a verified stable DB+WAL snapshot
 or finite `snapshot_unstable`/`snapshot_unavailable`.
 
-Raw-source limits are fixed: `project.json` 64 KiB, source lock metadata size
-`1..64 B`, `state.sqlite3` 64 MiB, WAL 64 MiB, total copied bytes 128 MiB, and
-1 MiB copy/hash chunks. Owned main DB is capped at 128 MiB: after SQLite open,
-query exact single-integer `page_size` and `page_count`, require logical size
-within the cap, set `max_page_count=floor(128 MiB/page_size)`, and require the
-returned maximum equals that ceiling. After checkpoint and close, also require
-the physical `state.sqlite3` size at most 128 MiB. Peak owned `.modeling` bytes are
-capped at 256 MiB, counting DB, WAL, SHM, lock, JSON, and staging entries;
-check after raw copy, SQLite open, checkpoint, close, and publication.
+Raw-source limits remain fixed: `project.json` 64 KiB, source lock metadata
+size `1..64 B`, `state.sqlite3` 64 MiB, WAL 64 MiB, total copied persistent
+bytes 128 MiB, and 1 MiB copy/hash chunks. The owned raw input is
+`owned_root/.modeling.input/` and contains only `project.json`,
+`state.sqlite3`, required `state.sqlite3-wal`, and required zero-byte
+`state.sqlite3-shm`. The required owned-input WAL is either the verified source
+WAL copy or the zero-byte synthetic sentinel; both synthetic sentinel forms
+have SHA-256 exactly
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+Owned-input persistent bytes, including either WAL form, are capped by the
+128 MiB copy limit; the zero-byte sentinel does not increase that literal byte
+sum, and the guarded SHM sentinel has a zero-byte cap. No SQLite-created input
+member is allowed. The distinct normalized output is
+`owned_root/.modeling.staging/`; its main DB is capped at 134,217,728 B, its WAL
+at 140,509,216 B, its SHM at 16,777,216 B, its copied `project.json` at
+65,536 B, and its fresh `project.lock` metadata at 64 B.
 
-One 10-second monotonic budget is cooperative, not a hard timeout. Check it
-before and after every manifest/enumeration/copy phase and chunk, and every
-blocking SQLite open, PRAGMA, checkpoint, close, and publication phase. A blocking call may overrun before the after-check
-classifies `snapshot_resource_limit`; hard interruption is deferred to a worker
-boundary. Cleanup is never skipped because the deadline elapsed. ENOSPC,
-source/destination bound excess, logical-size excess, or peak-tree excess is
-`snapshot_resource_limit`.
-
-Only inside owned staging `project_root/.modeling/`, transport normalization is
-exact:
+Peak owned bytes have one literal limit, not a dynamically derived or
+filesystem-dependent allowance:
 
 ```text
-create fresh project.lock = b"\0"
--> open only copied state.sqlite3 + optional WAL read/write in owned temp
--> require PRAGMA journal_mode == wal
--> enforce page_size/page_count/max_page_count and owned-tree limits
--> PRAGMA wal_checkpoint(TRUNCATE)
--> require exactly one three-integer row, busy == 0, log == checkpointed
--> close SQLite in finally
--> enforce main-DB/tree limits
--> require no WAL/SHM and exact project.json/state.sqlite3/project.lock layout
--> publish owned snapshot root and recheck the tree limit
+raw persistent input                         134,217,728 B
+guarded input SHM sentinel                             0 B
+normalized output main DB                    134,217,728 B
+normalized output WAL                        140,509,216 B
+normalized output SHM                         16,777,216 B
+normalized project.json + project.lock            65,600 B
+----------------------------------------------------------------
+literal owned peak                           425,787,488 B
 ```
 
-Consolidation must not execute `quick_check`, `integrity_check`,
-`foreign_key_check`, or any legacy query. After composition binds the published
-copy, `SQLiteProjectStore.inspect_integrity(deep)` exclusively executes the
-selected quick/integrity check, foreign-key check, and each legacy query under
-sections 2.1-2.2. A checkpointable logical integrity/FK finding therefore
-reaches Store/doctor diagnostics and is not `snapshot_invalid`; only an
-unopenable/incompatible DB-WAL or open/checkpoint/layout semantic failure is.
+The output-WAL limit includes the worst accepted 512-byte-page database:
+`32 + 262,144 * (512 + 24) = 140,509,216 B`. The largest 256-page first backup
+write is `32 + 256 * (65,536 + 24) = 16,783,392 B`, which that same literal cap
+covers before the first progress callback can reject. The implementation checks
+the fixed 425,787,488-byte peak plus main/WAL/SHM sublimits after raw copy,
+read-only input open, every backup progress callback and blocking phase, backup
+completion, every normalized-output PRAGMA, both connection closes, sentinel
+deletion, raw-input removal, and publication. It enumerates only the literal root/input/output allowlists
+with bounded streaming iteration; it never uses an unbounded recursive walk,
+dynamic member count, or a limit calculated from observed files.
 
-Do not switch to DELETE journal mode or manually unlink nonempty WAL. All
-handles close and owned cleanup runs in `finally`. If cleanup succeeds, raise
-the pending finite primary code; if cleanup fails, discard any computed READY
+One 10-second monotonic budget is cooperative, not a hard timeout. Check it
+before and after every manifest/enumeration/copy phase and chunk, raw-guard
+acquisition, SQLite input/output open, allowed PRAGMA, backup callback, close,
+raw-input removal, and publication phase. `Connection.backup` uses exactly
+`pages=256`, `sleep=0.0`, and a progress callback capped at 1,025 invocations;
+the callback checks deadline, status, remaining/total page values, normalized
+logical-size and peak-byte limits. Successful callback grammar is exactly
+`SQLITE_OK* -> exactly one terminal SQLITE_DONE`; DONE-only is valid, DONE
+requires `remaining == 0`, and no callback may follow DONE. `total` is fixed
+from the first callback even when it is DONE, every tuple must satisfy
+`0 <= remaining <= total`, and `remaining` is monotonically non-increasing.
+Status must be an integer whose SQLite primary family (`status & 0xff`) is in
+this finite map: OK(0)/DONE(101) are grammar; BUSY(5), LOCKED(6), CANTOPEN(14),
+IOERR(10), and PERM(3), including their extended families, are immediate
+`snapshot_unavailable`; FULL(13), NOMEM(7), and deadline are
+`snapshot_resource_limit`; READONLY(8), NOTADB(26), CORRUPT(11), FORMAT(24),
+page-size mismatch, an unknown family, or an impossible progress tuple are
+`snapshot_invalid`. Raw identity/hash drift remains `snapshot_unstable`, and
+owned cleanup failure overrides all as `snapshot_cleanup_failed`. A callback
+count above 1,025 or total pages above the 128 MiB logical cap using the
+validated raw SQLite-header page size is `snapshot_resource_limit`. No raw
+SQLite text renders. No busy retry loop or dynamic sleep is allowed. A blocking
+call may overrun before its after-check classifies
+`snapshot_resource_limit`; hard interruption is deferred to a worker boundary.
+Cleanup is never skipped because the deadline elapsed.
+
+Transport normalization is exact:
+
+```text
+create .modeling.input and .modeling.staging under the owned root
+-> copy and verify raw project.json + DB into .modeling.input
+-> if source WAL exists, copy/hash it; otherwise atomically create the 0-byte
+   state.sqlite3-wal sentinel and bind its identity/size/SHA(empty)
+-> atomically create state.sqlite3-shm as a distinct 0-byte SHA(empty)
+   sentinel; never copy source SHM
+-> create normalized project.lock = b"\0" and verified project.json copy
+-> immediately bind raw DB, the always-present WAL form, and the always-present
+   SHM sentinel with GENERIC_READ + FILE_SHARE_READ only
+-> open raw DB with URI mode=ro; execute query_only=ON and require query_only=1
+-> create only the distinct normalized state.sqlite3 read/write
+-> before WAL mode, set normalized page_size to the validated raw-header page
+   size and query it back for exact equality
+-> set normalized journal_mode=WAL; before backup, set and verify
+   max_page_count=floor(134,217,728/page_size), require output WAL absent, and
+   enforce fixed main/WAL/SHM/peak bounds
+-> Connection.backup(raw_input, normalized_output, pages=256, sleep=0.0,
+   bounded progress callback)
+-> close raw SQLite in finally; revalidate raw handle identities/link counts,
+   sizes, mtimes, and full DB/WAL/SHM-sentinel SHA-256; then release raw guards
+-> for always-synthetic SHM and synthetic WAL when applicable, reopen only each
+   same identity under a bounded DELETE/no-share-delete handle, require size
+   0/SHA(empty)/link-count 1, and delete-on-close; replacement or mutation fails
+   closed
+-> require normalized journal_mode == wal and enforce page/max-page limits
+-> PRAGMA wal_checkpoint(TRUNCATE) on normalized output only
+-> require exactly one three-integer row, busy == 0, log == checkpointed
+-> close normalized SQLite in finally and bind its final identity/size/hash
+-> safely remove .modeling.input before publication
+-> require no WAL/SHM and exact project.json/state.sqlite3/project.lock output
+-> rename .modeling.staging to .modeling and revalidate through publication
+```
+
+The input SQL allowlist is exactly `PRAGMA query_only=ON` and
+`PRAGMA query_only`; the latter must return one integer row `(1,)`. The
+normalized-output SQL allowlist is exactly
+`PRAGMA page_size=<validated raw-header decimal page size>`,
+`PRAGMA page_size`, `PRAGMA journal_mode=WAL`, `PRAGMA journal_mode`,
+`PRAGMA page_count`, `PRAGMA max_page_count=<validated decimal ceiling>`,
+`PRAGMA max_page_count`, and
+`PRAGMA wal_checkpoint(TRUNCATE)`. The page-size setter and exact query-back
+must occur on the fresh normalized DB before `journal_mode=WAL`; the accepted
+raw-header value is a SQLite-valid power of two from 512 through 65,536 bytes,
+including the header encoding for 65,536, and output must equal it before
+backup. Before backup, the max-page setter and query-back must both equal
+`floor(134,217,728 / page_size)` and output WAL must be absent. These ordering
+requirements prevent the first backup step from crossing an unchecked logical
+or sidecar bound. `Connection.backup` is the only permitted cross-connection copy
+operation. Normalization must not execute `quick_check`, `integrity_check`,
+`foreign_key_check`, any legacy query, DML, DDL, VACUUM, ATTACH, or a
+source-side checkpoint. No input-side SQLite-created member may appear. Copied
+DB/WAL bytes are never writable by SQLite and must hash identically before and
+after backup. The synthetic WAL when applicable and always-synthetic SHM are
+likewise never writable by SQLite, are present before all three read guards
+bind, and must retain identity, size zero, and SHA(empty) until identity-bound
+post-close deletion. The exact input-name allowlist during SQLite lifetime is
+`project.json`, `state.sqlite3`, `state.sqlite3-wal`, and
+`state.sqlite3-shm`; all four are required and no other member is accepted.
+
+After composition binds the published normalized copy,
+`SQLiteProjectStore.inspect_integrity(deep)` exclusively executes the selected
+quick/integrity check, foreign-key check, and each legacy query under sections
+2.1-2.2. A backup-preserved logical integrity/FK finding therefore reaches
+Store/doctor diagnostics and is not `snapshot_invalid`. Invalid SQLite format,
+NOTADB/CORRUPT, impossible backup progress, or output checkpoint/layout
+semantics is `snapshot_invalid`; SQLITE_FULL, fixed byte/progress/deadline
+excess, or ENOSPC is `snapshot_resource_limit`; BUSY/LOCKED/CANTOPEN/IOERR,
+permission, or sharing denial is `snapshot_unavailable`. Raw-input identity,
+presence, size, mtime, or hash drift, including WAL/SHM sentinel
+replacement/mutation, is `snapshot_unstable`. An unsafe sentinel type/link
+state or initial nonempty/wrong-hash sentinel is `snapshot_invalid`. Failure to
+prove and complete either owned sentinel deletion is `snapshot_cleanup_failed`.
+Every message is redacted through the existing five-code interface.
+
+Do not switch to DELETE journal mode, write/checkpoint the raw input, rely on
+an absent-name recheck, permit SQLite to create input SHM, or manually unlink a
+nonempty WAL. Synthetic empty WAL/SHM sentinels are removed only by the
+bound-delete sequence above. All connections and
+handles close and both owned input/output roots clean in `finally`. If cleanup succeeds, raise the
+pending finite primary code; if cleanup fails, discard any computed READY
 report or primary error and raise `snapshot_cleanup_failed`. UNINITIALIZED
 source yields an owned empty project root plus UNINITIALIZED hint; no source
 `.modeling` member is read or created.
 
 RED-only deterministic mutation seams exist after manifest A, during each
-member copy, before manifest B, before consolidation, after every destination
-phase, and during cleanup. Tests replace/change DB, append/truncate/create/remove
-WAL, change SHM presence/identity, inject open/checkpoint/ENOSPC/growth/deadline
-failures, and fail cleanup; these seams are not public retry/mutation APIs.
-Secret-bearing OS/SQLite exception strings are injected at every expected and
-unexpected boundary; tests require only fixed public messages/codes and prove
-the raw strings never reach JSON, human output, stderr, or DTO fields.
+member copy, before manifest B, after raw guards bind, after the read-only input
+opens, during every backup progress callback, after backup, after every
+normalized-output phase, through publication, and during cleanup. Tests attempt
+raw DB/WAL write and truncate after the read-only open, replace/change copied
+members, race creation/write/truncate against an absent-source-WAL sentinel,
+mutate/replace the guarded SHM sentinel, inject backup progress grammar/status,
+output WAL-frame/first-step/peak, pre-backup max-page, open/checkpoint/ENOSPC/
+growth/deadline failures, and fail cleanup.
+These seams are not public retry/mutation APIs. Secret-bearing
+OS/SQLite exception strings are injected at every expected and unexpected
+boundary; tests require only fixed public messages/codes and prove the raw
+strings never reach JSON, human output, stderr, or DTO fields.
 
 Complete doctor call graph:
 
@@ -566,17 +700,33 @@ Mutation matrix must cover: check FAIL; required skip; golden FAIL; wheel FAIL; 
 ### Slice A12.1: stable diagnostic snapshot and Store DTO correction
 
 - [ ] Fix these Store RED nodes before production edits: `tests/contract/test_project_store.py::test_integrity_report_dtos_are_finite_unique_bounded_and_utf8_ordered`; `tests/contract/test_project_store.py::test_inspect_integrity_selects_exact_check_and_reports_legacy_rows`; `tests/contract/test_project_store.py::test_legacy_overflow_empties_only_affected_relation_and_continues_others`.
-- [ ] Fix these A12.1 snapshot RED nodes before production edits:
+- [ ] The Windows-probe correction supersedes the old copied-input read/write
+  checkpoint RED wording. Fix these exact read-only-backup RED nodes before
+  any corresponding production edit:
+  - `tests/integration/test_read_only_diagnostics.py::test_read_only_backup_guards_block_raw_input_write_and_truncate_after_open`
+  - `tests/integration/test_read_only_diagnostics.py::test_absent_source_wal_uses_guarded_empty_sentinel_that_blocks_create_write_and_truncate`
+  - `tests/integration/test_read_only_diagnostics.py::test_guarded_empty_wal_sentinel_preserves_committed_main_database_state`
+  - `tests/integration/test_read_only_diagnostics.py::test_guarded_empty_shm_sentinel_forces_private_wal_index_and_blocks_raw_mutation`
+  - `tests/integration/test_read_only_diagnostics.py::test_read_only_backup_leaves_raw_input_database_and_wal_bytes_unchanged`
+  - `tests/integration/test_read_only_diagnostics.py::test_read_only_backup_preserves_latest_committed_wal_state`
+  - `tests/integration/test_read_only_diagnostics.py::test_read_only_backup_preserves_non_default_source_page_size`
+  - `tests/integration/test_read_only_diagnostics.py::test_output_wal_frame_overhead_and_256_page_step_respect_literal_caps`
+  - `tests/integration/test_read_only_diagnostics.py::test_owned_peak_limit_is_literal_425787488_bytes`
+  - `tests/integration/test_read_only_diagnostics.py::test_backup_progress_accepts_done_only_and_ok_star_done`
+  - `tests/integration/test_read_only_diagnostics.py::test_backup_progress_rejects_duplicate_post_done_and_unknown_status_with_finite_codes`
+  - `tests/integration/test_read_only_diagnostics.py::test_normalized_max_page_count_is_set_and_verified_before_backup`
+  - `tests/integration/test_read_only_diagnostics.py::test_read_only_backup_failure_uses_finite_redacted_snapshot_code`
+  - `tests/integration/test_read_only_diagnostics.py::test_normalized_backup_publishes_exact_owned_layout_without_sidecars`
+  - `tests/integration/test_read_only_diagnostics.py::test_checkpointable_foreign_key_violation_reaches_store_foreign_key_report`
+  - `tests/integration/test_read_only_diagnostics.py::test_checkpointable_non_ok_integrity_reaches_store_check_failed`
+- [ ] Fix these remaining A12.1 snapshot RED nodes before production edits:
   - `tests/integration/test_read_only_diagnostics.py::test_mode_ro_query_only_is_not_a_zero_byte_mutation_contract_on_wal`
   - `tests/integration/test_read_only_diagnostics.py::test_diagnostic_snapshot_opens_no_sqlite_connection_or_project_lock_on_source`
   - `tests/integration/test_read_only_diagnostics.py::test_held_windows_project_lock_is_never_opened_or_hashed_and_snapshot_succeeds`
   - `tests/integration/test_read_only_diagnostics.py::test_source_project_lock_open_spy_proves_metadata_only_capture`
-  - `tests/integration/test_read_only_diagnostics.py::test_stable_main_without_wal_consolidates_to_exact_owned_layout`
-  - `tests/integration/test_read_only_diagnostics.py::test_stable_main_and_wal_snapshot_includes_latest_committed_wal_state`
   - `tests/integration/test_read_only_diagnostics.py::test_uncommitted_wal_tail_is_not_reported_as_committed_state`
   - `tests/integration/test_read_only_diagnostics.py::test_db_or_wal_change_between_manifests_fails_snapshot_unstable`
   - `tests/integration/test_read_only_diagnostics.py::test_wal_appearance_disappearance_or_identity_swap_fails_snapshot_unstable`
-  - `tests/integration/test_read_only_diagnostics.py::test_unopenable_or_checkpoint_failing_db_wal_is_snapshot_invalid`
   - `tests/integration/test_read_only_diagnostics.py::test_snapshot_rejects_reparse_nonregular_unexpected_and_oversize_members`
   - `tests/integration/test_read_only_diagnostics.py::test_snapshot_expected_errors_are_typed_finite_read_only_and_redacted`
   - `tests/integration/test_read_only_diagnostics.py::test_wal_logical_size_and_owned_main_page_bounds_fail_resource_limit`
@@ -585,9 +735,7 @@ Mutation matrix must cover: check FAIL; required skip; golden FAIL; wheel FAIL; 
   - `tests/integration/test_read_only_diagnostics.py::test_snapshot_failure_closes_handles_and_cleanup_failure_uses_typed_code`
   - `tests/integration/test_read_only_diagnostics.py::test_idle_source_bytes_and_members_remain_exactly_unchanged`
   - `tests/integration/test_read_only_diagnostics.py::test_active_writer_uses_stable_db_wal_or_finite_failure_without_shm_hash_equality`
-  - `tests/integration/test_read_only_diagnostics.py::test_consolidation_sql_excludes_integrity_foreign_key_and_legacy_queries`
-  - `tests/integration/test_read_only_diagnostics.py::test_checkpointable_foreign_key_violation_reaches_store_foreign_key_report`
-  - `tests/integration/test_read_only_diagnostics.py::test_checkpointable_non_ok_integrity_reaches_store_check_failed`
+  - `tests/integration/test_read_only_diagnostics.py::test_read_only_backup_sql_is_limited_to_input_and_output_allowlists`
 - [ ] Fix A12.1 boundaries: `tests/architecture/test_dependency_boundaries.py::test_a12_1_snapshot_and_store_tests_do_not_import_modeling_cli_doctor`; `tests/architecture/test_dependency_boundaries.py::test_diagnostic_snapshot_has_no_core_cli_or_source_sqlite_dependency`; `tests/security/test_m1a_boundaries.py::test_diagnostic_snapshot_rejects_unsafe_source_members_without_sensitive_error_text`.
 - [ ] A12.1 tests and product contain no import of `modeling_cli.doctor` and no `test_doctor_*` node. The real-held-lock node is Windows-primary; the open-spy node enforces the no-open rule platform-independently.
 - [ ] Run focused tests; record expected failures before editing production.
@@ -595,7 +743,7 @@ Mutation matrix must cover: check FAIL; required skip; golden FAIL; wheel FAIL; 
 - [ ] Modify `tests/reproducibility/test_m1a_repeatability.py` in this slice to require literal `86 total = 54 Python + 32 non-Python` and exact member `modeling_infrastructure/diagnostic_snapshot.py`; do not derive expected counts dynamically.
 - [ ] Run focused tests, full Store/application regressions, Ruff, MyPy.
 - [ ] Run the complete `pytest tests -q` suite GREEN at the 86/54/32 inventory before review or commit.
-- [ ] Independent spec review: source lock is metadata-only; source has no SQLite/lock/mutation; consolidation trace has no Store diagnostic query; owned snapshot has exact three-file layout and all source/destination bounds; no second port, doctor import/SQL, or core SQLite import.
+- [ ] Independent spec review: source lock is metadata-only; source has no SQLite/lock/mutation; copied raw DB, always-present copied-or-synthetic WAL, and always-present zero-byte SHM sentinel are guarded read-only, hash-invariant, and never checkpointed; absent source WAL cannot race-create and SQLite uses a private heap WAL-index because guarded sentinels occupy both sidecar names through input close before identity-bound deletion; pre-backup page-size/max-page ordering and output-WAL absence are verified; progress obeys `OK* -> exactly one DONE`; the backup trace uses only the input/output SQL allowlists and contains no Store diagnostic query; only normalized output is checkpointed and publishes the exact three-file layout; the literal 425,787,488-byte peak includes the 140,509,216-byte output-WAL frame bound and 16,783,392-byte largest first step; no second port, doctor import/SQL, or core SQLite import.
 - [ ] Commit only GREEN reviewed slice: `feat: add stable diagnostic snapshot`.
 
 ### Slice A12.2: doctor Schema and orchestration
@@ -689,3 +837,6 @@ Final PASS requires doctor exit 0 for healthy STORAGE_READY after bootstrap, exa
 | Technical M1 narrowed live-Store preservation | 1, 2.3 |
 | Technical M2 idle/active SHM causality | 2.3, 6 |
 | Slice-count clarification: every A12 commit has a literal GREEN wheel inventory | 1, 5-7 |
+| Windows probe correction: raw-writer exclusion via read-only backup and output-only checkpoint | 2.3, 6 |
+| Windows probe fix1: guarded empty WAL sentinel closes absent-name create race | 2.3, 6 |
+| Windows probe fix2: guarded empty SHM/private WAL-index and corrected WAL/peak/progress bounds | 2.3, 6 |
