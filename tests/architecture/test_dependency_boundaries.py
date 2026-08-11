@@ -4,10 +4,12 @@ import ast
 import inspect
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import get_type_hints
 
 import pytest
 
+from modeling_harness import verify as verification
 from modeling_core.application.facade import ApplicationFacade
 from modeling_capabilities.root_finding.contracts import (
     EvaluationBudgetExceeded,
@@ -50,6 +52,7 @@ FORBIDDEN_IMPORTS = {
     "modeling_infrastructure",
     "modeling_mcp",
     "modeling_capabilities",
+    "modeling_harness",
 }
 HOST_TOKENS = ("Codex", "Claude Code", "TRAE")
 
@@ -288,3 +291,41 @@ def test_host_neutral_pre_execution_errors_reject_invalid_contract_values(
 ) -> None:
     with pytest.raises(ValueError):
         factory(*arguments)
+
+
+def test_harness_check_process_is_direct_argv_and_never_a_platform_shell(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Catches a verification check crossing the shell boundary."""
+    observed: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> SimpleNamespace:
+        observed.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout="1 passed in 0.01s\n", stderr="")
+
+    spec = verification._CheckSpec(
+        check_id="architecture.no-shell",
+        argv=("C:/pinned/uv.exe", "run", "pytest", "-q"),
+        timeout_seconds=5,
+        kind="command",
+    )
+    monkeypatch.setattr(verification.subprocess, "run", fake_run)
+
+    result = verification._execute_check(
+        spec,
+        cwd=tmp_path,
+        environment={"UV_OFFLINE": "1"},
+    )
+
+    assert result.status == "PASS"
+    assert len(observed) == 1
+    argv, kwargs = observed[0]
+    assert argv == ["C:/pinned/uv.exe", "run", "pytest", "-q"]
+    assert kwargs["cwd"] == tmp_path
+    assert kwargs["env"] == {"UV_OFFLINE": "1"}
+    assert kwargs["timeout"] == 5
+    assert kwargs.get("shell", False) is False
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True
+    assert kwargs["check"] is False
