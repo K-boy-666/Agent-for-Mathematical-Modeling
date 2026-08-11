@@ -1800,6 +1800,14 @@ can merge it with its safe platform environment.
 
 ### Task A12: Add doctor, basic context, Codex template and the M1a acceptance gate
 
+> **Binding supersession (2026-08-11):** Implement Task A12 under
+> [`2026-08-11-m1a-a12-interface-resolution.md`](../specs/2026-08-11-m1a-a12-interface-resolution.md).
+> That addendum resolves all three preflight interfaces and supersedes this
+> task where file ownership, read-only call paths, doctor report shape,
+> acceptance-map construction, Harness transition, TDD slices, reviews, or
+> commit boundaries differ. Unaffected M1a constraints and the Hard Gate below
+> remain binding.
+
 **Primary concern:** 可安全维护和可声明的最小 Context/Harness 交付。
 
 **Files:**
@@ -1807,6 +1815,8 @@ can merge it with its safe platform environment.
 - Create: `AGENTS.md`, `src/modeling_core/AGENTS.md`, `src/modeling_capabilities/AGENTS.md`, `src/modeling_mcp/AGENTS.md`, `tests/AGENTS.md`, `docs/context/index.md`, `docs/product/m1-scope.md`, `docs/architecture/overview.md`, `docs/contracts/mcp-tools-v0.md`, `docs/contracts/capability-api-v0.md`, `docs/contracts/root-finding-v0.md`, `docs/operations/bootstrap-and-doctor.md`, `docs/templates/codex/config.toml`
 - Create: `src/modeling_cli/doctor.py`, `tests/unit/test_doctor.py`, `tests/acceptance/test_m1a_acceptance_map.py`
 - Modify: `src/modeling_cli/main.py`, `src/modeling_harness/verify.py`, `src/modeling_harness/evidence.py`, `README.md`
+- A12 addendum expansion — Create: `src/modeling_cli/schemas/doctor/0.1.0/report.schema.json`, `src/modeling_cli/templates/codex/config.toml`, `tests/integration/test_read_only_diagnostics.py`
+- A12 addendum expansion — Modify: `src/modeling_core/ports/project_store.py`, `src/modeling_infrastructure/storage.py`, `src/modeling_infrastructure/sqlite/store.py`, `tests/contract/test_project_store.py`, `tests/security/test_m1a_boundaries.py`, `tests/architecture/test_dependency_boundaries.py`, `tests/reproducibility/test_m1a_repeatability.py`
 
 **Interfaces produced:** `modeling doctor --project-root tests/.tmp/manual-project [--deep] [--json]`; complete M1a context router; usable production Codex project config; M1a-0 historical-feasibility link; A-01 through A-10 evidence map.
 
