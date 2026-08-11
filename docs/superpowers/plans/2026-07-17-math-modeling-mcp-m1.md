@@ -1803,10 +1803,21 @@ can merge it with its safe platform environment.
 > **Binding supersession (2026-08-11):** Implement Task A12 under
 > [`2026-08-11-m1a-a12-interface-resolution.md`](../specs/2026-08-11-m1a-a12-interface-resolution.md).
 > That addendum resolves all three preflight interfaces and supersedes this
-> task where file ownership, read-only call paths, doctor report shape,
+> task where file ownership, source-diagnostic call paths, doctor report shape,
 > acceptance-map construction, Harness transition, TDD slices, reviews, or
 > commit boundaries differ. Unaffected M1a constraints and the Hard Gate below
 > remain binding.
+> In particular, its A12.1 WAL remediation supersedes every direct-source
+> SQLite `mode=ro`/`query_only` or zero-sidecar reading requirement here:
+> doctor captures stable raw DB/WAL files without SQLite or `ProjectLock` and
+> never opens/reads/hashes the source `project.lock`; it consolidates only in an
+> owned temporary root and binds composition only to that root. Consolidation
+> performs transport checkpointing only; Store exclusively performs
+> quick/integrity/FK/legacy diagnostics. Regular live Store connection,
+> metadata, writer-lock, and transient-sidecar behavior stays unchanged while
+> the addendum's explicit `inspect_integrity` result semantics change.
+> Five typed finite snapshot failures, render-after-cleanup sequencing, and
+> 128 MiB owned-main/256 MiB owned-tree cooperative bounds are binding.
 
 **Primary concern:** 可安全维护和可声明的最小 Context/Harness 交付。
 
@@ -1815,8 +1826,10 @@ can merge it with its safe platform environment.
 - Create: `AGENTS.md`, `src/modeling_core/AGENTS.md`, `src/modeling_capabilities/AGENTS.md`, `src/modeling_mcp/AGENTS.md`, `tests/AGENTS.md`, `docs/context/index.md`, `docs/product/m1-scope.md`, `docs/architecture/overview.md`, `docs/contracts/mcp-tools-v0.md`, `docs/contracts/capability-api-v0.md`, `docs/contracts/root-finding-v0.md`, `docs/operations/bootstrap-and-doctor.md`, `docs/templates/codex/config.toml`
 - Create: `src/modeling_cli/doctor.py`, `tests/unit/test_doctor.py`, `tests/acceptance/test_m1a_acceptance_map.py`
 - Modify: `src/modeling_cli/main.py`, `src/modeling_harness/verify.py`, `src/modeling_harness/evidence.py`, `README.md`
-- A12 addendum expansion — Create: `src/modeling_cli/schemas/doctor/0.1.0/report.schema.json`, `src/modeling_cli/templates/codex/config.toml`, `tests/integration/test_read_only_diagnostics.py`
-- A12 addendum expansion — Modify: `src/modeling_core/ports/project_store.py`, `src/modeling_infrastructure/storage.py`, `src/modeling_infrastructure/sqlite/store.py`, `tests/contract/test_project_store.py`, `tests/security/test_m1a_boundaries.py`, `tests/architecture/test_dependency_boundaries.py`, `tests/reproducibility/test_m1a_repeatability.py`
+- A12 addendum expansion — Create: `src/modeling_cli/schemas/doctor/0.1.0/report.schema.json`, `src/modeling_cli/templates/codex/config.toml`, `src/modeling_infrastructure/diagnostic_snapshot.py`, `tests/integration/test_read_only_diagnostics.py`
+- A12 addendum expansion — Modify: `src/modeling_core/ports/project_store.py`, `src/modeling_infrastructure/sqlite/store.py`, `tests/contract/test_project_store.py`, `tests/security/test_m1a_boundaries.py`, `tests/architecture/test_dependency_boundaries.py`, `tests/reproducibility/test_m1a_repeatability.py`
+- A12 addendum exclusion — `src/modeling_infrastructure/storage.py` is not modified for the diagnostic snapshot; regular live Store connection, metadata, writer-lock, and transient-sidecar paths retain their existing behavior.
+- A12 package gate — add exactly two Python package files (`modeling_cli/doctor.py`, `modeling_infrastructure/diagnostic_snapshot.py`) and five non-Python package assets (doctor Schema, packaged Codex template, and the three package-root `AGENTS.md` files): non-Python 32 -> 37, Python 53 -> 55, total 85 -> 92 across the unchanged seven roots; all five non-Python paths have fixed raw hashes.
 
 **Interfaces produced:** `modeling doctor --project-root tests/.tmp/manual-project [--deep] [--json]`; complete M1a context router; usable production Codex project config; M1a-0 historical-feasibility link; A-01 through A-10 evidence map.
 
@@ -1829,7 +1842,7 @@ can merge it with its safe platform environment.
   - warnings exit 1 and unsafe/degraded state exits 2;
   - legacy PENDING/RUNNING/IN_PROGRESS IDs are reported, never changed;
   - `--json` follows a strict versioned output Schema and omits absolute paths/secrets;
-  - `--deep` uses a one-off temp project for lock and real root smoke, then removes it;
+  - ordinary diagnosis uses a verified owned base snapshot; `--deep` uses a distinct second temp project for lock and real root smoke; both clean before output;
   - doctor never repairs, migrates or writes authoritative state.
 
   Acceptance test requires every M1a document/link, root plus four nested rules, all six tool/capability/root contract assets, Codex template and generated evidence keys. It must verify exactly one `Task M1a-0` heading plus exactly 12 Task A headings, ensure the Spike is excluded from packaging/formal imports, assert M1a documentation promises stable hash smoke only, and find the three mandatory task-completion fields `Test result`, `Git diff summary`, `Commit hash` in root execution rules.
@@ -1842,9 +1855,9 @@ can merge it with its safe platform environment.
 
   Expected: collection fails for missing doctor module and then reports every absent document when the module exists.
 
-- [ ] **Step 3: Implement read-only doctor**
+- [ ] **Step 3: Implement snapshot-backed doctor**
 
-  Doctor obtains shared project/registry readiness by calling the same composed `ApplicationFacade.health_check` and `ApplicationFacade.list_capabilities` used by MCP, then calls read-only path/store diagnostic inspectors for SQLite `quick_check` by default/`integrity_check` in deep mode, user/project version checks, Schema hash checks, legacy entity queries and Codex template parsing. It may create only a separate TemporaryDirectory for deep smoke. Exit code mapping is fixed at 0 ready, 1 warnings, 2 unsafe; no doctor-only business branch is added to the Facade.
+  Doctor first performs the addendum's one-attempt raw stable capture without opening the source lock, checkpoint-normalizes only the owned DB+WAL, and composes against that owned root. The same `ApplicationFacade.health_check` and `ApplicationFacade.list_capabilities` used by MCP then run there; `ProjectStore.inspect_integrity` alone owns SQLite `quick_check` by default/`integrity_check` in deep mode, FK and legacy queries. Build and Schema-validate the report in memory, close the distinct deep root and base snapshot, then render exactly once. Cleanup failure discards READY and maps to finite `snapshot_cleanup_failed` UNSAFE/2 with no earlier stdout. Exit mapping remains 0 ready, 1 warnings, 2 unsafe; no doctor-only Facade business branch is added.
 
 - [ ] **Step 4: Write minimal stable context and contract documents**
 
@@ -1854,7 +1867,7 @@ can merge it with its safe platform environment.
 
 - [ ] **Step 5: Add the exact Codex template**
 
-  `docs/templates/codex/config.toml` must be directly copyable to `.codex/config.toml` in a trusted project:
+  `src/modeling_cli/templates/codex/config.toml` is the installed canonical file; `docs/templates/codex/config.toml` is its mandatory byte-identical user mirror and must be directly copyable to `.codex/config.toml` in a trusted project:
 
   ```toml
   [mcp_servers.modeling]
@@ -1878,7 +1891,7 @@ can merge it with its safe platform environment.
 
 - [ ] **Step 6: Complete A-01 through A-10 mapping and make verify pass**
 
-  Each acceptance ID maps to one or more exact pytest node IDs plus evidence JSON pointers. Harness must reject duplicate/missing IDs, a skipped required test, stale source fingerprint or missing transcript/trace. Update README with the historical M1a-0 feasibility checkpoint, bootstrap, doctor, M1a verify, explicit “stable hash smoke only” wording and the M1a-only completion wording.
+  Each acceptance ID maps to one or more exact pytest node IDs plus evidence JSON pointers. Harness must reject duplicate/missing IDs, a skipped required test, stale source fingerprint or missing transcript/trace. Wheel evidence proves 37 non-Python and 92 total members, literal presence of both new Python modules, and fixed raw hashes for the five new non-Python assets. Update README with the historical M1a-0 feasibility checkpoint, bootstrap, doctor, M1a verify, explicit “stable hash smoke only” wording and the M1a-only completion wording.
 
 - [ ] **Step 7: Run focused tests**
 
@@ -1907,7 +1920,7 @@ can merge it with its safe platform environment.
 
   Expected: `build/verification/` is absent from staged files; commit includes only source/config/docs/tests.
 
-**Acceptance:** `verify --milestone m1a` is zero with no required skip, doctor is read-only, all M1a context/config assets exist and link correctly, and A-01 through A-10 have source-fingerprint-matched evidence.
+**Acceptance:** `verify --milestone m1a` is zero with no required skip, doctor is source-nonmutating through the addendum's verified stable snapshot, all M1a context/config assets exist and link correctly, and A-01 through A-10 have source-fingerprint-matched evidence.
 
 ## M1a Hard Gate
 

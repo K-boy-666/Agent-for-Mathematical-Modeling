@@ -2,17 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Resolve Task A12's three interface gaps while preserving A11's read-only, failure-publication, exact-seven-artifact, and source-fingerprint guarantees.
+**Goal:** Resolve Task A12's three interface gaps while preserving A11's source-nonmutation, failure-publication, exact-seven-artifact, and source-fingerprint guarantees.
 
-**Architecture:** Extend the existing `ProjectStore` read-only snapshot; keep doctor as a CLI consumer of the composed Facade and Store; add one CLI-owned packaged Schema; embed a failure-capable acceptance map in `verification-report.json` 0.2.0. No second DB port, doctor-side SQL, seventh Facade/MCP method, or eighth evidence artifact is allowed.
+**Architecture:** Capture a verified stable raw source snapshot, consolidate DB+WAL only in an owned temporary root, then bind the existing Facade and Store to that owned copy. Extend `ProjectStore` diagnostics, add one CLI-owned packaged Schema, and embed a failure-capable acceptance map in `verification-report.json` 0.2.0. No source SQLite open, second DB port, doctor-side SQL, seventh Facade/MCP method, or eighth evidence artifact is allowed.
 
-**Tech Stack:** Python 3.11, SQLite URI read-only mode, Pydantic DTOs, JSON Schema Draft 2020-12, pytest, Hatch/uv, existing M1a Harness.
+**Tech Stack:** Python 3.11, bounded raw-file snapshots, SQLite WAL consolidation in owned temp storage, Pydantic DTOs, JSON Schema Draft 2020-12, pytest, Hatch/uv, existing M1a Harness.
 
 ## Global Constraints
 
 - This document is binding for Task A12 and supersedes the original A12 text only where interfaces, file ownership, TDD slices, or evidence shapes conflict.
 - A11 must be committed and clean before A12 product/test work begins.
-- Inspected project: no bootstrap, migration, repair, DML/DDL, writer lease, writer lock, or authoritative byte change.
+- Source project is never opened through SQLite and receives no bootstrap, migration, repair, DML/DDL, SQLite connection, WAL/SHM participation, `ProjectLock` acquisition, writer lease, create/delete/rename, or byte change. Snapshot/consolidation failure is UNSAFE/2.
 - Deep diagnostics may mutate only a newly owned `TemporaryDirectory` and must remove it.
 - Preserve six MCP tools, seven package roots, seven final evidence filenames, 18 tool Schemas, and core catalog fingerprint.
 - M1a remains fixed/repeatability stable-hash smoke only; no RFC 8785, M1b, release, recovery, worker, plugin, queue, UI, remote, or cross-platform claim.
@@ -26,18 +26,18 @@ Original A12 files remain authorized. Add only:
 
 - Create `src/modeling_cli/schemas/doctor/0.1.0/report.schema.json`.
 - Create `src/modeling_cli/templates/codex/config.toml` as installed runtime authority.
+- Create `src/modeling_infrastructure/diagnostic_snapshot.py`.
 - Create `tests/integration/test_read_only_diagnostics.py`.
 - Modify `src/modeling_core/ports/project_store.py`.
-- Modify `src/modeling_infrastructure/storage.py`.
 - Modify `src/modeling_infrastructure/sqlite/store.py`.
 - Modify `tests/contract/test_project_store.py`.
 - Modify `tests/security/test_m1a_boundaries.py`.
 - Modify `tests/architecture/test_dependency_boundaries.py`.
 - Modify `tests/reproducibility/test_m1a_repeatability.py`.
 
-No `pyproject.toml`, core Schema catalog, MCP Schema, composition API, or dependency change is authorized.
+No `storage.py`, `pyproject.toml`, core Schema catalog, MCP Schema, composition API, or dependency change is authorized. Regular live Store connection, metadata, writer-lock, and transient-sidecar paths retain current behavior; only the section 2.1-2.2 `inspect_integrity` result semantics change. A12.1 must not add a global read-only opener.
 
-## 2. Resolution R1: one complete read-only diagnostic path
+## 2. Resolution R1: one complete source-nonmutating diagnostic path
 
 ### 2.1 Core DTO contract
 
@@ -97,7 +97,8 @@ Validation is exact:
 - issue/row tuples reject duplicates and require UTF-8-byte order;
 - attempt/validation order is `(status.encode(), id.encode())`;
 - operation order is `(scope_id.encode(), tool_name.encode(), operation_id.encode())`;
-- each legacy tuple is capped at 100; query 101 rows and map overflow to `database_relation` without publishing a partial tuple;
+- each legacy relation is queried independently with explicit `COLLATE BINARY`, `LIMIT 101`; 100 sorted unique rows pass;
+- on 101 rows, only that relation contributes `database_relation`, its tuple is empty, and its `stale_*` issue is omitted; other relations continue and publish normally;
 - unknown `IN_PROGRESS.tool_name` becomes `database_relation`, never free text;
 - defaults preserve existing fake Store constructors.
 
@@ -114,43 +115,194 @@ Validation is exact:
 | open/execute error | selected mode / ERROR | `database_relation` | DEGRADED |
 | foreign-key rows | retain PRAGMA outcome | add `foreign_key` | DEGRADED |
 | legacy rows | retain PRAGMA outcome | exact stale issue + exact rows | DEGRADED |
+| one legacy relation returns 101 rows | retain PRAGMA outcome | empty only that tuple; `database_relation`, not its `stale_*`; continue other relations | DEGRADED |
 
 Ordinary Facade `deep=False` calls therefore retain quick-check behavior. Issue output is unique and UTF-8-byte sorted.
 
-### 2.3 Shared infrastructure opener and full call graph
+### 2.3 Verified source snapshot and full call graph
 
-`storage.py` owns one shared internal function:
+The prior direct-source SQLite opener requirement is superseded. SQLite WAL
+readers may create sidecars or update SHM even with URI read-only/query-only
+settings; regular live Store reads remain unchanged. Runtime verification is
+offline; design rationale may cite SQLite's official
+[WAL read-only rules](https://sqlite.org/wal.html#readonly),
+[WAL index/concurrency model](https://sqlite.org/wal.html), and
+[URI immutable warning](https://sqlite.org/uri.html).
+
+`diagnostic_snapshot.py` owns the complete executable failure interface:
 
 ```python
-def open_read_only_sqlite(
-    database: Path, *, named_rows: bool = False, timeout_seconds: float = 0.25
-) -> sqlite3.Connection: ...
+SnapshotFailureCode = Literal[
+    "snapshot_unstable",
+    "snapshot_invalid",
+    "snapshot_resource_limit",
+    "snapshot_unavailable",
+    "snapshot_cleanup_failed",
+]
+
+class DiagnosticSnapshotError(RuntimeError):
+    @property
+    def code(self) -> SnapshotFailureCode: ...  # read-only
+
+@dataclass(frozen=True)
+class DiagnosticSnapshot:
+    project_root: Path  # owned temporary root only
+    source_state_hint: Literal["UNINITIALIZED", "INITIALIZED"]
+
+@contextmanager
+def materialize_diagnostic_snapshot(
+    project_root: Path,
+) -> Iterator[DiagnosticSnapshot]: ...
 ```
 
-It rejects missing, reparse/symlink, and non-regular DB paths before open; uses SQLite URI `mode=ro`, `uri=True`, and `PRAGMA query_only=ON`; never uses `immutable=1`; applies bounded busy timeout; closes on configuration failure. Both `_read_database_metadata()` and `SQLiteProjectStore._read()` use it. Write paths keep their existing writer connection.
+`DiagnosticSnapshotError` accepts only one validated code. Its `str()`/`args`
+use a fixed code-to-message table: `snapshot changed during capture`,
+`snapshot input is invalid`, `snapshot resource limit exceeded`,
+`snapshot is unavailable`, or `snapshot cleanup failed`. It has no public
+details/source/cause field; source path, identity, hash, timestamp, retry count,
+OS/SQLite text, and arbitrary exception text never render. Raw causes may be
+exception-chained internally. Expected classification is exhaustive:
 
-Complete inspected-project call graph:
+| code | conditions |
+| --- | --- |
+| `snapshot_unstable` | A/B name, presence, identity, size, mtime, persistent hash, or destination-copy mismatch |
+| `snapshot_invalid` | unsafe shape/type/reparse, invalid persistent DB/WAL bytes, non-I/O SQLite format/open semantics, checkpoint tuple/semantics, or exact-layout failure |
+| `snapshot_resource_limit` | source/destination byte bound, cooperative deadline, WAL logical growth, or ENOSPC |
+| `snapshot_unavailable` | permission, sharing, device, or other I/O denial prevents proof without proving invalid bytes |
+| `snapshot_cleanup_failed` | owned staging/snapshot/deep root cannot be fully removed; this supersedes any pending success or other failure |
+
+`run_doctor` separately maps an unexpected non-`DiagnosticSnapshotError`
+exception to fixed redacted `storage-integrity/check_error` UNSAFE/2. The
+snapshot API exposes no source path, SQLite connection, repair, mutation, or
+lock method and performs one attempt with no retry or source-SQLite fallback.
+
+For initialized source `.modeling/`, allowed names are exact:
+
+```text
+required: project.json, state.sqlite3, project.lock
+optional: state.sqlite3-wal, state.sqlite3-shm
+```
+
+Reject every other entry, nested directory, missing required member, reparse,
+symlink, junction, non-regular file, or unprovable identity. The source
+`project.lock` handling is metadata-only: it is never opened, read, hashed, or
+copied, including while a Windows server holds its byte-range lock. Repeated
+non-following `lstat` only must prove regular/non-reparse type, size `1..64 B`,
+and stable A/B volume/device plus file-ID/inode identity, size, and `mtime_ns`.
+The owned snapshot creates a new `project.lock` containing exactly `b"\0"`.
+
+Opened persistent source files (`project.json`, `state.sqlite3`, and WAL iff
+present) use non-following handles and revalidate handle device/volume plus
+inode/file-ID identity against `lstat`. Manifest A and B both record exact
+directory names and:
+
+- persistent stability set: identity, size, `mtime_ns`, and full raw SHA-256 for `project.json`, `state.sqlite3`, and WAL iff present;
+- copy set: those same persistent members, streamed to owned staging with destination size/SHA-256;
+- lock metadata set: presence, regular/non-reparse type, identity, size, `mtime_ns`; never open/hash/copy contents;
+- SHM metadata set: presence, regular/non-reparse type, and identity only; never copy/hash contents or require stable size, mtime, or bytes.
+
+Capture order is exact:
+
+```text
+bind and validate source components
+-> enumerate exact allowed names
+-> capture manifest A
+-> stream-copy persistent copy set while hashing destination
+-> capture manifest B and re-enumerate
+-> require A == B for persistent and lock stability fields,
+   stable SHM presence/identity, and destination size/hash == manifest A
+-> close all source handles
+```
+
+Source receives no SQLite call, source-lock open, `ProjectLock`, create,
+delete, rename, chmod, timestamp normalization, or write. An idle fixture must
+prove exact before/after source bytes and members; an active-writer fixture
+does not compare SHM hashes and accepts only a verified stable DB+WAL snapshot
+or finite `snapshot_unstable`/`snapshot_unavailable`.
+
+Raw-source limits are fixed: `project.json` 64 KiB, source lock metadata size
+`1..64 B`, `state.sqlite3` 64 MiB, WAL 64 MiB, total copied bytes 128 MiB, and
+1 MiB copy/hash chunks. Owned main DB is capped at 128 MiB: after SQLite open,
+query exact single-integer `page_size` and `page_count`, require logical size
+within the cap, set `max_page_count=floor(128 MiB/page_size)`, and require the
+returned maximum equals that ceiling. After checkpoint and close, also require
+the physical `state.sqlite3` size at most 128 MiB. Peak owned `.modeling` bytes are
+capped at 256 MiB, counting DB, WAL, SHM, lock, JSON, and staging entries;
+check after raw copy, SQLite open, checkpoint, close, and publication.
+
+One 10-second monotonic budget is cooperative, not a hard timeout. Check it
+before and after every manifest/enumeration/copy phase and chunk, and every
+blocking SQLite open, PRAGMA, checkpoint, close, and publication phase. A blocking call may overrun before the after-check
+classifies `snapshot_resource_limit`; hard interruption is deferred to a worker
+boundary. Cleanup is never skipped because the deadline elapsed. ENOSPC,
+source/destination bound excess, logical-size excess, or peak-tree excess is
+`snapshot_resource_limit`.
+
+Only inside owned staging `project_root/.modeling/`, transport normalization is
+exact:
+
+```text
+create fresh project.lock = b"\0"
+-> open only copied state.sqlite3 + optional WAL read/write in owned temp
+-> require PRAGMA journal_mode == wal
+-> enforce page_size/page_count/max_page_count and owned-tree limits
+-> PRAGMA wal_checkpoint(TRUNCATE)
+-> require exactly one three-integer row, busy == 0, log == checkpointed
+-> close SQLite in finally
+-> enforce main-DB/tree limits
+-> require no WAL/SHM and exact project.json/state.sqlite3/project.lock layout
+-> publish owned snapshot root and recheck the tree limit
+```
+
+Consolidation must not execute `quick_check`, `integrity_check`,
+`foreign_key_check`, or any legacy query. After composition binds the published
+copy, `SQLiteProjectStore.inspect_integrity(deep)` exclusively executes the
+selected quick/integrity check, foreign-key check, and each legacy query under
+sections 2.1-2.2. A checkpointable logical integrity/FK finding therefore
+reaches Store/doctor diagnostics and is not `snapshot_invalid`; only an
+unopenable/incompatible DB-WAL or open/checkpoint/layout semantic failure is.
+
+Do not switch to DELETE journal mode or manually unlink nonempty WAL. All
+handles close and owned cleanup runs in `finally`. If cleanup succeeds, raise
+the pending finite primary code; if cleanup fails, discard any computed READY
+report or primary error and raise `snapshot_cleanup_failed`. UNINITIALIZED
+source yields an owned empty project root plus UNINITIALIZED hint; no source
+`.modeling` member is read or created.
+
+RED-only deterministic mutation seams exist after manifest A, during each
+member copy, before manifest B, before consolidation, after every destination
+phase, and during cleanup. Tests replace/change DB, append/truncate/create/remove
+WAL, change SHM presence/identity, inject open/checkpoint/ENOSPC/growth/deadline
+failures, and fail cleanup; these seams are not public retry/mutation APIs.
+Secret-bearing OS/SQLite exception strings are injected at every expected and
+unexpected boundary; tests require only fixed public messages/codes and prove
+the raw strings never reach JSON, human output, stderr, or DTO fields.
+
+Complete doctor call graph:
 
 ```text
 main._doctor
--> doctor.run_doctor fixed error boundary
--> build_composition(project_root), without start/context entry
--> diagnose_project(application, store, project_root, deep)
-   -> ApplicationFacade.health_check(HealthCheckRequest())
-      -> inspect_project_state
-         -> load_storage_metadata
-            -> _read_database_metadata -> open_read_only_sqlite
-         -> SQLiteProjectStore._read -> open_read_only_sqlite
-      -> inspect_integrity(False) -> same read-only paths
-   -> ApplicationFacade.list_capabilities(ListCapabilitiesSummaryRequest())
-      -> inspect_project_state + inspect_integrity(False) -> same paths
-   -> ProjectStore.inspect_integrity(deep) -> same paths
-   -> packaged Schema/hash and packaged Codex-template reads
+-> doctor.run_doctor owns the fixed finite error and one-output boundary
+-> enter materialize_diagnostic_snapshot(source_project_root)
+   -> build_composition(snapshot.project_root), never source root
+   -> diagnose_project(application, store, source_state_hint, deep)
+      -> Facade health_check + list_capabilities on owned snapshot
+      -> Store inspect_integrity(deep) on owned snapshot
+      -> packaged Schema/hash and packaged Codex-template reads
+      -> if deep, finish and clean the distinct deep-smoke context
+   -> construct and Schema-validate DoctorReport entirely in memory
+   -> close composition without starting source
+-> exit snapshot context and finish owned cleanup
+-> only after both context exits succeed, render exactly once
 ```
 
-`doctor.py` must not import `sqlite3`, access Store private paths/connections, or call bootstrap/migrate/repair/start/start_writer_session. `run_doctor()` catches unsafe/missing/unreadable root and composition failures and emits one finite UNSAFE report, never a traceback.
-
-Tests prove no DML/DDL, lock acquisition, authoritative byte change, new WAL/SHM, or temp residue for every branch; existing sidecars, if fixture-provided, remain byte-identical. Read-only open rejects reparse/non-regular paths fail-closed.
+Normal MCP/server Store connection, metadata, writer-lock, and transient-sidecar
+paths retain existing behavior because they operate on the server-owned project;
+the section 2.1-2.2 `inspect_integrity` result semantics intentionally change.
+Doctor's Store calls run only on the consolidated owned snapshot. `doctor.py`
+does not import SQLite or inspect Store internals. Expected snapshot failure
+becomes one finite UNSAFE/2 report; unexpected failure uses the separate fixed
+boundary; neither emits traceback or source details.
 
 ## 3. Resolution R2: strict doctor document
 
@@ -183,7 +335,7 @@ Base reports contain the first 11 checks in this order; `deep=true` appends the 
 | 2 `project-state` | `storage_ready`, `ready` | `uninitialized` | `degraded` |
 | 3 `application-health` | `healthy` | — | `degraded`, `unavailable` |
 | 4 `capability-registry` | `sealed` | — | `invalid`, `unavailable` |
-| 5 `storage-integrity` | `not_initialized`, `ok` | — | `not_executed_degraded`, `check_failed`, `check_error` |
+| 5 `storage-integrity` | `not_initialized`, `ok` | — | `not_executed_degraded`, `check_failed`, `check_error`, `snapshot_unstable`, `snapshot_invalid`, `snapshot_resource_limit`, `snapshot_unavailable`, `snapshot_cleanup_failed` |
 | 6 `foreign-keys` | `not_initialized`, `ok` | — | `not_executed_degraded`, `foreign_key_failure`, `unavailable` |
 | 7 `legacy-attempts` | `not_initialized`, `none` | — | `not_executed_degraded`, `stale_attempt`, `unavailable` |
 | 8 `legacy-validations` | `not_initialized`, `none` | — | `not_executed_degraded`, `stale_validation`, `unavailable` |
@@ -201,9 +353,26 @@ State mapping is total:
 - healthy STORAGE_READY -> READY/0, `ready_for_project_creation=true`.
 - healthy READY -> READY/0, `ready_for_project_creation=false`.
 - DEGRADED, any legacy row, Store FAIL/ERROR, foreign-key failure, version/hash mismatch, lock ambiguity, or deep-smoke failure -> UNSAFE/2, ready false.
-- unsafe/unreadable root or pre-composition failure -> strict UNSAFE/2 with synthesized DEGRADED, finite unavailable/failure codes, empty legacy arrays; no path text.
+- unsafe/unreadable root or pre-Store snapshot failure -> strict UNSAFE/2 with synthesized DEGRADED, `storage.check=null`, `storage.issues=[]`, empty legacy arrays, the exact finite `storage-integrity` snapshot code, dependent checks `unavailable`, and no source path, hash, identity, timestamp, SQLite message, retry count, or exception text. `database_relation` remains reserved for an actual Store open/query/conversion failure.
 
-Schema validation precedes JSON and human rendering. Any Schema load/meta/instance failure emits no stdout, exactly `MODELING_DOCTOR_SCHEMA_INVALID\n` to stderr, and exits 2.
+All five `DiagnosticSnapshotError.code` values map unchanged to the
+`storage-integrity` FAIL code. Invalid source binding uses `snapshot_invalid`;
+permission/share/device denial uses `snapshot_unavailable`; any owned cleanup
+failure uses `snapshot_cleanup_failed` and overrides a computed READY report.
+`project-root` is FAIL/`unsafe` or `unreadable` only when root binding proves
+that condition, otherwise PASS/`available`; `project-state` is FAIL/`degraded`;
+`application-health` and `capability-registry` are FAIL/`unavailable`;
+foreign-key and all three legacy checks are FAIL/`unavailable`. Independent
+packaged `schema-assets` and `codex-config` checks still execute. An unexpected
+exception at `run_doctor` uses the same empty storage payload and fixed
+`storage-integrity/check_error`, never a fabricated snapshot code.
+
+Both success and finite-failure reports are built and Schema-validated in
+memory. No JSON/human bytes are emitted until the base snapshot and any deep
+context have exited successfully. Cleanup failure discards the prior report,
+builds and validates `snapshot_cleanup_failed` UNSAFE/2, then renders exactly
+once; stdout was empty beforehand. Any Schema load/meta/instance failure emits
+no stdout, exactly `MODELING_DOCTOR_SCHEMA_INVALID\n` to stderr, and exits 2.
 
 `src/modeling_cli/templates/codex/config.toml` is canonical runtime authority,
 loaded offline with `importlib.resources.files("modeling_cli")`.
@@ -214,7 +383,7 @@ bytes and SHA-256. Installed-wheel tests must not depend on repository `docs/`.
 ### 3.3 Deep smoke sequence
 
 ```text
-TemporaryDirectory
+second TemporaryDirectory, distinct from the base diagnostic snapshot
 -> bootstrap temporary root
 -> build owner composition
 -> enter/start owner
@@ -227,7 +396,10 @@ TemporaryDirectory
 -> remove TemporaryDirectory
 ```
 
-Every failure closes both compositions and removes only the owned temp root. The inspected project lock is never touched.
+Every failure closes both compositions and independently removes the deep-smoke root and base diagnostic snapshot in `finally`. Neither the source project nor the base snapshot is locked, started, reused as the deep root, or mutated.
+Deep-root cleanup failure is converted to `snapshot_cleanup_failed` before the
+base context exits. Tests inject failure at deep-root and base-snapshot exit and
+prove no READY/partial stdout precedes the single finite UNSAFE document.
 
 ## 4. Resolution R3: failure-capable A-01–A-10 map
 
@@ -329,7 +501,7 @@ Before `_M1A_ACCEPTANCE_REQUIREMENTS` is written, RED tests must define these ex
 | A-07 | `tests/unit/root_finding/test_validator.py::test_self_consistent_forged_result_hash_still_fails_mathematically`; `tests/architecture/test_solver_validator_independence.py::test_validator_real_import_graph_has_only_explicitly_allowed_modules` | `pytest-unit`, `pytest-architecture` |
 | A-08 | `tests/integration/test_application_workflow.py::test_six_use_cases_reconstruct_a_validated_root_finding_trace`; `tests/contract/test_project_store.py::test_trace_query_and_trace_enforce_all_parent_and_uniqueness_relations` | `pytest-integration`, `pytest-contract` |
 | A-09 | exact `tests/integration/test_application_workflow.py::test_completed_write_replay_is_side_effect_free`; exact `tests/integration/test_application_workflow.py::test_write_idempotency_mismatch_fails_without_new_entities`; family `tests/unit/expression/test_canonicalization.py::test_forbidden_expressions_map_to_security_violation`; exact `tests/security/test_m1a_boundaries.py::test_request_larger_than_one_mib_is_rejected_before_newline`; exact `tests/security/test_m1a_boundaries.py::test_cooperative_deadline_rejects_work_at_the_exact_boundary`; exact `tests/security/test_m1a_boundaries.py::test_project_lock_is_exclusive_and_reusable_after_release`; family `tests/security/test_m1a_boundaries.py::test_public_mcp_contract_rejects_every_untrusted_path_surface` | `pytest-integration`, `pytest-unit`, `pytest-security` |
-| A-10 | `tests/acceptance/test_m1a_acceptance_map.py::test_m1a_context_config_and_acceptance_map_are_complete`; `tests/acceptance/test_m1a_acceptance_map.py::test_m1a_abstraction_budget_and_exact_context_inventory_are_binding`; `tests/acceptance/test_m1a_acceptance_map.py::test_doctor_schema_and_codex_template_are_installed_offline_without_core_catalog_drift`; `tests/reproducibility/test_m1a_repeatability.py::test_a12_profile_and_report_transition_preserve_a11_evidence_contract` | `pytest-acceptance`, `pytest-reproducibility`, `wheel` |
+| A-10 | `tests/acceptance/test_m1a_acceptance_map.py::test_m1a_context_config_and_acceptance_map_are_complete`; `tests/acceptance/test_m1a_acceptance_map.py::test_m1a_abstraction_budget_and_exact_context_inventory_are_binding`; `tests/acceptance/test_m1a_acceptance_map.py::test_a12_runtime_and_nested_context_assets_are_installed_offline_without_core_catalog_drift`; `tests/reproducibility/test_m1a_repeatability.py::test_a12_profile_and_report_transition_preserve_a11_evidence_contract` | `pytest-acceptance`, `pytest-reproducibility`, `wheel` |
 
 ## 5. Harness and package transition
 
@@ -357,36 +529,79 @@ finite diagnostic, not a prerequisite error.
 
 Keep seven filenames. Report changes from `m1a-verification-report/0.1.0` to `0.2.0`; retain all ten old keys and add exactly `acceptance_map` with `m1a-acceptance-map/0.1.0`. Legacy five-entry `artifacts` map does not gain self-reference.
 
-Add exactly `modeling_cli/schemas/doctor/0.1.0/report.schema.json` and `modeling_cli/templates/codex/config.toml` to non-Python package assets: 32 -> 34. Synthetic wheel total: 85 -> 87. Seven unique roots remain. Tests assert both literal paths and both final raw-byte SHA-256 constants, not self-derived expected hashes; docs template bytes/hash equal packaged template.
+A12 adds two Python package files—`modeling_cli/doctor.py` and
+`modeling_infrastructure/diagnostic_snapshot.py`—and exactly five non-Python
+package assets:
 
-Mutation matrix must cover: check FAIL; required skip; golden FAIL; wheel FAIL; source drift; exact node removed/renamed/not run while broad group remains PASS; required family with no member; one observed family member missing outcome evidence; one family member FAILED; one family member SKIPPED; complete multi-member family PASS with all exact parameter IDs retained; malformed/duplicate/over-limit JUnit node; duplicate A ID; missing/recursive pointer; missing transcript/trace; eighth artifact; silent 0.1.0 mutation; acceptance test reading current evidence; acceptance test invoking verify. Executed failures publish valid exact-seven bundles.
+```text
+modeling_cli/schemas/doctor/0.1.0/report.schema.json
+modeling_cli/templates/codex/config.toml
+modeling_core/AGENTS.md
+modeling_capabilities/AGENTS.md
+modeling_mcp/AGENTS.md
+```
+
+Non-Python assets transition 32 -> 37; Python files transition 53 -> 55;
+synthetic wheel total transitions 85 -> 92. Seven unique roots remain. Tests
+assert all seven literal new package paths and fixed final raw-byte SHA-256
+constants for each of the five non-Python assets, never self-derived expected
+hashes. The repository `docs/templates/codex/config.toml` remains a mandatory
+byte/hash-identical mirror of the packaged template but is not a wheel member.
+
+Mutation matrix must cover: check FAIL; required skip; golden FAIL; wheel FAIL; removal or raw-byte mutation of each of the five new non-Python package assets; source drift; exact node removed/renamed/not run while broad group remains PASS; required family with no member; one observed family member missing outcome evidence; one family member FAILED; one family member SKIPPED; complete multi-member family PASS with all exact parameter IDs retained; malformed/duplicate/over-limit JUnit node; duplicate A ID; missing/recursive pointer; missing transcript/trace; eighth artifact; silent 0.1.0 mutation; acceptance test reading current evidence; acceptance test invoking verify. Executed failures publish valid exact-seven bundles.
 
 ## 6. Implementation slices, review gates, commits
 
-New RED node names are fixed before production/policy edits:
+### Slice A12.1: stable diagnostic snapshot and Store DTO correction
 
-- Store: `tests/contract/test_project_store.py::test_integrity_report_dtos_are_finite_unique_bounded_and_utf8_ordered`; `tests/contract/test_project_store.py::test_inspect_integrity_selects_exact_check_and_reports_legacy_rows`.
-- Read-only integration: `tests/integration/test_read_only_diagnostics.py::test_all_doctor_storage_reads_are_mode_ro_query_only_and_leave_no_sidecars`; `tests/integration/test_read_only_diagnostics.py::test_read_only_sqlite_opener_rejects_reparse_and_nonregular_database_paths`; `tests/integration/test_read_only_diagnostics.py::test_integrity_error_and_overflow_branches_fail_closed_with_finite_codes`.
-- Doctor: `tests/unit/test_doctor.py::test_uninitialized_is_warning_and_storage_ready_and_ready_are_ready`; `tests/unit/test_doctor.py::test_degraded_legacy_and_integrity_failures_are_unsafe`; `tests/unit/test_doctor.py::test_doctor_uses_shared_facade_and_store_without_starting_inspected_composition`; `tests/unit/test_doctor.py::test_doctor_schema_is_strict_versioned_finite_and_packaged`; `tests/unit/test_doctor.py::test_build_composition_failures_render_one_redacted_unsafe_report`; `tests/unit/test_doctor.py::test_schema_validation_failure_is_stderr_only_and_exit_two`; `tests/unit/test_doctor.py::test_deep_doctor_runs_owned_root_and_lock_smokes_then_cleans_up`.
-- Boundary: `tests/architecture/test_dependency_boundaries.py::test_doctor_has_no_sql_or_inspected_writer_side_effects`; `tests/security/test_m1a_boundaries.py::test_doctor_rejects_unsafe_root_without_traceback_or_path_disclosure`.
-- Acceptance/Harness: the exact A-nodes in section 4.3 plus `tests/acceptance/test_m1a_acceptance_map.py::test_acceptance_policy_mutations_reject_each_a_clause`; `tests/acceptance/test_m1a_acceptance_map.py::test_acceptance_map_materializes_pass_and_failure_documents`; `tests/acceptance/test_m1a_acceptance_map.py::test_parameterized_family_requires_complete_passing_current_run_evidence`; `tests/acceptance/test_m1a_acceptance_map.py::test_acceptance_map_rejects_recursive_or_current_evidence_dependencies`; `tests/reproducibility/test_m1a_repeatability.py::test_junit_parser_records_strict_normalized_exact_test_nodes`; `tests/reproducibility/test_m1a_repeatability.py::test_missing_or_renamed_current_run_literal_node_forces_fingerprinted_failed_bundle`; `tests/reproducibility/test_m1a_repeatability.py::test_a12_failure_mutations_publish_exact_seven_file_failed_bundles`.
-
-### Slice A12.1: read-only Store correction
-
-- [ ] Add REDs in Store contract, `test_read_only_diagnostics.py`, security, and architecture for DTO validation, exact PRAGMA modes, all finite branches, full call graph, reparse/non-regular rejection, and zero writes/sidecars/locks.
+- [ ] Fix these Store RED nodes before production edits: `tests/contract/test_project_store.py::test_integrity_report_dtos_are_finite_unique_bounded_and_utf8_ordered`; `tests/contract/test_project_store.py::test_inspect_integrity_selects_exact_check_and_reports_legacy_rows`; `tests/contract/test_project_store.py::test_legacy_overflow_empties_only_affected_relation_and_continues_others`.
+- [ ] Fix these A12.1 snapshot RED nodes before production edits:
+  - `tests/integration/test_read_only_diagnostics.py::test_mode_ro_query_only_is_not_a_zero_byte_mutation_contract_on_wal`
+  - `tests/integration/test_read_only_diagnostics.py::test_diagnostic_snapshot_opens_no_sqlite_connection_or_project_lock_on_source`
+  - `tests/integration/test_read_only_diagnostics.py::test_held_windows_project_lock_is_never_opened_or_hashed_and_snapshot_succeeds`
+  - `tests/integration/test_read_only_diagnostics.py::test_source_project_lock_open_spy_proves_metadata_only_capture`
+  - `tests/integration/test_read_only_diagnostics.py::test_stable_main_without_wal_consolidates_to_exact_owned_layout`
+  - `tests/integration/test_read_only_diagnostics.py::test_stable_main_and_wal_snapshot_includes_latest_committed_wal_state`
+  - `tests/integration/test_read_only_diagnostics.py::test_uncommitted_wal_tail_is_not_reported_as_committed_state`
+  - `tests/integration/test_read_only_diagnostics.py::test_db_or_wal_change_between_manifests_fails_snapshot_unstable`
+  - `tests/integration/test_read_only_diagnostics.py::test_wal_appearance_disappearance_or_identity_swap_fails_snapshot_unstable`
+  - `tests/integration/test_read_only_diagnostics.py::test_unopenable_or_checkpoint_failing_db_wal_is_snapshot_invalid`
+  - `tests/integration/test_read_only_diagnostics.py::test_snapshot_rejects_reparse_nonregular_unexpected_and_oversize_members`
+  - `tests/integration/test_read_only_diagnostics.py::test_snapshot_expected_errors_are_typed_finite_read_only_and_redacted`
+  - `tests/integration/test_read_only_diagnostics.py::test_wal_logical_size_and_owned_main_page_bounds_fail_resource_limit`
+  - `tests/integration/test_read_only_diagnostics.py::test_owned_peak_tree_and_enospc_fail_resource_limit`
+  - `tests/integration/test_read_only_diagnostics.py::test_cooperative_deadline_checks_after_blocking_phases_fail_resource_limit`
+  - `tests/integration/test_read_only_diagnostics.py::test_snapshot_failure_closes_handles_and_cleanup_failure_uses_typed_code`
+  - `tests/integration/test_read_only_diagnostics.py::test_idle_source_bytes_and_members_remain_exactly_unchanged`
+  - `tests/integration/test_read_only_diagnostics.py::test_active_writer_uses_stable_db_wal_or_finite_failure_without_shm_hash_equality`
+  - `tests/integration/test_read_only_diagnostics.py::test_consolidation_sql_excludes_integrity_foreign_key_and_legacy_queries`
+  - `tests/integration/test_read_only_diagnostics.py::test_checkpointable_foreign_key_violation_reaches_store_foreign_key_report`
+  - `tests/integration/test_read_only_diagnostics.py::test_checkpointable_non_ok_integrity_reaches_store_check_failed`
+- [ ] Fix A12.1 boundaries: `tests/architecture/test_dependency_boundaries.py::test_a12_1_snapshot_and_store_tests_do_not_import_modeling_cli_doctor`; `tests/architecture/test_dependency_boundaries.py::test_diagnostic_snapshot_has_no_core_cli_or_source_sqlite_dependency`; `tests/security/test_m1a_boundaries.py::test_diagnostic_snapshot_rejects_unsafe_source_members_without_sensitive_error_text`.
+- [ ] A12.1 tests and product contain no import of `modeling_cli.doctor` and no `test_doctor_*` node. The real-held-lock node is Windows-primary; the open-spy node enforces the no-open rule platform-independently.
 - [ ] Run focused tests; record expected failures before editing production.
-- [ ] Implement minimal DTO/opener/Store changes.
+- [ ] Implement `diagnostic_snapshot.py` plus minimal DTO/Store changes. Do not change `storage.py`, add a general opener, or route regular live Store reads through this path.
 - [ ] Run focused tests, full Store/application regressions, Ruff, MyPy.
-- [ ] Independent spec review: no second port, doctor SQL, write connection, or core SQLite import.
-- [ ] Commit only GREEN reviewed slice: `fix: make project diagnostics strictly read only`.
+- [ ] Independent spec review: source lock is metadata-only; source has no SQLite/lock/mutation; consolidation trace has no Store diagnostic query; owned snapshot has exact three-file layout and all source/destination bounds; no second port, doctor import/SQL, or core SQLite import.
+- [ ] Commit only GREEN reviewed slice: `feat: add stable diagnostic snapshot`.
 
 ### Slice A12.2: doctor Schema and orchestration
 
-- [ ] Add REDs in `tests/unit/test_doctor.py` with exact names from section 4 plus strict Schema branches, fixed stderr failure, root error boundary, lossless Store serialization, and deep cleanup.
-- [ ] Implement packaged Schema, `diagnose_project`, `run_doctor`, CLI wiring, canonical human/JSON rendering.
+- [ ] Fix these A12.2 integration REDs: `tests/integration/test_read_only_diagnostics.py::test_doctor_binds_composition_only_to_owned_snapshot_root`; `tests/integration/test_read_only_diagnostics.py::test_doctor_cleans_base_snapshot_and_deep_smoke_roots_on_every_exit`; `tests/integration/test_read_only_diagnostics.py::test_real_foreign_key_violation_maps_to_doctor_foreign_key_failure`; `tests/integration/test_read_only_diagnostics.py::test_checkpointable_non_ok_integrity_maps_to_doctor_check_failed`; `tests/integration/test_read_only_diagnostics.py::test_full_doctor_idle_source_bytes_and_members_are_unchanged`; `tests/integration/test_read_only_diagnostics.py::test_full_doctor_active_writer_is_verified_or_finite_without_shm_hash_assertion`.
+- [ ] Fix these doctor REDs: `tests/unit/test_doctor.py::test_uninitialized_is_warning_and_storage_ready_and_ready_are_ready`; `tests/unit/test_doctor.py::test_degraded_legacy_and_integrity_failures_are_unsafe`; `tests/unit/test_doctor.py::test_doctor_uses_shared_facade_and_store_without_starting_inspected_composition`; `tests/unit/test_doctor.py::test_all_snapshot_failure_codes_map_to_empty_redacted_pre_store_payload`; `tests/unit/test_doctor.py::test_unexpected_doctor_error_maps_to_fixed_redacted_check_error`; `tests/unit/test_doctor.py::test_doctor_schema_is_strict_versioned_finite_and_packaged`; `tests/unit/test_doctor.py::test_build_composition_failures_render_one_redacted_unsafe_report`; `tests/unit/test_doctor.py::test_schema_validation_failure_is_stderr_only_and_exit_two`; `tests/unit/test_doctor.py::test_render_occurs_once_only_after_base_and_deep_context_exit`; `tests/unit/test_doctor.py::test_cleanup_failure_discards_ready_report_without_prior_stdout`; `tests/unit/test_doctor.py::test_deep_doctor_runs_owned_root_and_lock_smokes_then_cleans_up`.
+- [ ] Fix A12.2 boundaries: `tests/architecture/test_dependency_boundaries.py::test_doctor_has_no_source_sqlite_or_writer_side_effects`; `tests/security/test_m1a_boundaries.py::test_doctor_rejects_unsafe_root_without_traceback_or_path_disclosure`.
+- [ ] Implement packaged Schema, snapshot-consuming `diagnose_project`/`run_doctor`, CLI wiring, and canonical human/JSON rendering. Composition receives only the owned snapshot root.
 - [ ] Run doctor unit/integration/security/architecture tests and real bootstrap -> deep doctor command.
-- [ ] Independent review: finite/redacted report; no inspected composition start; exact state/exit map; deep owned lifecycle.
-- [ ] Commit: `feat: add strict read-only project doctor`.
+- [ ] Run real CLI doctor fixtures for clean-WAL, existing-WAL, active writer, checkpointable integrity/FK findings, and unopenable/checkpoint-failing DB/WAL; the active writer either yields a verified stable DB+WAL snapshot or finite UNSAFE/2, never unverified READY.
+- [ ] Independent review: frozen A12.1 interface unchanged; five finite snapshot codes and unexpected boundary are redacted; output follows both cleanups; no source SQLite/composition/lock; exact state/exit map and two-root lifecycle.
+- [ ] Commit: `feat: add snapshot-backed project doctor`.
+
+A12.2 consumes the reviewed A12.1 interface and must not change capture,
+consolidation, limits, or exception semantics. Any correction returns to A12.1
+with a new failing regression, focused review, and separate `fix:` commit.
+
+Acceptance/Harness REDs for A12.3/A12.4 remain the exact A-nodes in section
+4.3 plus `tests/acceptance/test_m1a_acceptance_map.py::test_acceptance_policy_mutations_reject_each_a_clause`; `tests/acceptance/test_m1a_acceptance_map.py::test_acceptance_map_materializes_pass_and_failure_documents`; `tests/acceptance/test_m1a_acceptance_map.py::test_parameterized_family_requires_complete_passing_current_run_evidence`; `tests/acceptance/test_m1a_acceptance_map.py::test_acceptance_map_rejects_recursive_or_current_evidence_dependencies`; `tests/reproducibility/test_m1a_repeatability.py::test_junit_parser_records_strict_normalized_exact_test_nodes`; `tests/reproducibility/test_m1a_repeatability.py::test_missing_or_renamed_current_run_literal_node_forces_fingerprinted_failed_bundle`; `tests/reproducibility/test_m1a_repeatability.py::test_a12_failure_mutations_publish_exact_seven_file_failed_bundles`.
 
 ### Slice A12.3: minimum context and Codex template
 
@@ -398,7 +613,7 @@ New RED node names are fixed before production/policy edits:
 ### Slice A12.4: acceptance map and final gate
 
 - [ ] Add REDs fixing every section-4 node name before policy code; add synthetic two-phase/pointer/failure mutation tests and narrow A11 transition REDs.
-- [ ] Implement JUnit exact-node capture, policy validation, current-run acyclic materialization, report 0.2.0, 15-check profile, 34/87 package transition, and empty A12 incomplete group.
+- [ ] Implement JUnit exact-node capture, policy validation, current-run acyclic materialization, report 0.2.0, 15-check profile, 37/92 package transition, and empty A12 incomplete group.
 - [ ] Run focused acceptance/reproducibility/Harness tests; run real verify and inspect all seven files.
 - [ ] Independent Harness review: failure bundles, no recursion/current evidence, exact nodes/pointers/order/counts, A11 no-clobber/source-drift preservation.
 - [ ] Commit: `test: close the M1a acceptance evidence gate`.
@@ -421,7 +636,7 @@ git diff --check
 git status --short
 ```
 
-Final PASS requires doctor exit 0 for healthy STORAGE_READY after bootstrap, exact 15/15 Harness PASS, required skips 0, empty incomplete groups, A-01..A-10 PASS with current-run exact-node proof, exact seven evidence files, report/map 0.2.0/0.1.0, 34 non-Python assets, 87 synthetic wheel items, packaged/docs template byte identity, unchanged core catalog/18 tool Schemas, ignored evidence output, and clean source tree.
+Final PASS requires doctor exit 0 for healthy STORAGE_READY after bootstrap, exact 15/15 Harness PASS, required skips 0, empty incomplete groups, A-01..A-10 PASS with current-run exact-node proof, exact seven evidence files, report/map 0.2.0/0.1.0, 37 non-Python assets, 92 synthetic wheel items, literal presence of both new Python modules, fixed hashes for all five new non-Python assets, packaged/docs template byte identity, unchanged core catalog/18 tool Schemas, ignored evidence output, and clean source tree.
 
 ## 8. Review traceability
 
@@ -429,16 +644,28 @@ Final PASS requires doctor exit 0 for healthy STORAGE_READY after bootstrap, exa
 | --- | --- |
 | C1 failure publication | 4.1, 5 |
 | C2 acyclic report/artifact inputs | 4.1-4.2 |
-| C3 complete read-only graph | 2.3, 3.2 |
+| C3 complete diagnostic graph | 2.3, 3.2 |
 | I1 finite DTO/branches | 2.1-2.2 |
 | I2 doctor issues/check/state map | 3.1-3.2 |
 | I3 clause-complete literal nodes | 4.3 |
 | I4 bare-array pointers | 4.2 |
 | I5 no current/recursive evidence tests | 4.2, 5 |
 | I6 deep lifecycle | 3.3 |
-| I7 34/87 package transition | 5 |
+| I7 37/92 package transition | 5 |
 | M1 UTF-8 order | Global Constraints, 2.1, 4.2 |
 | M2 Schema failure stdout/stderr | 3.2 |
 | Addendum review C1 current-run node evidence | 4.1, 4.3, 5 |
 | Addendum review I1 installed template authority | 1, 3.2, 5 |
 | Addendum fix2 C1 parameterized family evidence | 4.1, 4.3, 5 |
+| A12.1 WAL remediation: stable raw capture and owned consolidation | 1, 2.3, 3.2-3.3, 6 |
+| A12.1 WAL remediation: per-relation overflow isolation | 2.1-2.2, 6 |
+| WAL review C1 transport-only consolidation / Store-owned diagnostics | 2.2-2.3, 3.2, 6 |
+| WAL review C2 complete 37/92 package inventory | 4.3, 5-7 |
+| WAL review I1 typed finite snapshot exception | 2.3, 3.2, 6 |
+| Technical C1 held source lock is metadata-only | 2.3, 6 |
+| Technical I2 render only after both cleanups | 2.3, 3.2-3.3, 6 |
+| Technical I3 destination and cooperative-time bounds | 2.3, 6 |
+| Technical I4 empty pre-Store issue provenance | 3.1-3.2, 6 |
+| Technical I5 literal A12.1/A12.2 test ownership | 6 |
+| Technical M1 narrowed live-Store preservation | 1, 2.3 |
+| Technical M2 idle/active SHM causality | 2.3, 6 |
