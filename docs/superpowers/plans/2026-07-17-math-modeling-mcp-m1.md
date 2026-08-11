@@ -1818,6 +1818,9 @@ can merge it with its safe platform environment.
 > the addendum's explicit `inspect_integrity` result semantics change.
 > Five typed finite snapshot failures, render-after-cleanup sequencing, and
 > 128 MiB owned-main/256 MiB owned-tree cooperative bounds are binding.
+> Each A12.1-A12.4 slice owns a literal package-inventory update in
+> `tests/reproducibility/test_m1a_repeatability.py` and must leave the complete
+> test suite GREEN; expected counts/paths/hashes are never derived dynamically.
 
 **Primary concern:** 可安全维护和可声明的最小 Context/Harness 交付。
 
@@ -1829,7 +1832,8 @@ can merge it with its safe platform environment.
 - A12 addendum expansion — Create: `src/modeling_cli/schemas/doctor/0.1.0/report.schema.json`, `src/modeling_cli/templates/codex/config.toml`, `src/modeling_infrastructure/diagnostic_snapshot.py`, `tests/integration/test_read_only_diagnostics.py`
 - A12 addendum expansion — Modify: `src/modeling_core/ports/project_store.py`, `src/modeling_infrastructure/sqlite/store.py`, `tests/contract/test_project_store.py`, `tests/security/test_m1a_boundaries.py`, `tests/architecture/test_dependency_boundaries.py`, `tests/reproducibility/test_m1a_repeatability.py`
 - A12 addendum exclusion — `src/modeling_infrastructure/storage.py` is not modified for the diagnostic snapshot; regular live Store connection, metadata, writer-lock, and transient-sidecar paths retain their existing behavior.
-- A12 package gate — add exactly two Python package files (`modeling_cli/doctor.py`, `modeling_infrastructure/diagnostic_snapshot.py`) and five non-Python package assets (doctor Schema, packaged Codex template, and the three package-root `AGENTS.md` files): non-Python 32 -> 37, Python 53 -> 55, total 85 -> 92 across the unchanged seven roots; all five non-Python paths have fixed raw hashes.
+- A12 slice ownership — A12.1 adds only package member `modeling_infrastructure/diagnostic_snapshot.py`; A12.2 adds `modeling_cli/doctor.py`, the doctor Schema, and packaged Codex template; A12.3 adds the three `src` package-root `AGENTS.md` files; A12.4 adds no package member and freezes final hashes.
+- A12 package gates — A11 baseline `85 = 53 Python + 32 non-Python`; A12.1 `86 = 54 + 32`; A12.2 `89 = 55 + 34`; A12.3 `92 = 55 + 37`; A12.4 remains `92 = 55 + 37`. Every slice may modify `tests/reproducibility/test_m1a_repeatability.py` for its own literal row and exact new paths, must run the full suite GREEN, and may not derive expected counts from the built wheel. A12.4 fixes raw hashes for the five final non-Python assets.
 
 **Interfaces produced:** `modeling doctor --project-root tests/.tmp/manual-project [--deep] [--json]`; complete M1a context router; usable production Codex project config; M1a-0 historical-feasibility link; A-01 through A-10 evidence map.
 

@@ -529,9 +529,17 @@ finite diagnostic, not a prerequisite error.
 
 Keep seven filenames. Report changes from `m1a-verification-report/0.1.0` to `0.2.0`; retain all ten old keys and add exactly `acceptance_map` with `m1a-acceptance-map/0.1.0`. Legacy five-entry `artifacts` map does not gain self-reference.
 
-A12 adds two Python package files—`modeling_cli/doctor.py` and
-`modeling_infrastructure/diagnostic_snapshot.py`—and exactly five non-Python
-package assets:
+A11 baseline and every A12 slice have a literal package inventory gate:
+
+| Gate | Python | non-Python | total | exact new package members |
+| --- | ---: | ---: | ---: | --- |
+| A11 baseline | 53 | 32 | 85 | none |
+| A12.1 | 54 | 32 | 86 | `modeling_infrastructure/diagnostic_snapshot.py` |
+| A12.2 | 55 | 34 | 89 | `modeling_cli/doctor.py`; doctor Schema; packaged Codex template |
+| A12.3 | 55 | 37 | 92 | three package-root `AGENTS.md` files |
+| A12.4/final | 55 | 37 | 92 | no new member; freeze final five non-Python hashes |
+
+The five final non-Python package assets are:
 
 ```text
 modeling_cli/schemas/doctor/0.1.0/report.schema.json
@@ -541,12 +549,15 @@ modeling_capabilities/AGENTS.md
 modeling_mcp/AGENTS.md
 ```
 
-Non-Python assets transition 32 -> 37; Python files transition 53 -> 55;
-synthetic wheel total transitions 85 -> 92. Seven unique roots remain. Tests
-assert all seven literal new package paths and fixed final raw-byte SHA-256
-constants for each of the five non-Python assets, never self-derived expected
-hashes. The repository `docs/templates/codex/config.toml` remains a mandatory
-byte/hash-identical mirror of the packaged template but is not a wheel member.
+Seven unique roots remain throughout. Every slice may modify
+`tests/reproducibility/test_m1a_repeatability.py` only to advance to its row's
+literal counts and exact newly present paths; its complete test suite must be
+GREEN before that slice commits. Expected counts/paths are constants from this
+table, never derived from the wheel being checked. A12.4 fixes final raw-byte
+SHA-256 constants for each of the five non-Python assets and asserts all seven
+new package paths. The repository `docs/templates/codex/config.toml` remains a
+mandatory byte/hash-identical mirror of the packaged template but is not a
+wheel member.
 
 Mutation matrix must cover: check FAIL; required skip; golden FAIL; wheel FAIL; removal or raw-byte mutation of each of the five new non-Python package assets; source drift; exact node removed/renamed/not run while broad group remains PASS; required family with no member; one observed family member missing outcome evidence; one family member FAILED; one family member SKIPPED; complete multi-member family PASS with all exact parameter IDs retained; malformed/duplicate/over-limit JUnit node; duplicate A ID; missing/recursive pointer; missing transcript/trace; eighth artifact; silent 0.1.0 mutation; acceptance test reading current evidence; acceptance test invoking verify. Executed failures publish valid exact-seven bundles.
 
@@ -581,7 +592,9 @@ Mutation matrix must cover: check FAIL; required skip; golden FAIL; wheel FAIL; 
 - [ ] A12.1 tests and product contain no import of `modeling_cli.doctor` and no `test_doctor_*` node. The real-held-lock node is Windows-primary; the open-spy node enforces the no-open rule platform-independently.
 - [ ] Run focused tests; record expected failures before editing production.
 - [ ] Implement `diagnostic_snapshot.py` plus minimal DTO/Store changes. Do not change `storage.py`, add a general opener, or route regular live Store reads through this path.
+- [ ] Modify `tests/reproducibility/test_m1a_repeatability.py` in this slice to require literal `86 total = 54 Python + 32 non-Python` and exact member `modeling_infrastructure/diagnostic_snapshot.py`; do not derive expected counts dynamically.
 - [ ] Run focused tests, full Store/application regressions, Ruff, MyPy.
+- [ ] Run the complete `pytest tests -q` suite GREEN at the 86/54/32 inventory before review or commit.
 - [ ] Independent spec review: source lock is metadata-only; source has no SQLite/lock/mutation; consolidation trace has no Store diagnostic query; owned snapshot has exact three-file layout and all source/destination bounds; no second port, doctor import/SQL, or core SQLite import.
 - [ ] Commit only GREEN reviewed slice: `feat: add stable diagnostic snapshot`.
 
@@ -591,8 +604,10 @@ Mutation matrix must cover: check FAIL; required skip; golden FAIL; wheel FAIL; 
 - [ ] Fix these doctor REDs: `tests/unit/test_doctor.py::test_uninitialized_is_warning_and_storage_ready_and_ready_are_ready`; `tests/unit/test_doctor.py::test_degraded_legacy_and_integrity_failures_are_unsafe`; `tests/unit/test_doctor.py::test_doctor_uses_shared_facade_and_store_without_starting_inspected_composition`; `tests/unit/test_doctor.py::test_all_snapshot_failure_codes_map_to_empty_redacted_pre_store_payload`; `tests/unit/test_doctor.py::test_unexpected_doctor_error_maps_to_fixed_redacted_check_error`; `tests/unit/test_doctor.py::test_doctor_schema_is_strict_versioned_finite_and_packaged`; `tests/unit/test_doctor.py::test_build_composition_failures_render_one_redacted_unsafe_report`; `tests/unit/test_doctor.py::test_schema_validation_failure_is_stderr_only_and_exit_two`; `tests/unit/test_doctor.py::test_render_occurs_once_only_after_base_and_deep_context_exit`; `tests/unit/test_doctor.py::test_cleanup_failure_discards_ready_report_without_prior_stdout`; `tests/unit/test_doctor.py::test_deep_doctor_runs_owned_root_and_lock_smokes_then_cleans_up`.
 - [ ] Fix A12.2 boundaries: `tests/architecture/test_dependency_boundaries.py::test_doctor_has_no_source_sqlite_or_writer_side_effects`; `tests/security/test_m1a_boundaries.py::test_doctor_rejects_unsafe_root_without_traceback_or_path_disclosure`.
 - [ ] Implement packaged Schema, snapshot-consuming `diagnose_project`/`run_doctor`, CLI wiring, and canonical human/JSON rendering. Composition receives only the owned snapshot root.
+- [ ] Modify `tests/reproducibility/test_m1a_repeatability.py` in this slice to require literal `89 total = 55 Python + 34 non-Python` and the exact new `modeling_cli/doctor.py`, doctor-Schema, and packaged-template paths; do not derive expected counts dynamically.
 - [ ] Run doctor unit/integration/security/architecture tests and real bootstrap -> deep doctor command.
 - [ ] Run real CLI doctor fixtures for clean-WAL, existing-WAL, active writer, checkpointable integrity/FK findings, and unopenable/checkpoint-failing DB/WAL; the active writer either yields a verified stable DB+WAL snapshot or finite UNSAFE/2, never unverified READY.
+- [ ] Run the complete `pytest tests -q` suite GREEN at the 89/55/34 inventory before review or commit.
 - [ ] Independent review: frozen A12.1 interface unchanged; five finite snapshot codes and unexpected boundary are redacted; output follows both cleanups; no source SQLite/composition/lock; exact state/exit map and two-root lifecycle.
 - [ ] Commit: `feat: add snapshot-backed project doctor`.
 
@@ -607,14 +622,18 @@ Acceptance/Harness REDs for A12.3/A12.4 remain the exact A-nodes in section
 
 - [ ] Add structural REDs for exact AGENTS/docs/link inventory, authority routing, M1 scope/abstraction budget, one M1a-0 plus A1-A12 headings, and exact trusted-project Codex TOML.
 - [ ] Create only original A12 context/docs/template files; update README last.
+- [ ] Modify `tests/reproducibility/test_m1a_repeatability.py` in this slice to require literal `92 total = 55 Python + 37 non-Python` and exact `modeling_core/AGENTS.md`, `modeling_capabilities/AGENTS.md`, and `modeling_mcp/AGENTS.md` package paths; do not derive expected counts dynamically.
 - [ ] Run acceptance/static link/TOML tests and independent docs/config review.
+- [ ] Run the complete `pytest tests -q` suite GREEN at the 92/55/37 inventory before review or commit.
 - [ ] Commit: `docs: establish the M1a context contracts`.
 
 ### Slice A12.4: acceptance map and final gate
 
 - [ ] Add REDs fixing every section-4 node name before policy code; add synthetic two-phase/pointer/failure mutation tests and narrow A11 transition REDs.
-- [ ] Implement JUnit exact-node capture, policy validation, current-run acyclic materialization, report 0.2.0, 15-check profile, 37/92 package transition, and empty A12 incomplete group.
+- [ ] Implement JUnit exact-node capture, policy validation, current-run acyclic materialization, report 0.2.0, 15-check profile, and empty A12 incomplete group while retaining literal `92 total = 55 Python + 37 non-Python`.
+- [ ] Modify `tests/reproducibility/test_m1a_repeatability.py` in this slice to freeze fixed raw-byte SHA-256 constants for all five final non-Python assets and exact presence of all seven new package members; do not derive expected counts or hashes dynamically.
 - [ ] Run focused acceptance/reproducibility/Harness tests; run real verify and inspect all seven files.
+- [ ] Run the complete `pytest tests -q` suite GREEN at the unchanged 92/55/37 inventory before review or commit.
 - [ ] Independent Harness review: failure bundles, no recursion/current evidence, exact nodes/pointers/order/counts, A11 no-clobber/source-drift preservation.
 - [ ] Commit: `test: close the M1a acceptance evidence gate`.
 
@@ -669,3 +688,4 @@ Final PASS requires doctor exit 0 for healthy STORAGE_READY after bootstrap, exa
 | Technical I5 literal A12.1/A12.2 test ownership | 6 |
 | Technical M1 narrowed live-Store preservation | 1, 2.3 |
 | Technical M2 idle/active SHM causality | 2.3, 6 |
+| Slice-count clarification: every A12 commit has a literal GREEN wheel inventory | 1, 5-7 |
