@@ -1812,13 +1812,14 @@ can merge it with its safe platform environment.
 > doctor captures stable raw DB/WAL files without SQLite or `ProjectLock` and
 > never opens/reads/hashes the source `project.lock`; it binds composition only
 > to a normalized owned root. The binding Windows probe correction dated
-> 2026-08-11 also supersedes the earlier copied-input read/write checkpoint
-> design: copied raw DB, an always-present owned-input WAL form, and an
+> 2026-08-11 also supersedes the earlier copied-input read/write and filesystem-
+> output design: copied raw DB, an always-present owned-input WAL form, and an
 > always-present zero-byte owned-input SHM sentinel each remain under
 > `GENERIC_READ` plus `FILE_SHARE_READ` guards, SQLite opens them only with URI
 > `mode=ro` plus
-> verified connection-local `query_only`, and `Connection.backup` copies their
-> committed logical state into a distinct normalized output. SQLite never
+> verified connection-local `query_only`, and bounded `Connection.backup`
+> copies their committed logical state into a distinct `:memory:` destination.
+> SQLite never
 > writes or checkpoints the copied raw DB/WAL; their complete hashes must be
 > unchanged after backup. When source WAL is absent, the owned-input WAL form
 > is a zero-byte SHA(empty) sentinel created before SQLite open, guarded by the
@@ -1828,11 +1829,15 @@ can merge it with its safe platform environment.
 > empty SHM sentinel is held through input close, forcing the read-only SQLite
 > connection to use a private heap WAL-index while retaining committed copied
 > WAL state, then it is identity-bound deleted. No SQLite-created input member
-> is allowed. On the fresh normalized DB, the validated raw-header page size is
-> set and queried back before `journal_mode=WAL`; before backup,
-> `max_page_count=floor(134,217,728/page_size)` is set and verified and output
-> WAL absence is proved. Only normalized output may be opened read/write and
-> checkpointed. Backup success grammar is exactly `SQLITE_OK* -> exactly one
+> is allowed. After backup, the in-memory page size and page count must agree
+> with the validated raw header and the 128 MiB logical cap. `serialize()` is
+> called exactly once; its immutable bytes must have exactly
+> `page_size * page_count` length and remain within 128 MiB. Those bytes are
+> written once through exclusive `xb` creation, chunked hashing, flush, and
+> fsync to the normalized `state.sqlite3`, whose final identity, size, and hash
+> are rebound. SQLite never opens the normalized filesystem path, so no output
+> WAL/SHM/checkpoint or max-page setter exists. Backup success grammar is
+> exactly `SQLITE_OK* -> exactly one
 > SQLITE_DONE` (DONE-only allowed), with fixed `total`, monotonically
 > non-increasing bounded `remaining`, no post-DONE callback, and the addendum's
 > finite status-family map.
@@ -1841,11 +1846,11 @@ can merge it with its safe platform environment.
 > Store connection, metadata, writer-lock, and transient-sidecar behavior stays
 > unchanged while the addendum's explicit `inspect_integrity` result semantics
 > change. Five typed finite snapshot failures, render-after-cleanup sequencing,
-> the fixed 10-second/1,025-callback bounds, literal 140,509,216-byte output-WAL
-> cap, covered 16,783,392-byte largest first callback step, and literal
-> 425,787,488-byte owned peak for raw input, zero-byte input SHM sentinel,
-> normalized output and sidecars are binding; limits or inventories must never
-> be derived dynamically.
+> the fixed 10-second/1,025-callback bounds and literal 536,936,512-byte owned
+> peak are binding. That peak counts a 128 MiB raw persistent input, 128 MiB
+> in-memory database, 128 MiB serialized bytes, 128 MiB final on-disk database,
+> and 65,600 B for project/lock while the zero-byte input sentinels add nothing;
+> limits or inventories must never be derived dynamically.
 >
 > This correction is authorized within A12.1 only; it does not create another
 > remediation, slice, package member, or commit boundary. Before production
@@ -1857,18 +1862,23 @@ can merge it with its safe platform environment.
 > `test_read_only_backup_leaves_raw_input_database_and_wal_bytes_unchanged`,
 > `test_read_only_backup_preserves_latest_committed_wal_state`,
 > `test_read_only_backup_preserves_non_default_source_page_size`,
-> `test_output_wal_frame_overhead_and_256_page_step_respect_literal_caps`,
-> `test_owned_peak_limit_is_literal_425787488_bytes`,
+> `test_memory_backup_opens_no_output_filesystem_sqlite_or_sidecars`,
+> `test_owned_peak_limit_is_literal_536936512_bytes`,
 > `test_backup_progress_accepts_done_only_and_ok_star_done`,
 > `test_backup_progress_rejects_duplicate_post_done_and_unknown_status_with_finite_codes`,
-> `test_normalized_max_page_count_is_set_and_verified_before_backup`,
-> `test_read_only_backup_failure_uses_finite_redacted_snapshot_code`,
+> `test_serialized_database_length_hash_and_limits_are_exact`,
+> `test_normalized_output_is_exclusively_created_and_rejects_late_drift`,
+> `test_backup_serialize_and_output_write_failures_are_finite_and_redacted`,
 > `test_normalized_backup_publishes_exact_owned_layout_without_sidecars`,
-> `test_checkpointable_foreign_key_violation_reaches_store_foreign_key_report`,
-> and `test_checkpointable_non_ok_integrity_reaches_store_check_failed` in
+> `test_input_wal_and_memory_serialized_final_bounds_fail_resource_limit`,
+> `test_read_only_backup_sql_is_limited_to_input_and_memory_output_allowlists`,
+> `test_preserved_foreign_key_violation_reaches_store_foreign_key_report`,
+> `test_preserved_non_ok_integrity_reaches_store_check_failed`,
+> `test_same_size_owned_copy_corruption_fails_snapshot_unstable`, and
+> `test_owned_and_cleanup_enumeration_stops_at_allowlist_plus_one` in
 > `tests/integration/test_read_only_diagnostics.py`. The addendum's complete
-> input/output SQL allowlists, deadline, finite-code and cleanup semantics are
-> binding.
+> input/in-memory-output SQL allowlists, deadline, finite-code and cleanup
+> semantics are binding.
 > Each A12.1-A12.4 slice owns a literal package-inventory update in
 > `tests/reproducibility/test_m1a_repeatability.py` and must leave the complete
 > test suite GREEN; expected counts/paths/hashes are never derived dynamically.
@@ -1912,7 +1922,7 @@ can merge it with its safe platform environment.
 
 - [ ] **Step 3: Implement snapshot-backed doctor**
 
-  Doctor first performs the addendum's one-attempt raw stable capture without opening the source lock. It holds copied DB, an always-present copied-or-synthetic WAL, and an always-present empty SHM sentinel under read-only Windows guards, opens that input only with SQLite URI `mode=ro` plus verified `query_only`, and uses bounded `Connection.backup` to a distinct normalized output; copied input DB/WAL and sentinel identities/hashes must remain exact. If source WAL is absent, an identity-bound empty sentinel occupies the owned-input WAL name. The always-empty guarded SHM name forces SQLite to use its private heap WAL-index while retaining committed WAL state. Both synthetic sentinels block create/write/truncate through input close and are then safely removed through verified bound-delete handles. The fresh output receives and verifies the validated source-header page size before entering WAL mode; before backup it sets/verifies the fixed logical max-page count and proves output WAL absence. Only normalized output is checkpointed. Backup progress uses the addendum's finite status map and exact `OK* -> one DONE` grammar. Literal output-WAL and total-owned caps are 140,509,216 and 425,787,488 bytes. It then composes against the exact published owned root. The same `ApplicationFacade.health_check` and `ApplicationFacade.list_capabilities` used by MCP run there; `ProjectStore.inspect_integrity` alone owns SQLite `quick_check` by default/`integrity_check` in deep mode, FK and legacy queries. Build and Schema-validate the report in memory, close the distinct deep root and base snapshot, then render exactly once. Cleanup failure discards READY and maps to finite `snapshot_cleanup_failed` UNSAFE/2 with no earlier stdout. Exit mapping remains 0 ready, 1 warnings, 2 unsafe; no doctor-only Facade business branch is added.
+  Doctor first performs the addendum's one-attempt raw stable capture without opening the source lock. It holds copied DB, an always-present copied-or-synthetic WAL, and an always-present empty SHM sentinel under read-only Windows guards, opens that input only with SQLite URI `mode=ro` plus verified `query_only`, and uses bounded `Connection.backup` to a distinct `:memory:` destination; copied input DB/WAL and sentinel identities/hashes must remain exact. If source WAL is absent, an identity-bound empty sentinel occupies the owned-input WAL name. The always-empty guarded SHM name forces SQLite to use its private heap WAL-index while retaining committed copied-WAL state. Both synthetic sentinels block create/write/truncate through input close and are then safely removed through verified bound-delete handles. After backup, page size, page count, and their product are verified against the raw header and 128 MiB cap. The in-memory database is serialized exactly once; its immutable byte length must equal that product and remain within 128 MiB. The final normalized `state.sqlite3` is exclusively created with `xb`, written while hashing, flushed, fsynced, closed, and rebound by identity/size/hash. SQLite never opens this filesystem path; output WAL/SHM/checkpoint and a max-page setter are forbidden. Backup progress uses the addendum's finite status map and exact `OK* -> one DONE` grammar. The literal owned peak is 536,936,512 B: four simultaneous 128 MiB components plus 65,600 B project/lock. It then composes against the exact published owned root. The same `ApplicationFacade.health_check` and `ApplicationFacade.list_capabilities` used by MCP run there; `ProjectStore.inspect_integrity` alone owns SQLite `quick_check` by default/`integrity_check` in deep mode, FK and legacy queries. Build and Schema-validate the report in memory, close the distinct deep root and base snapshot, then render exactly once. Cleanup failure discards READY and maps to finite `snapshot_cleanup_failed` UNSAFE/2 with no earlier stdout. Exit mapping remains 0 ready, 1 warnings, 2 unsafe; no doctor-only Facade business branch is added.
 
 - [ ] **Step 4: Write minimal stable context and contract documents**
 
