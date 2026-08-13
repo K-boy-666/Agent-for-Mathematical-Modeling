@@ -764,3 +764,27 @@ def test_degraded_project_allows_only_health_and_preserves_authoritative_bytes(
         }, tool_name
     assert project_json.read_bytes() == before_project
     assert database.read_bytes() == before_database
+
+
+def test_diagnostic_snapshot_rejects_unsafe_source_members_without_sensitive_error_text(
+    tmp_path: Path,
+) -> None:
+    """Catches unsafe layout acceptance and path/OS detail disclosure."""
+    from modeling_infrastructure.diagnostic_snapshot import (
+        DiagnosticSnapshotError,
+        materialize_diagnostic_snapshot,
+    )
+
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    secret = "credential-super-secret.txt"
+    (tmp_path / ".modeling" / secret).write_bytes(b"do not disclose")
+
+    with pytest.raises(DiagnosticSnapshotError) as captured:
+        with materialize_diagnostic_snapshot(tmp_path):
+            pass
+
+    assert captured.value.code == "snapshot_invalid"
+    rendered = f"{captured.value!s}\n{captured.value!r}"
+    assert secret not in rendered
+    assert str(tmp_path) not in rendered
+    assert "do not disclose" not in rendered

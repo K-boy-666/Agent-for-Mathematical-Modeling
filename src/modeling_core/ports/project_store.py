@@ -5,7 +5,7 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any, Protocol, cast
+from typing import Annotated, Any, Literal, Protocol, cast
 
 from pydantic import Field, TypeAdapter
 
@@ -59,6 +59,38 @@ _TERMINAL_VALIDATIONS = frozenset(
     }
 )
 _RETRYABLE_CONFLICTS = frozenset({"operation_in_progress", "project_busy"})
+
+IntegrityCheckMode = Literal["quick", "integrity"]
+IntegrityCheckOutcome = Literal["PASS", "FAIL", "ERROR"]
+StoreIntegrityIssue = Literal[
+    "sqlite_quick_check",
+    "sqlite_integrity_check",
+    "foreign_key",
+    "stale_attempt",
+    "stale_validation",
+    "stale_operation",
+    "database_relation",
+    "project_state",
+]
+LegacyOperationTool = Literal["run_experiment", "validate_experiment"]
+
+_INTEGRITY_CHECK_MODE: TypeAdapter[IntegrityCheckMode] = TypeAdapter(IntegrityCheckMode)
+_INTEGRITY_CHECK_OUTCOME: TypeAdapter[IntegrityCheckOutcome] = TypeAdapter(
+    IntegrityCheckOutcome
+)
+_STORE_INTEGRITY_ISSUES = TypeAdapter(tuple[StoreIntegrityIssue, ...])
+_LEGACY_ATTEMPT_STATUS: TypeAdapter[Literal["PENDING", "RUNNING"]] = TypeAdapter(
+    Literal["PENDING", "RUNNING"]
+)
+_LEGACY_VALIDATION_STATUS: TypeAdapter[Literal["PENDING", "RUNNING"]] = TypeAdapter(
+    Literal["PENDING", "RUNNING"]
+)
+_LEGACY_OPERATION_TOOL: TypeAdapter[LegacyOperationTool] = TypeAdapter(
+    LegacyOperationTool
+)
+_LEGACY_OPERATION_STATUS: TypeAdapter[Literal["IN_PROGRESS"]] = TypeAdapter(
+    Literal["IN_PROGRESS"]
+)
 
 
 def _validate(value: object, annotation: Any) -> Any:
@@ -385,13 +417,172 @@ class StoredValidationResult:
 
 
 @dataclass(frozen=True)
-class StoreIntegrityReport:
-    state: ProjectState
-    issues: tuple[str, ...]
+class StoreIntegrityCheck:
+    mode: IntegrityCheckMode
+    outcome: IntegrityCheckOutcome
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "state", _validate(self.state, ProjectState))
-        object.__setattr__(self, "issues", _validate(self.issues, tuple[str, ...]))
+        object.__setattr__(
+            self,
+            "mode",
+            _INTEGRITY_CHECK_MODE.validate_python(self.mode, strict=True),
+        )
+        object.__setattr__(
+            self,
+            "outcome",
+            _INTEGRITY_CHECK_OUTCOME.validate_python(self.outcome, strict=True),
+        )
+
+
+@dataclass(frozen=True)
+class LegacyAttempt:
+    attempt_id: EntityId
+    status: Literal["PENDING", "RUNNING"]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "attempt_id",
+            _ENTITY_ID.validate_python(self.attempt_id, strict=True),
+        )
+        object.__setattr__(
+            self,
+            "status",
+            _LEGACY_ATTEMPT_STATUS.validate_python(self.status, strict=True),
+        )
+
+
+@dataclass(frozen=True)
+class LegacyValidation:
+    validation_id: EntityId
+    status: Literal["PENDING", "RUNNING"]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "validation_id",
+            _ENTITY_ID.validate_python(self.validation_id, strict=True),
+        )
+        object.__setattr__(
+            self,
+            "status",
+            _LEGACY_VALIDATION_STATUS.validate_python(self.status, strict=True),
+        )
+
+
+@dataclass(frozen=True)
+class LegacyIdempotencyRecord:
+    scope_id: EntityId
+    tool_name: LegacyOperationTool
+    operation_id: EntityId
+    status: Literal["IN_PROGRESS"]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "scope_id",
+            _ENTITY_ID.validate_python(self.scope_id, strict=True),
+        )
+        object.__setattr__(
+            self,
+            "tool_name",
+            _LEGACY_OPERATION_TOOL.validate_python(self.tool_name, strict=True),
+        )
+        object.__setattr__(
+            self,
+            "operation_id",
+            _ENTITY_ID.validate_python(self.operation_id, strict=True),
+        )
+        object.__setattr__(
+            self,
+            "status",
+            _LEGACY_OPERATION_STATUS.validate_python(self.status, strict=True),
+        )
+
+
+def _require_legacy_row_count(count: int) -> None:
+    if count > 100:
+        raise ValueError("legacy relation accepts at most 100 rows")
+
+
+def _require_sorted_unique_attempts(rows: tuple[LegacyAttempt, ...]) -> None:
+    _require_legacy_row_count(len(rows))
+    identities = tuple(item.attempt_id for item in rows)
+    ordering = tuple(
+        (item.status.encode("utf-8"), item.attempt_id.encode("utf-8")) for item in rows
+    )
+    if len(set(identities)) != len(identities):
+        raise ValueError("legacy relation identities must be unique")
+    if ordering != tuple(sorted(ordering)):
+        raise ValueError("legacy relation rows must use UTF-8 byte order")
+
+
+def _require_sorted_unique_validations(rows: tuple[LegacyValidation, ...]) -> None:
+    _require_legacy_row_count(len(rows))
+    identities = tuple(item.validation_id for item in rows)
+    ordering = tuple(
+        (item.status.encode("utf-8"), item.validation_id.encode("utf-8"))
+        for item in rows
+    )
+    if len(set(identities)) != len(identities):
+        raise ValueError("legacy relation identities must be unique")
+    if ordering != tuple(sorted(ordering)):
+        raise ValueError("legacy relation rows must use UTF-8 byte order")
+
+
+def _require_sorted_unique_operations(
+    rows: tuple[LegacyIdempotencyRecord, ...],
+) -> None:
+    _require_legacy_row_count(len(rows))
+    identities = tuple(
+        (item.scope_id, item.tool_name, item.operation_id) for item in rows
+    )
+    ordering = tuple(
+        (
+            item.scope_id.encode("utf-8"),
+            item.tool_name.encode("utf-8"),
+            item.operation_id.encode("utf-8"),
+        )
+        for item in rows
+    )
+    if len(set(identities)) != len(identities):
+        raise ValueError("legacy relation identities must be unique")
+    if ordering != tuple(sorted(ordering)):
+        raise ValueError("legacy relation rows must use UTF-8 byte order")
+
+
+@dataclass(frozen=True)
+class StoreIntegrityReport:
+    state: ProjectState
+    issues: tuple[StoreIntegrityIssue, ...]
+    check: StoreIntegrityCheck | None = None
+    legacy_attempts: tuple[LegacyAttempt, ...] = ()
+    legacy_validations: tuple[LegacyValidation, ...] = ()
+    legacy_idempotency_records: tuple[LegacyIdempotencyRecord, ...] = ()
+
+    def __post_init__(self) -> None:
+        state = _validate(self.state, ProjectState)
+        issues = _STORE_INTEGRITY_ISSUES.validate_python(self.issues, strict=True)
+        if len(set(issues)) != len(issues):
+            raise ValueError("integrity issues must be unique")
+        if issues != tuple(sorted(issues, key=lambda item: item.encode("utf-8"))):
+            raise ValueError("integrity issues must use UTF-8 byte order")
+        if self.check is not None and type(self.check) is not StoreIntegrityCheck:
+            raise TypeError("check must be StoreIntegrityCheck or None")
+        attempts = _validate(self.legacy_attempts, tuple[LegacyAttempt, ...])
+        validations = _validate(self.legacy_validations, tuple[LegacyValidation, ...])
+        operations = _validate(
+            self.legacy_idempotency_records,
+            tuple[LegacyIdempotencyRecord, ...],
+        )
+        _require_sorted_unique_attempts(attempts)
+        _require_sorted_unique_validations(validations)
+        _require_sorted_unique_operations(operations)
+        object.__setattr__(self, "state", state)
+        object.__setattr__(self, "issues", issues)
+        object.__setattr__(self, "legacy_attempts", attempts)
+        object.__setattr__(self, "legacy_validations", validations)
+        object.__setattr__(self, "legacy_idempotency_records", operations)
 
 
 class ProjectStoreError(Exception):
@@ -487,12 +678,20 @@ __all__ = [
     "CreateProjectCommand",
     "ExperimentTrace",
     "ExperimentTraceQuery",
+    "IntegrityCheckMode",
+    "IntegrityCheckOutcome",
+    "LegacyAttempt",
+    "LegacyIdempotencyRecord",
+    "LegacyOperationTool",
+    "LegacyValidation",
     "ProjectStateInspection",
     "ProjectStatusSnapshot",
     "ProjectStore",
     "ProjectStoreError",
     "ProjectWriteResult",
     "StoreIntegrityReport",
+    "StoreIntegrityCheck",
+    "StoreIntegrityIssue",
     "StoredRunResult",
     "StoredValidationResult",
     "ValidationSource",

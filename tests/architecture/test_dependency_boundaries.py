@@ -178,6 +178,54 @@ def test_facade_has_exactly_six_concrete_contract_methods() -> None:
         assert "request" in inspect.signature(method).parameters
 
 
+def test_a12_1_snapshot_and_store_tests_do_not_import_modeling_cli_doctor() -> None:
+    """Catches A12.1 borrowing the later A12.2 doctor boundary."""
+    repository = Path(__file__).parents[2]
+    paths = (
+        repository / "src/modeling_infrastructure/diagnostic_snapshot.py",
+        repository / "tests/integration/test_read_only_diagnostics.py",
+        repository / "tests/contract/test_project_store.py",
+    )
+    violations: list[str] = []
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported = tuple(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imported = (node.module,)
+            else:
+                imported = ()
+            if any(name == "modeling_cli.doctor" for name in imported):
+                violations.append(path.relative_to(repository).as_posix())
+        if "test_doctor_" in path.read_text(encoding="utf-8"):
+            violations.append(path.relative_to(repository).as_posix())
+    assert violations == []
+
+
+def test_diagnostic_snapshot_has_no_core_cli_or_source_sqlite_dependency() -> None:
+    """Catches a second core port, doctor coupling, or source-lock adapter reuse."""
+    module = (
+        Path(__file__).parents[2] / "src/modeling_infrastructure/diagnostic_snapshot.py"
+    )
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    imports: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            imports.add(node.module)
+    forbidden = {
+        "modeling_cli",
+        "modeling_core",
+        "modeling_infrastructure.project_lock",
+        "modeling_infrastructure.storage",
+    }
+    assert not {
+        name for name in imports if name.split(".")[0] in forbidden or name in forbidden
+    }
+
+
 def test_capability_control_errors_are_host_neutral_without_reversing_dependencies() -> (
     None
 ):

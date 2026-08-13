@@ -58,10 +58,15 @@ from modeling_core.ports.project_store import (
     CreateProjectCommand,
     ExperimentTrace,
     ExperimentTraceQuery,
+    LegacyAttempt,
+    LegacyIdempotencyRecord,
+    LegacyValidation,
     ProjectStatusSnapshot,
     ProjectStateInspection,
     ProjectStoreError,
     ProjectWriteResult,
+    StoreIntegrityCheck,
+    StoreIntegrityIssue,
     StoreIntegrityReport,
     StoredRunResult,
     StoredValidationResult,
@@ -1422,45 +1427,168 @@ class SQLiteProjectStore:
             )
         if inspection.state is ProjectState.UNINITIALIZED:
             return StoreIntegrityReport(state=inspection.state, issues=())
-        issues: list[str] = []
+        mode: Literal["quick", "integrity"] = "integrity" if deep else "quick"
+        check: StoreIntegrityCheck | None = None
+        issues: list[StoreIntegrityIssue] = []
+        legacy_attempts: tuple[LegacyAttempt, ...] = ()
+        legacy_validations: tuple[LegacyValidation, ...] = ()
+        legacy_operations: tuple[LegacyIdempotencyRecord, ...] = ()
         try:
             with self._read() as connection:
-                if (
-                    deep
-                    and connection.execute("PRAGMA quick_check").fetchone()[0] != "ok"
+                try:
+                    raw_check_rows = connection.execute(
+                        f"PRAGMA {mode}_check"
+                    ).fetchall()
+                except (
+                    ProjectStoreError,
+                    OSError,
+                    sqlite3.DatabaseError,
+                    TypeError,
+                    ValueError,
                 ):
-                    issues.append("sqlite_quick_check")
-                if (
-                    connection.execute("PRAGMA foreign_key_check").fetchone()
-                    is not None
-                ):
-                    issues.append("foreign_key")
-                if (
-                    connection.execute(
-                        "SELECT 1 FROM attempts WHERE status IN ('PENDING','RUNNING') LIMIT 1"
+                    check = StoreIntegrityCheck(mode=mode, outcome="ERROR")
+                    issues.append("database_relation")
+                else:
+                    exact_ok = False
+                    if type(raw_check_rows) is list and len(raw_check_rows) == 1:
+                        row = raw_check_rows[0]
+                        if isinstance(row, (tuple, sqlite3.Row)):
+                            exact_ok = len(row) == 1 and row[0] == "ok"
+                    if exact_ok:
+                        check = StoreIntegrityCheck(mode=mode, outcome="PASS")
+                    else:
+                        check = StoreIntegrityCheck(mode=mode, outcome="FAIL")
+                        issues.append(
+                            "sqlite_integrity_check" if deep else "sqlite_quick_check"
+                        )
+
+                try:
+                    foreign_key_row = connection.execute(
+                        "PRAGMA foreign_key_check"
                     ).fetchone()
-                    is not None
+                except (
+                    ProjectStoreError,
+                    OSError,
+                    sqlite3.DatabaseError,
+                    TypeError,
+                    ValueError,
                 ):
-                    issues.append("stale_attempt")
-                if (
-                    connection.execute(
-                        "SELECT 1 FROM validations WHERE status IN ('PENDING','RUNNING') LIMIT 1"
-                    ).fetchone()
-                    is not None
+                    issues.append("database_relation")
+                else:
+                    if foreign_key_row is not None:
+                        issues.append("foreign_key")
+
+                try:
+                    rows = connection.execute(
+                        """
+                        SELECT attempt_id, status
+                          FROM attempts
+                         WHERE status IN ('PENDING','RUNNING')
+                         ORDER BY status COLLATE BINARY, attempt_id COLLATE BINARY
+                         LIMIT 101
+                        """
+                    ).fetchall()
+                    attempt_records = tuple(
+                        LegacyAttempt(row[0], row[1]) for row in rows
+                    )
+                    legacy_attempts = StoreIntegrityReport(
+                        state=inspection.state,
+                        issues=(),
+                        legacy_attempts=attempt_records,
+                    ).legacy_attempts
+                except (
+                    ProjectStoreError,
+                    OSError,
+                    sqlite3.DatabaseError,
+                    IndexError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
                 ):
-                    issues.append("stale_validation")
-                if (
-                    connection.execute(
-                        "SELECT 1 FROM idempotency_records WHERE status='IN_PROGRESS' LIMIT 1"
-                    ).fetchone()
-                    is not None
+                    issues.append("database_relation")
+                else:
+                    if legacy_attempts:
+                        issues.append("stale_attempt")
+
+                try:
+                    rows = connection.execute(
+                        """
+                        SELECT validation_id, status
+                          FROM validations
+                         WHERE status IN ('PENDING','RUNNING')
+                         ORDER BY status COLLATE BINARY, validation_id COLLATE BINARY
+                         LIMIT 101
+                        """
+                    ).fetchall()
+                    validation_records = tuple(
+                        LegacyValidation(row[0], row[1]) for row in rows
+                    )
+                    legacy_validations = StoreIntegrityReport(
+                        state=inspection.state,
+                        issues=(),
+                        legacy_validations=validation_records,
+                    ).legacy_validations
+                except (
+                    ProjectStoreError,
+                    OSError,
+                    sqlite3.DatabaseError,
+                    IndexError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
                 ):
-                    issues.append("stale_operation")
+                    issues.append("database_relation")
+                else:
+                    if legacy_validations:
+                        issues.append("stale_validation")
+
+                try:
+                    rows = connection.execute(
+                        """
+                        SELECT scope_id, tool_name, operation_id, status
+                          FROM idempotency_records
+                         WHERE status='IN_PROGRESS'
+                         ORDER BY scope_id COLLATE BINARY,
+                                  tool_name COLLATE BINARY,
+                                  operation_id COLLATE BINARY
+                         LIMIT 101
+                        """
+                    ).fetchall()
+                    operation_records = tuple(
+                        LegacyIdempotencyRecord(row[0], row[1], row[2], row[3])
+                        for row in rows
+                    )
+                    legacy_operations = StoreIntegrityReport(
+                        state=inspection.state,
+                        issues=(),
+                        legacy_idempotency_records=operation_records,
+                    ).legacy_idempotency_records
+                except (
+                    ProjectStoreError,
+                    OSError,
+                    sqlite3.DatabaseError,
+                    IndexError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                ):
+                    issues.append("database_relation")
+                else:
+                    if legacy_operations:
+                        issues.append("stale_operation")
         except (ProjectStoreError, OSError, sqlite3.DatabaseError, ValueError):
-            issues.append("database_relation")
+            check = StoreIntegrityCheck(mode=mode, outcome="ERROR")
+            issues = ["database_relation"]
+            legacy_attempts = ()
+            legacy_validations = ()
+            legacy_operations = ()
         return StoreIntegrityReport(
             state=ProjectState.DEGRADED if issues else inspection.state,
-            issues=tuple(sorted(set(issues))),
+            issues=tuple(sorted(set(issues), key=lambda item: item.encode("utf-8"))),
+            check=check,
+            legacy_attempts=legacy_attempts,
+            legacy_validations=legacy_validations,
+            legacy_idempotency_records=legacy_operations,
         )
 
 

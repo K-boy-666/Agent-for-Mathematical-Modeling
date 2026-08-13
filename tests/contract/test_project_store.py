@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from contextlib import closing
+from collections.abc import Iterator, Sequence
+from contextlib import closing, contextmanager
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -47,9 +48,15 @@ from modeling_core.ports.project_store import (
     CreateProjectCommand,
     ExperimentTrace,
     ExperimentTraceQuery,
+    LegacyAttempt,
+    LegacyIdempotencyRecord,
+    LegacyValidation,
     ProjectStatusSnapshot,
     ProjectStoreError,
+    ProjectStateInspection,
     ProjectWriteResult,
+    StoreIntegrityCheck,
+    StoreIntegrityReport,
     StoredRunResult,
     StoredValidationResult,
     ValidationSource,
@@ -826,3 +833,543 @@ def test_project_store_error_is_validated_deep_immutable_and_retryable_only_for_
     for arguments in invalid_arguments:
         with pytest.raises((TypeError, ValueError, ValidationError)):
             ProjectStoreError(**arguments)
+
+
+def _entity_id(index: int) -> str:
+    return f"00000000-0000-4000-8000-{index:012d}"
+
+
+class _Rows:
+    def __init__(
+        self,
+        rows: Sequence[object],
+        *,
+        forbid_fetchall: bool = False,
+    ) -> None:
+        self._rows = tuple(rows)
+        self._forbid_fetchall = forbid_fetchall
+
+    def fetchall(self) -> list[object]:
+        if self._forbid_fetchall:
+            raise AssertionError("foreign-key inspection must use bounded fetchone")
+        return list(self._rows)
+
+    def fetchone(self) -> object | None:
+        return self._rows[0] if self._rows else None
+
+
+class _IntegrityConnection:
+    def __init__(
+        self,
+        *,
+        check_rows: Sequence[object] | BaseException = (("ok",),),
+        attempts: Sequence[object] | BaseException = (),
+        validations: Sequence[object] | BaseException = (),
+        operations: Sequence[object] | BaseException = (),
+        foreign_keys: Sequence[object] | BaseException = (),
+        forbid_foreign_key_fetchall: bool = False,
+    ) -> None:
+        self._check_rows = check_rows
+        self._attempts = attempts
+        self._validations = validations
+        self._operations = operations
+        self._foreign_keys = foreign_keys
+        self._forbid_foreign_key_fetchall = forbid_foreign_key_fetchall
+        self.statements: list[str] = []
+
+    def execute(self, statement: str) -> _Rows:
+        normalized = " ".join(statement.split())
+        self.statements.append(normalized)
+        if normalized in {"PRAGMA quick_check", "PRAGMA integrity_check"}:
+            rows = self._check_rows
+        elif normalized == "PRAGMA foreign_key_check":
+            rows = self._foreign_keys
+        elif "FROM attempts" in normalized:
+            rows = self._attempts
+        elif "FROM validations" in normalized:
+            rows = self._validations
+        elif "FROM idempotency_records" in normalized:
+            rows = self._operations
+        else:
+            raise AssertionError(f"unexpected integrity SQL: {normalized}")
+        if isinstance(rows, BaseException):
+            raise rows
+        return _Rows(
+            rows,
+            forbid_fetchall=(
+                normalized == "PRAGMA foreign_key_check"
+                and self._forbid_foreign_key_fetchall
+            ),
+        )
+
+
+class _CloseFailingIntegrityConnection(_IntegrityConnection):
+    def close(self) -> None:
+        raise sqlite3.DatabaseError("sensitive close failure")
+
+
+def _inspection_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    connection: _IntegrityConnection,
+) -> SQLiteProjectStore:
+    store = SQLiteProjectStore(tmp_path, VersionSet.m1a())
+    monkeypatch.setattr(
+        store,
+        "inspect_project_state",
+        lambda: ProjectStateInspection(state=ProjectState.STORAGE_READY),
+    )
+
+    @contextmanager
+    def fake_read() -> Iterator[_IntegrityConnection]:
+        yield connection
+
+    monkeypatch.setattr(store, "_read", fake_read)
+    return store
+
+
+def test_integrity_report_dtos_are_finite_unique_bounded_and_utf8_ordered() -> None:
+    attempts = tuple(
+        LegacyAttempt(
+            attempt_id=_entity_id(index),
+            status="PENDING" if index <= 50 else "RUNNING",
+        )
+        for index in range(1, 101)
+    )
+    validations = tuple(
+        LegacyValidation(
+            validation_id=_entity_id(index + 200),
+            status="PENDING" if index <= 50 else "RUNNING",
+        )
+        for index in range(1, 101)
+    )
+    operations = tuple(
+        LegacyIdempotencyRecord(
+            scope_id=_entity_id(index + 400),
+            tool_name=("run_experiment" if index % 2 == 0 else "validate_experiment"),
+            operation_id=_entity_id(index + 600),
+            status="IN_PROGRESS",
+        )
+        for index in range(1, 101)
+    )
+    report = StoreIntegrityReport(
+        state=ProjectState.DEGRADED,
+        issues=("database_relation", "stale_attempt"),
+        check=StoreIntegrityCheck(mode="quick", outcome="PASS"),
+        legacy_attempts=attempts,
+        legacy_validations=validations,
+        legacy_idempotency_records=operations,
+    )
+
+    assert report.legacy_attempts == attempts
+    assert report.legacy_validations == validations
+    assert report.legacy_idempotency_records == operations
+    with pytest.raises(FrozenInstanceError):
+        report.state = ProjectState.READY  # type: ignore[misc]
+    frozen_children = (
+        (report.check, "outcome", "FAIL"),
+        (attempts[0], "status", "RUNNING"),
+        (validations[0], "status", "RUNNING"),
+        (operations[0], "status", "COMPLETED"),
+    )
+    for child, attribute, replacement in frozen_children:
+        with pytest.raises(FrozenInstanceError):
+            setattr(child, attribute, replacement)
+
+    invalid_factories = (
+        lambda: StoreIntegrityCheck(mode="fast", outcome="PASS"),
+        lambda: StoreIntegrityCheck(mode="quick", outcome="UNKNOWN"),
+        lambda: LegacyAttempt(
+            attempt_id="AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+            status="PENDING",
+        ),
+        lambda: LegacyAttempt(
+            attempt_id="00000000-0000-1000-8000-000000000001",
+            status="PENDING",
+        ),
+        lambda: LegacyAttempt(attempt_id=PROJECT_ID, status="SUCCEEDED"),
+        lambda: LegacyValidation(validation_id="invalid", status="RUNNING"),
+        lambda: LegacyValidation(validation_id=PROJECT_ID, status="SUCCEEDED"),
+        lambda: LegacyIdempotencyRecord(
+            scope_id="AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+            tool_name="run_experiment",
+            operation_id=OPERATION_ID,
+            status="IN_PROGRESS",
+        ),
+        lambda: LegacyIdempotencyRecord(
+            scope_id="00000000-0000-1000-8000-000000000001",
+            tool_name="run_experiment",
+            operation_id=OPERATION_ID,
+            status="IN_PROGRESS",
+        ),
+        lambda: LegacyIdempotencyRecord(
+            scope_id=PROJECT_ID,
+            tool_name="run_experiment",
+            operation_id="AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+            status="IN_PROGRESS",
+        ),
+        lambda: LegacyIdempotencyRecord(
+            scope_id=PROJECT_ID,
+            tool_name="run_experiment",
+            operation_id="00000000-0000-1000-8000-000000000001",
+            status="IN_PROGRESS",
+        ),
+        lambda: LegacyIdempotencyRecord(
+            scope_id=PROJECT_ID,
+            tool_name="run_experiment",
+            operation_id=OPERATION_ID,
+            status="COMPLETED",
+        ),
+        lambda: LegacyIdempotencyRecord(
+            scope_id=PROJECT_ID,
+            tool_name="create_project",
+            operation_id=OPERATION_ID,
+            status="IN_PROGRESS",
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=["database_relation"],  # type: ignore[arg-type]
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=("stale_attempt", "database_relation"),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=("database_relation", "database_relation"),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_attempts=[attempts[0]],  # type: ignore[arg-type]
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_attempts=(attempts[1], attempts[0]),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_attempts=(attempts[0], attempts[0]),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_attempts=(
+                attempts[0],
+                LegacyAttempt(attempts[0].attempt_id, "RUNNING"),
+            ),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_attempts=attempts + (LegacyAttempt(_entity_id(101), "RUNNING"),),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_validations=[validations[0]],  # type: ignore[arg-type]
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_validations=(validations[1], validations[0]),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_validations=(validations[0], validations[0]),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_validations=validations
+            + (LegacyValidation(_entity_id(301), "RUNNING"),),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_idempotency_records=[operations[0]],  # type: ignore[arg-type]
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_idempotency_records=(operations[1], operations[0]),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_idempotency_records=(operations[0], operations[0]),
+        ),
+        lambda: StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=(),
+            legacy_idempotency_records=operations
+            + (
+                LegacyIdempotencyRecord(
+                    _entity_id(501),
+                    "run_experiment",
+                    _entity_id(701),
+                    "IN_PROGRESS",
+                ),
+            ),
+        ),
+    )
+    for factory in invalid_factories:
+        with pytest.raises((TypeError, ValueError, ValidationError)):
+            factory()
+
+
+def test_inspect_integrity_selects_exact_check_and_reports_legacy_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @contextmanager
+    def forbidden_read() -> Iterator[_IntegrityConnection]:
+        raise AssertionError("terminal preflight state must not open SQLite")
+        yield _IntegrityConnection()
+
+    for state, expected_issues in (
+        (ProjectState.UNINITIALIZED, ()),
+        (ProjectState.DEGRADED, ("project_state",)),
+    ):
+        terminal_store = SQLiteProjectStore(tmp_path, VersionSet.m1a())
+        monkeypatch.setattr(
+            terminal_store,
+            "inspect_project_state",
+            lambda state=state: ProjectStateInspection(state=state),
+        )
+        monkeypatch.setattr(terminal_store, "_read", forbidden_read)
+        terminal_report = terminal_store.inspect_integrity(deep=True)
+        assert terminal_report.state is state
+        assert terminal_report.issues == expected_issues
+        assert terminal_report.check is None
+        assert terminal_report.legacy_attempts == ()
+        assert terminal_report.legacy_validations == ()
+        assert terminal_report.legacy_idempotency_records == ()
+
+    attempt_rows = [(_entity_id(1), "PENDING"), (_entity_id(2), "RUNNING")]
+    validation_rows = [(_entity_id(3), "PENDING"), (_entity_id(4), "RUNNING")]
+    operation_rows = [
+        (_entity_id(5), "run_experiment", _entity_id(6), "IN_PROGRESS"),
+        (_entity_id(7), "validate_experiment", _entity_id(8), "IN_PROGRESS"),
+    ]
+    quick_connection = _IntegrityConnection(
+        attempts=attempt_rows,
+        validations=validation_rows,
+        operations=operation_rows,
+        foreign_keys=[("validations", 1, "attempts", 0)],
+    )
+    quick_store = _inspection_store(tmp_path, monkeypatch, quick_connection)
+
+    quick = quick_store.inspect_integrity(deep=False)
+
+    assert quick.check == StoreIntegrityCheck(mode="quick", outcome="PASS")
+    assert quick.issues == (
+        "foreign_key",
+        "stale_attempt",
+        "stale_operation",
+        "stale_validation",
+    )
+    assert quick.legacy_attempts == tuple(LegacyAttempt(*row) for row in attempt_rows)
+    assert quick.legacy_validations == tuple(
+        LegacyValidation(*row) for row in validation_rows
+    )
+    assert quick.legacy_idempotency_records == tuple(
+        LegacyIdempotencyRecord(*row) for row in operation_rows
+    )
+    assert quick_connection.statements[0] == "PRAGMA quick_check"
+    assert "PRAGMA integrity_check" not in quick_connection.statements
+
+    deep_connection = _IntegrityConnection()
+    deep_store = _inspection_store(tmp_path, monkeypatch, deep_connection)
+    deep = deep_store.inspect_integrity(deep=True)
+    assert deep.check == StoreIntegrityCheck(mode="integrity", outcome="PASS")
+    assert deep_connection.statements[0] == "PRAGMA integrity_check"
+    assert "PRAGMA quick_check" not in deep_connection.statements
+
+    malformed_results = (
+        [],
+        [()],
+        [7],
+        [("ok",), ("ok",)],
+        [("OK",)],
+        [("ok", "extra")],
+    )
+    for deep, expected_mode, expected_issue in (
+        (False, "quick", "sqlite_quick_check"),
+        (True, "integrity", "sqlite_integrity_check"),
+    ):
+        for rows in malformed_results:
+            connection = _IntegrityConnection(check_rows=rows)
+            store = _inspection_store(tmp_path, monkeypatch, connection)
+            report = store.inspect_integrity(deep=deep)
+            assert report.check == StoreIntegrityCheck(
+                mode=expected_mode, outcome="FAIL"
+            )
+            assert report.issues == (expected_issue,)
+
+    error_connection = _IntegrityConnection(
+        check_rows=sqlite3.DatabaseError("sensitive database text")
+    )
+    error_store = _inspection_store(tmp_path, monkeypatch, error_connection)
+    error_report = error_store.inspect_integrity(deep=True)
+    assert error_report.check == StoreIntegrityCheck(mode="integrity", outcome="ERROR")
+    assert error_report.issues == ("database_relation",)
+
+    bounded_fk_connection = _IntegrityConnection(
+        foreign_keys=[("validations", 1, "attempts", 0)],
+        forbid_foreign_key_fetchall=True,
+    )
+    bounded_fk_store = _inspection_store(tmp_path, monkeypatch, bounded_fk_connection)
+    bounded_fk_report = bounded_fk_store.inspect_integrity(deep=False)
+    assert bounded_fk_report.issues == ("foreign_key",)
+
+    closing_connection = _CloseFailingIntegrityConnection(
+        attempts=attempt_rows,
+        validations=validation_rows,
+        operations=operation_rows,
+    )
+    closing_store = SQLiteProjectStore(tmp_path, VersionSet.m1a())
+    monkeypatch.setattr(
+        closing_store,
+        "inspect_project_state",
+        lambda: ProjectStateInspection(state=ProjectState.STORAGE_READY),
+    )
+    monkeypatch.setattr(
+        closing_store,
+        "_connect",
+        lambda *, named_rows=False: closing_connection,
+    )
+    closing_report = closing_store.inspect_integrity(deep=False)
+    assert closing_report.check == StoreIntegrityCheck(mode="quick", outcome="ERROR")
+    assert closing_report.issues == ("database_relation",)
+    assert closing_report.legacy_attempts == ()
+    assert closing_report.legacy_validations == ()
+    assert closing_report.legacy_idempotency_records == ()
+
+    foreign_key_root = tmp_path / "foreign-key"
+    foreign_key_root.mkdir()
+    bootstrap_storage(foreign_key_root, VersionSet.m1a())
+    with closing(sqlite3.connect(_database(foreign_key_root))) as connection:
+        connection.execute(
+            """
+            INSERT INTO attempts (
+                attempt_id, experiment_id, implementation_id,
+                implementation_version, environment_summary, randomness,
+                seed, session_id, status, created_at, started_at, finished_at,
+                warnings, system_error, numerical_failure, terminal_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                _entity_id(900),
+                _entity_id(901),
+                "fixture",
+                "0.1.0",
+                "{}",
+                "not_used",
+                None,
+                SESSION_ID,
+                "SUCCEEDED",
+                "2026-07-17T00:00:00.000Z",
+                None,
+                None,
+                "[]",
+                None,
+                None,
+                None,
+            ),
+        )
+        connection.commit()
+    foreign_key_report = SQLiteProjectStore(
+        foreign_key_root, VersionSet.m1a()
+    ).inspect_integrity(deep=False)
+    assert foreign_key_report.check == StoreIntegrityCheck(mode="quick", outcome="PASS")
+    assert foreign_key_report.issues == ("foreign_key",)
+
+
+def test_legacy_overflow_empties_only_affected_relation_and_continues_others(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = [(_entity_id(index), "PENDING") for index in range(1, 102)]
+    validations = [(_entity_id(index + 200), "RUNNING") for index in range(1, 101)]
+    operations = [
+        (
+            _entity_id(index + 400),
+            "run_experiment",
+            _entity_id(index + 600),
+            "IN_PROGRESS",
+        )
+        for index in range(1, 101)
+    ]
+    overflow_cases = (
+        (
+            _IntegrityConnection(
+                attempts=attempts,
+                validations=validations,
+                operations=operations,
+            ),
+            ("database_relation", "stale_operation", "stale_validation"),
+            (0, 100, 100),
+        ),
+        (
+            _IntegrityConnection(
+                attempts=attempts[:100],
+                validations=validations + [(_entity_id(301), "RUNNING")],
+                operations=operations,
+            ),
+            ("database_relation", "stale_attempt", "stale_operation"),
+            (100, 0, 100),
+        ),
+        (
+            _IntegrityConnection(
+                attempts=attempts[:100],
+                validations=validations,
+                operations=operations
+                + [
+                    (
+                        _entity_id(501),
+                        "run_experiment",
+                        _entity_id(701),
+                        "IN_PROGRESS",
+                    )
+                ],
+            ),
+            ("database_relation", "stale_attempt", "stale_validation"),
+            (100, 100, 0),
+        ),
+    )
+    for connection, expected_issues, expected_lengths in overflow_cases:
+        store = _inspection_store(tmp_path, monkeypatch, connection)
+        overflow = store.inspect_integrity(deep=False)
+        assert overflow.issues == expected_issues
+        assert (
+            len(overflow.legacy_attempts),
+            len(overflow.legacy_validations),
+            len(overflow.legacy_idempotency_records),
+        ) == expected_lengths
+
+    connection = overflow_cases[0][0]
+    legacy_statements = [
+        statement
+        for statement in connection.statements
+        if "FROM attempts" in statement
+        or "FROM validations" in statement
+        or "FROM idempotency_records" in statement
+    ]
+    assert all("COLLATE BINARY" in statement for statement in legacy_statements)
+    assert all(statement.endswith("LIMIT 101") for statement in legacy_statements)
+
+    bad_attempt = _IntegrityConnection(
+        attempts=[("not-a-uuid", "PENDING")],
+        validations=validations[:1],
+        operations=[(_entity_id(700), "unknown_tool", _entity_id(701), "IN_PROGRESS")],
+    )
+    bad_store = _inspection_store(tmp_path, monkeypatch, bad_attempt)
+    bad_report = bad_store.inspect_integrity(deep=True)
+    assert bad_report.issues == ("database_relation", "stale_validation")
+    assert bad_report.legacy_attempts == ()
+    assert bad_report.legacy_validations == (LegacyValidation(*validations[0]),)
+    assert bad_report.legacy_idempotency_records == ()

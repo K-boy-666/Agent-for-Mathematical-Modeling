@@ -479,17 +479,19 @@ def test_synthetic_wheel_inventory_is_utf8_ordered_and_hashes_real_payload(
 
     assets = verification._inspect_package_assets(Path(__file__).parents[2], tmp_path)
 
-    assert len(assets) == 85
+    assert len(assets) == 86
     assert [asset.path for asset in assets] == sorted(
         (asset.path for asset in assets), key=lambda value: value.encode("utf-8")
     )
     by_path = {asset.path: asset.sha256 for asset in assets}
+    assert "modeling_infrastructure/diagnostic_snapshot.py" in by_path
     assert by_path["modeling_core/__init__.py"] == (
         "sha256:15f7b910cd4839693ed64a189b6f9c617cde14c0299298a98596e7bb18f4ec90"
     )
     assert by_path["modeling_infrastructure/sqlite/schema_v1.sql"] == (
         "sha256:c9595963e1ab665b6035a49bb9ea5b665b8251a36618d5f3d462d24f2ad67461"
     )
+    assert sum(asset.path.endswith(".py") for asset in assets) == 54
     assert sum(not asset.path.endswith(".py") for asset in assets) == 32
 
 
