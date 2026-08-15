@@ -795,6 +795,26 @@ Acceptance/Harness REDs for A12.3/A12.4 remain the exact A-nodes in section
 - [ ] Independent Harness review: failure bundles, no recursion/current evidence, exact nodes/pointers/order/counts, A11 no-clobber/source-drift preservation.
 - [ ] Commit: `test: close the M1a acceptance evidence gate`.
 
+**A12.4 implementation ratification (2026-08-15):** this paragraph
+supersedes three section-4/5 literals that conflict with the physically
+observable current-run JUnit evidence. First, the strict node byte budget is
+8,192 UTF-8 bytes, not 512: the A6 expression-limit corpus and the A11
+parse-time budget corpus embed full rejection expressions inside pytest ids
+(measured current maximum 4,245 bytes), so 512 would fail every gate run.
+Second, the A-06 selector
+`tests/integration/test_application_workflow.py::test_pre_execution_rejections_leave_zero_provenance`
+is a `family` node, not `exact`: `pytest --collect-only` proves the test
+exists only with four parameterized ids and no bare base node, so an exact
+match could never be observed; the family match retains every exact
+parameter id and still requires all observed members to be PASSED. Third,
+the JUnit backslash rejection applies to the module-path segment derived
+from `classname`; parameterized name segments retain Windows path fragments
+verbatim because they are opaque id text, not path surfaces. Additionally,
+when the base report status is FAILED while every acceptance clause is
+otherwise satisfied, materialization marks A-10 FAIL with the base
+`/status` and `/source_fingerprint` evidence pointers; source drift is the
+principal but not the only trigger of that conservative catch-all.
+
 Any review correction gets a failing regression first, focused re-review, and separate `fix:` commit. No slice may borrow files from the next slice to obtain GREEN.
 
 ## 7. Final commands and acceptance
@@ -850,3 +870,6 @@ Final PASS requires doctor exit 0 for healthy STORAGE_READY after bootstrap, exa
 | Windows probe correction: raw-writer exclusion via read-only in-memory backup and serialize-only filesystem output | 2.3, 6 |
 | Windows probe fix1: guarded empty WAL sentinel closes absent-name create race | 2.3, 6 |
 | Windows probe fix2: guarded empty SHM/private WAL-index and corrected memory/serialize peak/progress bounds | 2.3, 6 |
+| A12.4 ratification: node byte budget 8,192 from measured parametrized ids | 4.1, 5, 6 |
+| A12.4 ratification: A-06 pre-execution selector is family (no bare node exists) | 4.3, 6 |
+| A12.4 ratification: backslash rejection scoped to the module path; FAILED-base A-10 catch-all | 4.1, 5, 6 |

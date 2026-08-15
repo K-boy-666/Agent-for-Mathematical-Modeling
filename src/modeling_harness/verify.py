@@ -20,13 +20,22 @@ import sysconfig
 import tempfile
 import time
 import tomllib
-from typing import Callable, Literal, cast
+from typing import Callable, Final, Literal, cast
 import unicodedata
 import xml.etree.ElementTree as element_tree
 import zipfile
 
 from modeling_core import Milestone
 from modeling_core.contracts.canonical_json import canonical_json_bytes, sha256_json
+from modeling_harness.evidence import (
+    AcceptanceClause,
+    AcceptanceRequirement,
+    EvidenceReference,
+    RequiredTestNode,
+    materialize_m1a_acceptance_map,
+    validate_m1a_acceptance_policy,
+    validate_m1a_acceptance_report,
+)
 
 
 _UV_VERSION = "0.11.28"
@@ -36,13 +45,469 @@ _UV_VERSION_OUTPUT = re.compile(
     r"(?:x86_64|aarch64)-(?:pc-windows-msvc|unknown-linux-(?:gnu|musl)|apple-darwin)"
     r"\))?\r?\n?\Z"
 )
-_A12_INCOMPLETE_ITEMS = (
-    "doctor-and-tests",
-    "root-and-four-nested-agents",
-    "context-product-architecture-contract-operations-docs",
-    "codex-config-template",
-    "acceptance-map-a01-through-a10",
-    "readme-and-final-evidence-links",
+_M1A_CHECK_IDS: Final = (
+    "uv-lock",
+    "ruff-check",
+    "ruff-format",
+    "mypy",
+    "pytest-unit",
+    "pytest-contract",
+    "pytest-math",
+    "pytest-architecture",
+    "pytest-integration",
+    "pytest-reproducibility",
+    "pytest-security",
+    "pytest-smoke",
+    "pytest-acceptance",
+    "wheel",
+    "stdio-golden",
+)
+_JUNIT_NODE_LIMIT: Final = 4096
+# Bounded literal covering the real parameterized ids: A6/A11 embed full
+# rejection expressions in pytest ids (current maximum is 4,245 bytes).
+_JUNIT_NODE_BYTES: Final = 8192
+# Clause-complete literal A-01..A-10 pytest node policy from the A12
+# interface resolution section 4.3.  Every selector is a committed literal;
+# each requirement owns one clause whose single success-evidence pointer
+# targets its first owning check status in the fixed fifteen-check order.
+_M1A_ACCEPTANCE_REQUIREMENTS: Final = (
+    AcceptanceRequirement(
+        acceptance_id="A-01",
+        clauses=(
+            AcceptanceClause(
+                clause_id="A-01-1",
+                required_nodes=(
+                    RequiredTestNode(
+                        selector=(
+                            "tests/acceptance/test_m1a_acceptance_map.py::"
+                            "test_a01_windows_locked_toolchain_is_current_and_offline"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_bootstrap_sqlite.py::"
+                            "test_repeat_bootstrap_returns_same_id_without_changing_"
+                            "any_bytes"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_bootstrap_sqlite.py::"
+                            "test_uninitialized_bootstrap_creates_exact_storage_"
+                            "ready_layout"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/unit/test_doctor.py::"
+                            "test_uninitialized_is_warning_and_storage_ready_and_"
+                            "ready_are_ready"
+                        ),
+                        match="exact",
+                    ),
+                ),
+                check_ids=(
+                    "pytest-acceptance",
+                    "pytest-integration",
+                    "pytest-unit",
+                    "uv-lock",
+                ),
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer="/checks/0/status",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    AcceptanceRequirement(
+        acceptance_id="A-02",
+        clauses=(
+            AcceptanceClause(
+                clause_id="A-02-1",
+                required_nodes=(
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_stdio_golden_m1a.py::"
+                            "test_official_client_completes_m1a_golden_chain_"
+                            "records_protocol_purity_and_closes_child"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_stdio_golden_m1a.py::"
+                            "test_official_client_exception_path_closes_child_and_"
+                            "releases_writer_lease"
+                        ),
+                        match="exact",
+                    ),
+                ),
+                check_ids=("pytest-integration", "stdio-golden"),
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer="/checks/8/status",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    AcceptanceRequirement(
+        acceptance_id="A-03",
+        clauses=(
+            AcceptanceClause(
+                clause_id="A-03-1",
+                required_nodes=(
+                    RequiredTestNode(
+                        selector=(
+                            "tests/architecture/test_dependency_boundaries.py::"
+                            "test_core_never_imports_adapters_databases_or_"
+                            "capabilities"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_application_workflow.py::"
+                            "test_six_use_cases_reconstruct_a_validated_root_"
+                            "finding_trace"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_stdio_golden_m1a.py::"
+                            "test_official_client_completes_m1a_golden_chain_"
+                            "records_protocol_purity_and_closes_child"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/unit/test_doctor.py::"
+                            "test_doctor_uses_shared_facade_and_store_without_"
+                            "starting_inspected_composition"
+                        ),
+                        match="exact",
+                    ),
+                ),
+                check_ids=(
+                    "pytest-architecture",
+                    "pytest-integration",
+                    "pytest-unit",
+                    "stdio-golden",
+                ),
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer="/checks/4/status",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    AcceptanceRequirement(
+        acceptance_id="A-04",
+        clauses=(
+            AcceptanceClause(
+                clause_id="A-04-1",
+                required_nodes=(
+                    RequiredTestNode(
+                        selector=(
+                            "tests/architecture/test_composition_root.py::"
+                            "test_composition_seals_the_exact_builtin_registry_"
+                            "and_sole_store"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/unit/test_registry.py::"
+                            "test_capability_and_compatible_validator_register_"
+                            "before_seal"
+                        ),
+                        match="exact",
+                    ),
+                ),
+                check_ids=("pytest-architecture", "pytest-unit"),
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer="/checks/4/status",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    AcceptanceRequirement(
+        acceptance_id="A-05",
+        clauses=(
+            AcceptanceClause(
+                clause_id="A-05-1",
+                required_nodes=(
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_stdio_golden_m1a.py::"
+                            "test_official_client_completes_m1a_golden_chain_"
+                            "records_protocol_purity_and_closes_child"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/unit/root_finding/test_validator.py::"
+                            "test_golden_success_is_passed_with_exact_metrics_and_"
+                            "hashes"
+                        ),
+                        match="exact",
+                    ),
+                ),
+                check_ids=("pytest-unit", "stdio-golden"),
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer="/checks/4/status",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    AcceptanceRequirement(
+        acceptance_id="A-06",
+        clauses=(
+            AcceptanceClause(
+                clause_id="A-06-1",
+                required_nodes=(
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_application_workflow.py::"
+                            "test_numerical_failure_is_durable_and_replayable"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_application_workflow.py::"
+                            "test_pre_execution_rejections_leave_zero_provenance"
+                        ),
+                        # The test exists only with parameterized ids; the
+                        # family match retains every exact parameter id.
+                        match="family",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/unit/expression/test_canonicalization.py::"
+                            "test_forbidden_expressions_map_to_security_violation"
+                        ),
+                        match="family",
+                    ),
+                ),
+                check_ids=("pytest-integration", "pytest-unit"),
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer="/checks/4/status",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    AcceptanceRequirement(
+        acceptance_id="A-07",
+        clauses=(
+            AcceptanceClause(
+                clause_id="A-07-1",
+                required_nodes=(
+                    RequiredTestNode(
+                        selector=(
+                            "tests/architecture/test_solver_validator_"
+                            "independence.py::"
+                            "test_validator_real_import_graph_has_only_"
+                            "explicitly_allowed_modules"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/unit/root_finding/test_validator.py::"
+                            "test_self_consistent_forged_result_hash_still_"
+                            "fails_mathematically"
+                        ),
+                        match="exact",
+                    ),
+                ),
+                check_ids=("pytest-architecture", "pytest-unit"),
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer="/checks/4/status",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    AcceptanceRequirement(
+        acceptance_id="A-08",
+        clauses=(
+            AcceptanceClause(
+                clause_id="A-08-1",
+                required_nodes=(
+                    RequiredTestNode(
+                        selector=(
+                            "tests/contract/test_project_store.py::"
+                            "test_trace_query_and_trace_enforce_all_parent_and_"
+                            "uniqueness_relations"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_application_workflow.py::"
+                            "test_six_use_cases_reconstruct_a_validated_root_"
+                            "finding_trace"
+                        ),
+                        match="exact",
+                    ),
+                ),
+                check_ids=("pytest-contract", "pytest-integration"),
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer="/checks/5/status",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    AcceptanceRequirement(
+        acceptance_id="A-09",
+        clauses=(
+            AcceptanceClause(
+                clause_id="A-09-1",
+                required_nodes=(
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_application_workflow.py::"
+                            "test_completed_write_replay_is_side_effect_free"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/integration/test_application_workflow.py::"
+                            "test_write_idempotency_mismatch_fails_without_new_"
+                            "entities"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/security/test_m1a_boundaries.py::"
+                            "test_cooperative_deadline_rejects_work_at_the_exact_"
+                            "boundary"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/security/test_m1a_boundaries.py::"
+                            "test_project_lock_is_exclusive_and_reusable_after_"
+                            "release"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/security/test_m1a_boundaries.py::"
+                            "test_public_mcp_contract_rejects_every_untrusted_"
+                            "path_surface"
+                        ),
+                        match="family",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/security/test_m1a_boundaries.py::"
+                            "test_request_larger_than_one_mib_is_rejected_before_"
+                            "newline"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/unit/expression/test_canonicalization.py::"
+                            "test_forbidden_expressions_map_to_security_violation"
+                        ),
+                        match="family",
+                    ),
+                ),
+                check_ids=("pytest-integration", "pytest-security", "pytest-unit"),
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer="/checks/4/status",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    AcceptanceRequirement(
+        acceptance_id="A-10",
+        clauses=(
+            AcceptanceClause(
+                clause_id="A-10-1",
+                required_nodes=(
+                    RequiredTestNode(
+                        selector=(
+                            "tests/acceptance/test_m1a_acceptance_map.py::"
+                            "test_a12_runtime_and_nested_context_assets_are_"
+                            "installed_offline_without_core_catalog_drift"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/acceptance/test_m1a_acceptance_map.py::"
+                            "test_m1a_abstraction_budget_and_exact_context_"
+                            "inventory_are_binding"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/acceptance/test_m1a_acceptance_map.py::"
+                            "test_m1a_context_config_and_acceptance_map_are_"
+                            "complete"
+                        ),
+                        match="exact",
+                    ),
+                    RequiredTestNode(
+                        selector=(
+                            "tests/reproducibility/test_m1a_repeatability.py::"
+                            "test_a12_profile_and_report_transition_preserve_"
+                            "a11_evidence_contract"
+                        ),
+                        match="exact",
+                    ),
+                ),
+                check_ids=(
+                    "pytest-acceptance",
+                    "pytest-reproducibility",
+                    "wheel",
+                ),
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer="/checks/9/status",
+                    ),
+                ),
+            ),
+        ),
+    ),
 )
 _GOLDEN_NODE = (
     "tests/integration/test_stdio_golden_m1a.py::"
@@ -128,6 +593,7 @@ class _CheckResult:
     exit_code: int | None
     test_counts: _TestCounts | None
     diagnostic_code: str | None
+    test_outcomes: dict[str, Literal["PASSED", "FAILED", "SKIPPED"]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +696,7 @@ def _execute_check(
         )
 
     test_counts: _TestCounts | None = None
+    test_outcomes: dict[str, Literal["PASSED", "FAILED", "SKIPPED"]] | None = None
     diagnostic_code: str | None = None
     if spec.kind == "pytest":
         junit_arguments = [
@@ -263,10 +730,15 @@ def _execute_check(
             except (OSError, KeyError, ValueError, element_tree.ParseError):
                 diagnostic_code = "junit-invalid"
             else:
-                if skipped:
-                    diagnostic_code = "required-skip"
-                elif failed or errors:
-                    diagnostic_code = "test-failure"
+                try:
+                    test_outcomes = _parse_junit_test_nodes(junit_path, cwd)
+                except (OSError, ValueError, element_tree.ParseError):
+                    diagnostic_code = "junit-nodes-invalid"
+                else:
+                    if skipped:
+                        diagnostic_code = "required-skip"
+                    elif failed or errors:
+                        diagnostic_code = "test-failure"
     if completed.returncode != 0:
         diagnostic_code = "nonzero-exit"
     passed = completed.returncode == 0 and diagnostic_code is None
@@ -277,6 +749,7 @@ def _execute_check(
         exit_code=completed.returncode,
         test_counts=test_counts,
         diagnostic_code=diagnostic_code,
+        test_outcomes=test_outcomes,
     )
 
 
@@ -502,13 +975,73 @@ def _hash_windows_inventory_file(repository_root: Path, relative: PurePosixPath)
 
 
 def _a12_incomplete_groups() -> list[dict[str, object]]:
-    return [
-        {
-            "group_id": "a12-deliverables",
-            "status": "INCOMPLETE",
-            "items": list(_A12_INCOMPLETE_ITEMS),
-        }
-    ]
+    return []
+
+
+def _parse_junit_test_nodes(
+    junit_path: Path, repository_root: Path
+) -> dict[str, Literal["PASSED", "FAILED", "SKIPPED"]]:
+    """Parse strict normalized exact test nodes with per-node outcomes."""
+    root = element_tree.parse(junit_path).getroot()
+    suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+    if root.tag not in {"testsuite", "testsuites"} or not suites:
+        raise ValueError("invalid JUnit root")
+    outcomes: dict[str, Literal["PASSED", "FAILED", "SKIPPED"]] = {}
+    for suite in suites:
+        for case in suite.findall("testcase"):
+            classname = case.attrib.get("classname", "")
+            name = case.attrib.get("name", "")
+            if not isinstance(classname, str) or not isinstance(name, str):
+                raise ValueError("JUnit testcase names must be text")
+            if not classname or not name:
+                raise ValueError("JUnit testcase is missing a name")
+            parts = classname.split(".")
+            module_relative: str | None = None
+            class_components: list[str] = []
+            for length in range(len(parts), 0, -1):
+                candidate = "/".join(parts[:length]) + ".py"
+                candidate_normalized = unicodedata.normalize("NFC", candidate)
+                if "\\" in candidate_normalized or any(
+                    part in {"", ".", ".."} for part in parts[:length]
+                ):
+                    raise ValueError("JUnit classname contains an unsafe component")
+                relative = PurePosixPath(candidate_normalized)
+                if (
+                    relative.is_absolute()
+                    or PureWindowsPath(candidate_normalized).is_absolute()
+                    or PureWindowsPath(candidate_normalized).drive
+                ):
+                    raise ValueError("JUnit classname is not a repository module")
+                if not candidate_normalized.startswith("tests/"):
+                    continue
+                if (repository_root / candidate_normalized).is_file():
+                    module_relative = candidate_normalized
+                    class_components = parts[length:]
+                    break
+            if module_relative is None:
+                raise ValueError("JUnit classname does not resolve to a tests module")
+            normalized_name = unicodedata.normalize("NFC", name)
+            # Backslashes are rejected in the module path above; parameterized
+            # ids legitimately retain Windows path fragments verbatim.
+            if any(
+                ord(character) < 0x20 or ord(character) == 0x7F
+                for character in normalized_name
+            ):
+                raise ValueError("JUnit testcase name contains unsafe characters")
+            node = "::".join([module_relative, *class_components, normalized_name])
+            if len(node.encode("utf-8")) > _JUNIT_NODE_BYTES:
+                raise ValueError("JUnit node exceeds the byte budget")
+            if node in outcomes:
+                raise ValueError("JUnit node is duplicated")
+            if len(outcomes) >= _JUNIT_NODE_LIMIT:
+                raise ValueError("JUnit node count exceeds the budget")
+            if case.find("skipped") is not None:
+                outcomes[node] = "SKIPPED"
+            elif case.find("failure") is not None or case.find("error") is not None:
+                outcomes[node] = "FAILED"
+            else:
+                outcomes[node] = "PASSED"
+    return outcomes
 
 
 def _verification_outcome(
@@ -668,6 +1201,8 @@ def _build_check_specs(uv: Path, internal: Path) -> tuple[_CheckSpec, ...]:
         pytest_spec("pytest-integration", "tests/integration"),
         pytest_spec("pytest-reproducibility", "tests/reproducibility"),
         pytest_spec("pytest-security", "tests/security"),
+        pytest_spec("pytest-smoke", "tests/smoke"),
+        pytest_spec("pytest-acceptance", "tests/acceptance"),
         _CheckSpec(
             "wheel",
             (
@@ -721,6 +1256,11 @@ def _serialize_check(check: _CheckResult) -> dict[str, object]:
         "duration_ms": check.duration_ms,
         "exit_code": check.exit_code,
         "test_counts": counts,
+        "test_nodes": (
+            sorted(check.test_outcomes, key=lambda value: value.encode("utf-8"))
+            if check.test_outcomes is not None
+            else None
+        ),
         "diagnostic_code": check.diagnostic_code,
     }
 
@@ -823,6 +1363,10 @@ def _run_m1a_verification(
     incomplete_groups: list[dict[str, object]] | None = None,
 ) -> int:
     uv = _validate_uv_executable(repository_root)
+    validate_m1a_acceptance_policy(
+        requirements=_M1A_ACCEPTANCE_REQUIREMENTS,
+        allowed_check_ids=_M1A_CHECK_IDS,
+    )
     os.environ["UV_OFFLINE"] = "1"
     environment = _offline_environment()
     environment.pop("MODELING_M1A_GOLDEN_EVIDENCE_DIR", None)
@@ -929,31 +1473,75 @@ def _run_m1a_verification(
         for result in results
         if result.test_counts is not None
     )
-    report: dict[str, object] = {
-        "schema_version": "m1a-verification-report/0.1.0",
-        "milestone": "m1a",
-        "status": status,
-        "source_fingerprint": initial_inventory.fingerprint,
-        "required_skips": required_skips,
-        "environment": _environment_report(repository_root, uv),
-        "checks": [_serialize_check(result) for result in results],
-        "artifacts": {
-            "source_inventory": "source-inventory.json",
-            "package_assets": "package-assets.json",
-            "architecture_report": "architecture-report.json",
-            "stdio_transcript": "stdio-transcript.json",
-            "golden_trace": "golden-trace.json",
-        },
-        "golden_ids": _golden_ids(trace_path),
-        "incomplete_groups": groups,
-    }
+    observed_test_outcomes: dict[
+        str, dict[str, Literal["PASSED", "FAILED", "SKIPPED"]]
+    ] = {}
+    for spec, result in zip(specs, results):
+        if spec.kind == "pytest":
+            observed_test_outcomes[spec.check_id] = dict(result.test_outcomes or {})
+
+    def artifact_documents(base_report: dict[str, object]) -> dict[str, object]:
+        return {
+            "verification-report.json": base_report,
+            "architecture-report.json": architecture_document,
+            "source-inventory.json": source_document,
+            "package-assets.json": package_document,
+            "stdio-transcript.json": json.loads(
+                transcript_path.read_text(encoding="utf-8")
+            ),
+            "golden-trace.json": json.loads(trace_path.read_text(encoding="utf-8")),
+        }
+
+    def compose_final_report(
+        base_status: str,
+    ) -> tuple[dict[str, object], int]:
+        base_report: dict[str, object] = {
+            "schema_version": "m1a-verification-report/0.2.0",
+            "milestone": "m1a",
+            "status": base_status,
+            "source_fingerprint": initial_inventory.fingerprint,
+            "required_skips": required_skips,
+            "environment": _environment_report(repository_root, uv),
+            "checks": [_serialize_check(result) for result in results],
+            "artifacts": {
+                "source_inventory": "source-inventory.json",
+                "package_assets": "package-assets.json",
+                "architecture_report": "architecture-report.json",
+                "stdio_transcript": "stdio-transcript.json",
+                "golden_trace": "golden-trace.json",
+            },
+            "golden_ids": _golden_ids(trace_path),
+            "incomplete_groups": groups,
+        }
+        acceptance_map = materialize_m1a_acceptance_map(
+            requirements=_M1A_ACCEPTANCE_REQUIREMENTS,
+            base_report=base_report,
+            artifact_documents=artifact_documents(base_report),
+            observed_test_outcomes=observed_test_outcomes,
+        )
+        final_status: str = base_status
+        if base_status != "FAILED" and any(
+            entry["status"] == "FAIL"
+            for entry in cast(list[dict[str, object]], acceptance_map["entries"])
+        ):
+            final_status = "FAILED"
+        final_exit = 1 if final_status == "FAILED" else exit_code
+        report_document: dict[str, object] = {
+            **base_report,
+            "status": final_status,
+            "acceptance_map": acceptance_map,
+        }
+        validate_m1a_acceptance_report(report_document)
+        return report_document, final_exit
+
+    report, composed_exit_code = compose_final_report(status)
     shutil.rmtree(internal)
     _atomic_replace(staging / "verification-report.json", _json_payload(report))
     _atomic_replace(staging / "SUMMARY.md", _summary(report))
 
     def guard_source_at_publication() -> None:
         current_inventory = _collect_source_inventory(repository_root)
-        if status != "FAILED" and current_inventory != initial_inventory:
+        if report["status"] != "FAILED" and current_inventory != initial_inventory:
             raise _SourceInventoryDriftError
 
     try:
@@ -963,8 +1551,7 @@ def _run_m1a_verification(
             before_publish=guard_source_at_publication,
         )
     except _SourceInventoryDriftError:
-        status, exit_code = "FAILED", 1
-        report["status"] = status
+        report, composed_exit_code = compose_final_report("FAILED")
         _atomic_replace(staging / "verification-report.json", _json_payload(report))
         _atomic_replace(staging / "SUMMARY.md", _summary(report))
         _atomic_publish_directory(
@@ -972,7 +1559,7 @@ def _run_m1a_verification(
             final,
             before_publish=guard_source_at_publication,
         )
-    return exit_code
+    return composed_exit_code
 
 
 def _atomic_publish_directory(
