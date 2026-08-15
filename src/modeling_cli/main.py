@@ -11,6 +11,7 @@ from modeling_core import APPLICATION_VERSION
 from modeling_core.contracts.versions import VersionSet
 from modeling_harness.verify import add_verify_parser
 from modeling_infrastructure.storage import StorageError, bootstrap_storage
+from modeling_cli.doctor import run_doctor
 
 CommandHandler = Callable[[argparse.Namespace], int]
 
@@ -53,6 +54,14 @@ def _bootstrap(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _doctor(arguments: argparse.Namespace) -> int:
+    return run_doctor(
+        arguments.project_root,
+        arguments.deep,
+        arguments.json,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the stable top-level command parser."""
     parser = argparse.ArgumentParser(prog="modeling")
@@ -64,7 +73,10 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_parser.set_defaults(handler=_bootstrap)
 
     doctor_parser = subparsers.add_parser("doctor")
-    doctor_parser.set_defaults(handler=_not_implemented)
+    doctor_parser.add_argument("--project-root", required=True, type=Path)
+    doctor_parser.add_argument("--deep", action="store_true")
+    doctor_parser.add_argument("--json", action="store_true")
+    doctor_parser.set_defaults(handler=_doctor)
 
     add_verify_parser(subparsers)
     return parser

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import io
+import json
 import os
 import shutil
 import sqlite3
@@ -1973,3 +1975,172 @@ def test_preserved_non_ok_integrity_reaches_store_check_failed(
     assert report.check.mode == "integrity"
     assert report.check.outcome == "FAIL"
     assert "sqlite_integrity_check" in report.issues
+
+
+def test_doctor_binds_composition_only_to_owned_snapshot_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from modeling_cli import doctor
+
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    source_root = tmp_path.resolve()
+    built_roots: list[Path] = []
+    original_build = doctor.build_composition
+
+    def observed_build(root: Path) -> object:
+        assert root.resolve() != source_root
+        built_roots.append(root.resolve())
+        return original_build(root)
+
+    monkeypatch.setattr(doctor, "build_composition", observed_build)
+    stdout = io.StringIO()
+
+    assert doctor.run_doctor(tmp_path, False, True, stdout=stdout) == 0
+    assert json.loads(stdout.getvalue())["status"] == "READY"
+    assert len(built_roots) == 1
+    assert not built_roots[0].exists()
+
+
+def test_doctor_cleans_base_snapshot_and_deep_smoke_roots_on_every_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from modeling_cli import doctor
+
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    observed: list[Path] = []
+    original_snapshot = doctor.materialize_diagnostic_snapshot
+    original_deep = doctor._run_deep_smoke
+
+    @contextmanager
+    def observed_snapshot(root: Path) -> Iterator[object]:
+        with original_snapshot(root) as snapshot:
+            observed.append(snapshot.project_root)
+            yield snapshot
+
+    def observed_deep() -> object:
+        return original_deep(observed_roots=observed)
+
+    monkeypatch.setattr(doctor, "materialize_diagnostic_snapshot", observed_snapshot)
+    monkeypatch.setattr(doctor, "_run_deep_smoke", observed_deep)
+    stdout = io.StringIO()
+
+    assert doctor.run_doctor(tmp_path, True, True, stdout=stdout) == 0
+    assert len(observed) == 2
+    assert all(not root.exists() for root in observed)
+
+
+def test_real_foreign_key_violation_maps_to_doctor_foreign_key_failure(
+    tmp_path: Path,
+) -> None:
+    from modeling_cli.doctor import run_doctor
+
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    database = tmp_path / ".modeling" / "state.sqlite3"
+    writer = sqlite3.connect(database)
+    writer.execute("PRAGMA foreign_keys=OFF")
+    writer.execute("PRAGMA wal_autocheckpoint=0")
+    writer.execute("CREATE TABLE doctor_parent(id INTEGER PRIMARY KEY)")
+    writer.execute(
+        "CREATE TABLE doctor_child(parent_id INTEGER REFERENCES doctor_parent(id))"
+    )
+    writer.execute("INSERT INTO doctor_child(parent_id) VALUES (99)")
+    writer.commit()
+    try:
+        stdout = io.StringIO()
+        assert run_doctor(tmp_path, False, True, stdout=stdout) == 2
+    finally:
+        writer.close()
+
+    report = json.loads(stdout.getvalue())
+    checks = {item["name"]: item for item in report["checks"]}
+    assert checks["foreign-keys"] == {
+        "name": "foreign-keys",
+        "status": "FAIL",
+        "code": "foreign_key_failure",
+    }
+
+
+def test_preserved_non_ok_integrity_maps_to_doctor_check_failed(
+    tmp_path: Path,
+) -> None:
+    from modeling_cli.doctor import run_doctor
+
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    database = tmp_path / ".modeling" / "state.sqlite3"
+    writer = sqlite3.connect(database)
+    try:
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("CREATE TABLE doctor_integrity_probe(value TEXT NOT NULL)")
+        writer.execute("INSERT INTO doctor_integrity_probe(value) VALUES ('probe')")
+        writer.commit()
+        metadata_root = writer.execute(
+            "SELECT rootpage FROM sqlite_schema WHERE type='table' AND name='metadata'"
+        ).fetchone()[0]
+        writer.execute("PRAGMA writable_schema=ON")
+        writer.execute(
+            "UPDATE sqlite_schema SET rootpage=? "
+            "WHERE type='table' AND name='doctor_integrity_probe'",
+            (metadata_root,),
+        )
+        writer.commit()
+        writer.execute("PRAGMA writable_schema=OFF")
+        stdout = io.StringIO()
+        assert run_doctor(tmp_path, True, True, stdout=stdout) == 2
+    finally:
+        writer.close()
+
+    checks = {item["name"]: item for item in json.loads(stdout.getvalue())["checks"]}
+    assert checks["storage-integrity"] == {
+        "name": "storage-integrity",
+        "status": "FAIL",
+        "code": "check_failed",
+    }
+
+
+def test_full_doctor_idle_source_bytes_and_members_are_unchanged(
+    tmp_path: Path,
+) -> None:
+    from modeling_cli.doctor import run_doctor
+
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    before = _file_bytes(tmp_path)
+    members = sorted(
+        path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")
+    )
+    stdout = io.StringIO()
+
+    assert run_doctor(tmp_path, True, True, stdout=stdout) == 0
+    assert json.loads(stdout.getvalue())["status"] == "READY"
+    assert _file_bytes(tmp_path) == before
+    assert (
+        sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*"))
+        == members
+    )
+
+
+def test_full_doctor_active_writer_is_verified_or_finite_without_shm_hash_assertion(
+    tmp_path: Path,
+) -> None:
+    from modeling_cli.doctor import run_doctor
+
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    writer = _start_wal_writer(tmp_path, "doctor-active")
+    try:
+        stdout = io.StringIO()
+        exit_code = run_doctor(tmp_path, False, True, stdout=stdout)
+    finally:
+        writer.close()
+
+    report = json.loads(stdout.getvalue())
+    if exit_code == 0:
+        assert report["status"] == "READY"
+    else:
+        assert exit_code == 2
+        assert report["status"] == "UNSAFE"
+        storage = next(
+            item for item in report["checks"] if item["name"] == "storage-integrity"
+        )
+        assert storage["code"] in {
+            "snapshot_unstable",
+            "snapshot_unavailable",
+        }

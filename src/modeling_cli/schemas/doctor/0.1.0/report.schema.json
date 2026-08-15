@@ -1,0 +1,1169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/cli/doctor/0.1.0/report.schema.json",
+  "title": "modeling doctor report 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "exit_code",
+    "project_state",
+    "ready_for_project_creation",
+    "deep",
+    "checks",
+    "storage"
+  ],
+  "properties": {
+    "schema_version": {"const": "modeling-doctor-report/0.1.0"},
+    "status": {"enum": ["READY", "WARNING", "UNSAFE"]},
+    "exit_code": {"enum": [0, 1, 2]},
+    "project_state": {
+      "enum": ["UNINITIALIZED", "STORAGE_READY", "READY", "DEGRADED"]
+    },
+    "ready_for_project_creation": {"type": "boolean"},
+    "deep": {"type": "boolean"},
+    "checks": {
+      "type": "array",
+      "prefixItems": [
+        {"$ref": "#/$defs/project-root"},
+        {"$ref": "#/$defs/project-state"},
+        {"$ref": "#/$defs/application-health"},
+        {"$ref": "#/$defs/capability-registry"},
+        {"$ref": "#/$defs/storage-integrity"},
+        {"$ref": "#/$defs/foreign-keys"},
+        {"$ref": "#/$defs/legacy-attempts"},
+        {"$ref": "#/$defs/legacy-validations"},
+        {"$ref": "#/$defs/legacy-operations"},
+        {"$ref": "#/$defs/schema-assets"},
+        {"$ref": "#/$defs/codex-config"},
+        {"$ref": "#/$defs/deep-lock-smoke"},
+        {"$ref": "#/$defs/deep-root-smoke"}
+      ],
+      "items": false
+    },
+    "storage": {"$ref": "#/$defs/storage"}
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "status": {"const": "READY"},
+            "exit_code": {"const": 0}
+          }
+        },
+        {
+          "properties": {
+            "status": {"const": "WARNING"},
+            "exit_code": {"const": 1}
+          }
+        },
+        {
+          "properties": {
+            "status": {"const": "UNSAFE"},
+            "exit_code": {"const": 2}
+          }
+        }
+      ]
+    },
+    {
+      "if": {"properties": {"deep": {"const": true}}},
+      "then": {"properties": {"checks": {"minItems": 13, "maxItems": 13}}},
+      "else": {"properties": {"checks": {"minItems": 11, "maxItems": 11}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "READY"}}},
+      "then": {
+        "properties": {
+          "project_state": {"enum": ["STORAGE_READY", "READY"]},
+          "checks": {
+            "$ref": "#/$defs/ready-store-checks",
+            "not": {
+              "contains": {
+                "properties": {"status": {"enum": ["WARN", "FAIL"]}},
+                "required": ["status"]
+              }
+            }
+          },
+          "storage": {"$ref": "#/$defs/ready-storage"}
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "project_state": {"const": "STORAGE_READY"},
+              "ready_for_project_creation": {"const": true}
+            }
+          },
+          {
+            "properties": {
+              "project_state": {"const": "READY"},
+              "ready_for_project_creation": {"const": false}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "WARNING"}}},
+      "then": {
+        "properties": {
+          "project_state": {"const": "UNINITIALIZED"},
+          "ready_for_project_creation": {"const": true},
+          "checks": {
+            "$ref": "#/$defs/uninitialized-store-checks",
+            "contains": {
+              "properties": {"status": {"const": "WARN"}},
+              "required": ["status"]
+            },
+            "minContains": 1,
+            "maxContains": 1,
+            "not": {
+              "contains": {
+                "properties": {"status": {"const": "FAIL"}},
+                "required": ["status"]
+              }
+            }
+          },
+          "storage": {"$ref": "#/$defs/empty-storage"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "UNSAFE"}}},
+      "then": {
+        "properties": {
+          "ready_for_project_creation": {"const": false},
+          "checks": {
+            "contains": {
+              "properties": {"status": {"const": "FAIL"}},
+              "required": ["status"]
+            },
+            "minContains": 1,
+            "not": {
+              "contains": {
+                "properties": {"status": {"const": "WARN"}},
+                "required": ["status"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"project_state": {"const": "UNINITIALIZED"}}},
+      "then": {
+        "properties": {
+          "checks": {
+            "prefixItems": [
+              {},
+              {"properties": {"status": {"const": "WARN"}, "code": {"const": "uninitialized"}}}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"project_state": {"const": "STORAGE_READY"}}},
+      "then": {
+        "properties": {
+          "checks": {
+            "prefixItems": [
+              {},
+              {"properties": {"status": {"const": "PASS"}, "code": {"const": "storage_ready"}}}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"project_state": {"const": "READY"}}},
+      "then": {
+        "properties": {
+          "checks": {
+            "prefixItems": [
+              {},
+              {"properties": {"status": {"const": "PASS"}, "code": {"const": "ready"}}}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"project_state": {"const": "DEGRADED"}}},
+      "then": {
+        "properties": {
+          "checks": {
+            "prefixItems": [
+              {},
+              {"properties": {"status": {"const": "FAIL"}, "code": {"const": "degraded"}}}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "storage": {"properties": {"check": {"type": "null"}}},
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"code": {"not": {"enum": ["ok", "check_failed"]}}}}
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "check": {
+                  "type": "object",
+                  "properties": {"outcome": {"const": "PASS"}}
+                },
+                "issues": {
+                  "allOf": [
+                    {"not": {"contains": {"const": "sqlite_quick_check"}}},
+                    {"not": {"contains": {"const": "sqlite_integrity_check"}}},
+                    {"not": {"contains": {"const": "database_relation"}}}
+                  ]
+                }
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"status": {"const": "PASS"}, "code": {"const": "ok"}}}
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "check": {
+                  "type": "object",
+                  "properties": {"outcome": {"const": "PASS"}}
+                },
+                "issues": {
+                  "contains": {"const": "database_relation"},
+                  "allOf": [
+                    {"not": {"contains": {"const": "sqlite_quick_check"}}},
+                    {"not": {"contains": {"const": "sqlite_integrity_check"}}}
+                  ]
+                }
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"status": {"const": "FAIL"}, "code": {"const": "check_error"}}}
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "check": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {"const": "quick"},
+                    "outcome": {"const": "FAIL"}
+                  }
+                },
+                "issues": {
+                  "contains": {"const": "sqlite_quick_check"},
+                  "not": {"contains": {"const": "sqlite_integrity_check"}}
+                }
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"status": {"const": "FAIL"}, "code": {"const": "check_failed"}}}
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "check": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {"const": "integrity"},
+                    "outcome": {"const": "FAIL"}
+                  }
+                },
+                "issues": {
+                  "contains": {"const": "sqlite_integrity_check"},
+                  "not": {"contains": {"const": "sqlite_quick_check"}}
+                }
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"status": {"const": "FAIL"}, "code": {"const": "check_failed"}}}
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "check": {
+                  "type": "object",
+                  "properties": {"outcome": {"const": "ERROR"}}
+                },
+                "issues": {
+                  "contains": {"const": "database_relation"},
+                  "allOf": [
+                    {"not": {"contains": {"const": "sqlite_quick_check"}}},
+                    {"not": {"contains": {"const": "sqlite_integrity_check"}}}
+                  ]
+                }
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"status": {"const": "FAIL"}, "code": {"const": "check_error"}}}
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "if": {
+        "properties": {
+          "storage": {"properties": {"check": {"type": "null"}}},
+          "checks": {
+            "prefixItems": [{}, {}, {}, {}, {"properties": {"code": {"const": "check_error"}}}]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "checks": {"$ref": "#/$defs/pre-store-checks"},
+          "storage": {"$ref": "#/$defs/empty-storage"}
+        }
+      }
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "storage": {"properties": {"issues": {"contains": {"const": "foreign_key"}}}},
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"status": {"const": "FAIL"}, "code": {"const": "foreign_key_failure"}}}
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "storage": {"properties": {"issues": {"not": {"contains": {"const": "foreign_key"}}}}},
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"code": {"not": {"const": "foreign_key_failure"}}}}
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "issues": {"contains": {"const": "stale_attempt"}},
+                "legacy_attempts": {"minItems": 1}
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"status": {"const": "FAIL"}, "code": {"const": "stale_attempt"}}}
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "issues": {"not": {"contains": {"const": "stale_attempt"}}},
+                "legacy_attempts": {"maxItems": 0}
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"code": {"not": {"const": "stale_attempt"}}}}
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "issues": {"contains": {"const": "stale_validation"}},
+                "legacy_validations": {"minItems": 1}
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"status": {"const": "FAIL"}, "code": {"const": "stale_validation"}}}
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "issues": {"not": {"contains": {"const": "stale_validation"}}},
+                "legacy_validations": {"maxItems": 0}
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"code": {"not": {"const": "stale_validation"}}}}
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "issues": {"contains": {"const": "stale_operation"}},
+                "legacy_idempotency_records": {"minItems": 1}
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"status": {"const": "FAIL"}, "code": {"const": "stale_operation"}}}
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "storage": {
+              "properties": {
+                "issues": {"not": {"contains": {"const": "stale_operation"}}},
+                "legacy_idempotency_records": {"maxItems": 0}
+              }
+            },
+            "checks": {
+              "prefixItems": [
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {"properties": {"code": {"not": {"const": "stale_operation"}}}}
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "if": {
+        "properties": {
+          "storage": {"properties": {"check": {"type": "object"}}}
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "storage": {"properties": {"issues": {"not": {"contains": {"const": "foreign_key"}}}}}
+              }
+            },
+            "then": {
+              "properties": {
+                "checks": {
+                  "prefixItems": [
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {"properties": {"status": {"const": "PASS"}, "code": {"const": "ok"}}}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "storage": {"properties": {"issues": {"not": {"contains": {"const": "stale_attempt"}}}}}
+              }
+            },
+            "then": {
+              "properties": {
+                "checks": {
+                  "prefixItems": [
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {"properties": {"status": {"const": "PASS"}, "code": {"const": "none"}}}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "storage": {"properties": {"issues": {"not": {"contains": {"const": "stale_validation"}}}}}
+              }
+            },
+            "then": {
+              "properties": {
+                "checks": {
+                  "prefixItems": [
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {"properties": {"status": {"const": "PASS"}, "code": {"const": "none"}}}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "storage": {"properties": {"issues": {"not": {"contains": {"const": "stale_operation"}}}}}
+              }
+            },
+            "then": {
+              "properties": {
+                "checks": {
+                  "prefixItems": [
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {"properties": {"status": {"const": "PASS"}, "code": {"const": "none"}}}
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "checks": {
+                "prefixItems": [{}, {}, {}, {}, {}, {"properties": {"code": {"const": "unavailable"}}}]
+              }
+            }
+          },
+          {
+            "properties": {
+              "checks": {
+                "prefixItems": [{}, {}, {}, {}, {}, {}, {"properties": {"code": {"const": "unavailable"}}}]
+              }
+            }
+          },
+          {
+            "properties": {
+              "checks": {
+                "prefixItems": [{}, {}, {}, {}, {}, {}, {}, {"properties": {"code": {"const": "unavailable"}}}]
+              }
+            }
+          },
+          {
+            "properties": {
+              "checks": {
+                "prefixItems": [{}, {}, {}, {}, {}, {}, {}, {}, {"properties": {"code": {"const": "unavailable"}}}]
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "checks": {"$ref": "#/$defs/pre-store-checks"},
+          "storage": {"$ref": "#/$defs/empty-storage"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "checks": {
+            "prefixItems": [{}, {}, {}, {}, {"properties": {"code": {"const": "snapshot_invalid"}}}]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "checks": {"$ref": "#/$defs/snapshot-invalid-checks"},
+          "storage": {"$ref": "#/$defs/empty-storage"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "checks": {
+            "prefixItems": [{}, {}, {}, {}, {"properties": {"code": {"const": "snapshot_unavailable"}}}]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "checks": {"$ref": "#/$defs/snapshot-unavailable-checks"},
+          "storage": {"$ref": "#/$defs/empty-storage"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "check-base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "code"],
+      "properties": {
+        "name": {"type": "string"},
+        "status": {"enum": ["PASS", "WARN", "FAIL"]},
+        "code": {"type": "string"}
+      }
+    },
+    "project-root": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "project-root"},
+            "code": {"enum": ["available", "unsafe", "unreadable"]}
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"const": "available"}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["unsafe", "unreadable"]}}}
+          ]
+        }
+      ]
+    },
+    "project-state": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "project-state"},
+            "code": {
+              "enum": ["storage_ready", "ready", "uninitialized", "degraded"]
+            }
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["storage_ready", "ready"]}}},
+            {"properties": {"status": {"const": "WARN"}, "code": {"const": "uninitialized"}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"const": "degraded"}}}
+          ]
+        }
+      ]
+    },
+    "application-health": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "application-health"},
+            "code": {"enum": ["healthy", "degraded", "unavailable"]}
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"const": "healthy"}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["degraded", "unavailable"]}}}
+          ]
+        }
+      ]
+    },
+    "capability-registry": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "capability-registry"},
+            "code": {"enum": ["sealed", "invalid", "unavailable"]}
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"const": "sealed"}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["invalid", "unavailable"]}}}
+          ]
+        }
+      ]
+    },
+    "storage-integrity": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "storage-integrity"},
+            "code": {
+              "enum": [
+                "not_initialized",
+                "ok",
+                "not_executed_degraded",
+                "check_failed",
+                "check_error",
+                "snapshot_unstable",
+                "snapshot_invalid",
+                "snapshot_resource_limit",
+                "snapshot_unavailable",
+                "snapshot_cleanup_failed"
+              ]
+            }
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_initialized", "ok"]}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["not_executed_degraded", "check_failed", "check_error", "snapshot_unstable", "snapshot_invalid", "snapshot_resource_limit", "snapshot_unavailable", "snapshot_cleanup_failed"]}}}
+          ]
+        }
+      ]
+    },
+    "foreign-keys": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "foreign-keys"},
+            "code": {
+              "enum": [
+                "not_initialized",
+                "ok",
+                "not_executed_degraded",
+                "foreign_key_failure",
+                "unavailable"
+              ]
+            }
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_initialized", "ok"]}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["not_executed_degraded", "foreign_key_failure", "unavailable"]}}}
+          ]
+        }
+      ]
+    },
+    "legacy-attempts": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "legacy-attempts"},
+            "code": {
+              "enum": [
+                "not_initialized",
+                "none",
+                "not_executed_degraded",
+                "stale_attempt",
+                "unavailable"
+              ]
+            }
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_initialized", "none"]}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["not_executed_degraded", "stale_attempt", "unavailable"]}}}
+          ]
+        }
+      ]
+    },
+    "legacy-validations": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "legacy-validations"},
+            "code": {
+              "enum": [
+                "not_initialized",
+                "none",
+                "not_executed_degraded",
+                "stale_validation",
+                "unavailable"
+              ]
+            }
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_initialized", "none"]}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["not_executed_degraded", "stale_validation", "unavailable"]}}}
+          ]
+        }
+      ]
+    },
+    "legacy-operations": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "legacy-operations"},
+            "code": {
+              "enum": [
+                "not_initialized",
+                "none",
+                "not_executed_degraded",
+                "stale_operation",
+                "unavailable"
+              ]
+            }
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_initialized", "none"]}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["not_executed_degraded", "stale_operation", "unavailable"]}}}
+          ]
+        }
+      ]
+    },
+    "schema-assets": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "schema-assets"},
+            "code": {"enum": ["hashes_match", "hash_mismatch", "unavailable"]}
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"const": "hashes_match"}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["hash_mismatch", "unavailable"]}}}
+          ]
+        }
+      ]
+    },
+    "codex-config": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "codex-config"},
+            "code": {"enum": ["valid", "invalid", "unavailable"]}
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"const": "valid"}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["invalid", "unavailable"]}}}
+          ]
+        }
+      ]
+    },
+    "deep-lock-smoke": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "deep-lock-smoke"},
+            "code": {
+              "enum": ["passed", "busy_classification_mismatch", "failed"]
+            }
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"const": "passed"}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["busy_classification_mismatch", "failed"]}}}
+          ]
+        }
+      ]
+    },
+    "deep-root-smoke": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {
+          "properties": {
+            "name": {"const": "deep-root-smoke"},
+            "code": {
+              "enum": ["passed", "result_mismatch", "validation_failed", "failed"]
+            }
+          },
+          "oneOf": [
+            {"properties": {"status": {"const": "PASS"}, "code": {"const": "passed"}}},
+            {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["result_mismatch", "validation_failed", "failed"]}}}
+          ]
+        }
+      ]
+    },
+    "integrity-check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "outcome"],
+      "properties": {
+        "mode": {"enum": ["quick", "integrity"]},
+        "outcome": {"enum": ["PASS", "FAIL", "ERROR"]}
+      }
+    },
+    "legacy-attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt_id", "status"],
+      "properties": {
+        "attempt_id": {"$ref": "#/$defs/uuid"},
+        "status": {"enum": ["PENDING", "RUNNING"]}
+      }
+    },
+    "legacy-validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["validation_id", "status"],
+      "properties": {
+        "validation_id": {"$ref": "#/$defs/uuid"},
+        "status": {"enum": ["PENDING", "RUNNING"]}
+      }
+    },
+    "legacy-operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope_id", "tool_name", "operation_id", "status"],
+      "properties": {
+        "scope_id": {"$ref": "#/$defs/uuid"},
+        "tool_name": {"enum": ["run_experiment", "validate_experiment"]},
+        "operation_id": {"$ref": "#/$defs/uuid"},
+        "status": {"const": "IN_PROGRESS"}
+      }
+    },
+    "empty-storage": {
+      "properties": {
+        "check": {"type": "null"},
+        "issues": {"maxItems": 0},
+        "legacy_attempts": {"maxItems": 0},
+        "legacy_validations": {"maxItems": 0},
+        "legacy_idempotency_records": {"maxItems": 0}
+      }
+    },
+    "ready-storage": {
+      "properties": {
+        "check": {
+          "type": "object",
+          "properties": {"outcome": {"const": "PASS"}}
+        },
+        "issues": {"maxItems": 0},
+        "legacy_attempts": {"maxItems": 0},
+        "legacy_validations": {"maxItems": 0},
+        "legacy_idempotency_records": {"maxItems": 0}
+      }
+    },
+    "ready-store-checks": {
+      "prefixItems": [
+        {},
+        {},
+        {},
+        {},
+        {"properties": {"code": {"const": "ok"}}},
+        {"properties": {"code": {"const": "ok"}}},
+        {"properties": {"code": {"const": "none"}}},
+        {"properties": {"code": {"const": "none"}}},
+        {"properties": {"code": {"const": "none"}}}
+      ]
+    },
+    "uninitialized-store-checks": {
+      "prefixItems": [
+        {},
+        {},
+        {},
+        {},
+        {"properties": {"code": {"const": "not_initialized"}}},
+        {"properties": {"code": {"const": "not_initialized"}}},
+        {"properties": {"code": {"const": "not_initialized"}}},
+        {"properties": {"code": {"const": "not_initialized"}}},
+        {"properties": {"code": {"const": "not_initialized"}}}
+      ]
+    },
+    "pre-store-checks": {
+      "prefixItems": [
+        {},
+        {"properties": {"code": {"const": "degraded"}}},
+        {"properties": {"code": {"const": "unavailable"}}},
+        {"properties": {"code": {"const": "unavailable"}}},
+        {},
+        {"properties": {"code": {"const": "unavailable"}}},
+        {"properties": {"code": {"const": "unavailable"}}},
+        {"properties": {"code": {"const": "unavailable"}}},
+        {"properties": {"code": {"const": "unavailable"}}}
+      ]
+    },
+    "snapshot-invalid-checks": {
+      "allOf": [
+        {"$ref": "#/$defs/pre-store-checks"},
+        {
+          "prefixItems": [
+            {"properties": {"code": {"const": "unsafe"}}},
+            {},
+            {},
+            {},
+            {"properties": {"code": {"const": "snapshot_invalid"}}}
+          ]
+        }
+      ]
+    },
+    "snapshot-unavailable-checks": {
+      "allOf": [
+        {"$ref": "#/$defs/pre-store-checks"},
+        {
+          "prefixItems": [
+            {"properties": {"code": {"const": "unreadable"}}},
+            {},
+            {},
+            {},
+            {"properties": {"code": {"const": "snapshot_unavailable"}}}
+          ]
+        }
+      ]
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check",
+        "issues",
+        "legacy_attempts",
+        "legacy_validations",
+        "legacy_idempotency_records"
+      ],
+      "properties": {
+        "check": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/integrity-check"}]
+        },
+        "issues": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 8,
+          "items": {
+            "enum": [
+              "sqlite_quick_check",
+              "sqlite_integrity_check",
+              "foreign_key",
+              "stale_attempt",
+              "stale_validation",
+              "stale_operation",
+              "database_relation",
+              "project_state"
+            ]
+          }
+        },
+        "legacy_attempts": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/legacy-attempt"}
+        },
+        "legacy_validations": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/legacy-validation"}
+        },
+        "legacy_idempotency_records": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/legacy-operation"}
+        }
+      }
+    }
+  }
+}

@@ -82,6 +82,8 @@ _NON_PYTHON_PACKAGE_ASSETS = frozenset(
         "modeling_core/contracts/schemas/tools/0.1.0/validate_experiment.error.schema.json",
         "modeling_core/contracts/schemas/tools/0.1.0/validate_experiment.request.schema.json",
         "modeling_core/contracts/schemas/tools/0.1.0/validate_experiment.result.schema.json",
+        "modeling_cli/schemas/doctor/0.1.0/report.schema.json",
+        "modeling_cli/templates/codex/config.toml",
         "modeling_infrastructure/sqlite/schema_v1.sql",
     }
 )

@@ -788,3 +788,25 @@ def test_diagnostic_snapshot_rejects_unsafe_source_members_without_sensitive_err
     assert secret not in rendered
     assert str(tmp_path) not in rendered
     assert "do not disclose" not in rendered
+
+
+def test_doctor_rejects_unsafe_root_without_traceback_or_path_disclosure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Catches doctor rendering source names, paths, OS errors, or tracebacks."""
+    from modeling_cli.main import main
+
+    secret = "credential-super-secret.txt"
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    (tmp_path / ".modeling" / secret).write_bytes(b"do not disclose")
+
+    assert main(["doctor", "--project-root", str(tmp_path), "--json"]) == 2
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["status"] == "UNSAFE"
+    assert report["storage"]["issues"] == []
+    rendered = captured.out + captured.err
+    assert secret not in rendered
+    assert str(tmp_path) not in rendered
+    assert "do not disclose" not in rendered
+    assert "Traceback" not in rendered

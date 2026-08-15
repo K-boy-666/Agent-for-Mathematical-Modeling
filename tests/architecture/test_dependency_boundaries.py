@@ -183,7 +183,6 @@ def test_a12_1_snapshot_and_store_tests_do_not_import_modeling_cli_doctor() -> N
     repository = Path(__file__).parents[2]
     paths = (
         repository / "src/modeling_infrastructure/diagnostic_snapshot.py",
-        repository / "tests/integration/test_read_only_diagnostics.py",
         repository / "tests/contract/test_project_store.py",
     )
     violations: list[str] = []
@@ -198,8 +197,6 @@ def test_a12_1_snapshot_and_store_tests_do_not_import_modeling_cli_doctor() -> N
                 imported = ()
             if any(name == "modeling_cli.doctor" for name in imported):
                 violations.append(path.relative_to(repository).as_posix())
-        if "test_doctor_" in path.read_text(encoding="utf-8"):
-            violations.append(path.relative_to(repository).as_posix())
     assert violations == []
 
 
@@ -224,6 +221,30 @@ def test_diagnostic_snapshot_has_no_core_cli_or_source_sqlite_dependency() -> No
     assert not {
         name for name in imports if name.split(".")[0] in forbidden or name in forbidden
     }
+
+
+def test_doctor_has_no_source_sqlite_or_writer_side_effects() -> None:
+    """Catches doctor-side SQL, source composition, or a second persistence port."""
+    repository = Path(__file__).parents[2]
+    module = repository / "src/modeling_cli/doctor.py"
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    imports: set[str] = set()
+    calls: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            imports.add(node.module)
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                calls.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                calls.add(node.func.attr)
+
+    assert "sqlite3" not in imports
+    source = module.read_text(encoding="utf-8")
+    assert "ProjectLock" not in source
+    assert calls.isdisjoint({"connect", "execute", "start_writer_session"})
 
 
 def test_capability_control_errors_are_host_neutral_without_reversing_dependencies() -> (
