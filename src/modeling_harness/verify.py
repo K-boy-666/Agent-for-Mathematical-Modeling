@@ -51,6 +51,7 @@ _GOLDEN_NODE = (
 )
 _NON_PYTHON_PACKAGE_ASSETS = frozenset(
     {
+        "modeling_capabilities/AGENTS.md",
         "modeling_capabilities/root_finding/context.md",
         "modeling_capabilities/root_finding/schemas/0.1.0/canonical-input.schema.json",
         "modeling_capabilities/root_finding/schemas/0.1.0/failure-data.schema.json",
@@ -82,9 +83,11 @@ _NON_PYTHON_PACKAGE_ASSETS = frozenset(
         "modeling_core/contracts/schemas/tools/0.1.0/validate_experiment.error.schema.json",
         "modeling_core/contracts/schemas/tools/0.1.0/validate_experiment.request.schema.json",
         "modeling_core/contracts/schemas/tools/0.1.0/validate_experiment.result.schema.json",
+        "modeling_core/AGENTS.md",
         "modeling_cli/schemas/doctor/0.1.0/report.schema.json",
         "modeling_cli/templates/codex/config.toml",
         "modeling_infrastructure/sqlite/schema_v1.sql",
+        "modeling_mcp/AGENTS.md",
     }
 )
 _PACKAGE_ROOT_PATHS = frozenset(
