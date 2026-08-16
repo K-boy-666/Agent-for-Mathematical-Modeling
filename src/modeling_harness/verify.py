@@ -62,6 +62,10 @@ _M1A_CHECK_IDS: Final = (
     "wheel",
     "stdio-golden",
 )
+_M1B_CHECK_IDS: Final = (
+    "canonical-json-conformance",
+    "schema-compatibility",
+)
 _JUNIT_NODE_LIMIT: Final = 4096
 # Bounded literal covering the real parameterized ids: A6/A11 embed full
 # rejection expressions in pytest ids (current maximum is 4,245 bytes).
@@ -1765,11 +1769,17 @@ def _run_c1_verification(repository_root: Path) -> int:
         return 1
 
 
-def run_verification(milestone: Milestone) -> int:
+def run_verification(
+    milestone: Milestone,
+    only: list[str] | None = None,
+) -> int:
     """Run the registered milestone verification profile."""
     print(milestone.value, flush=True)
     repository_root = Path.cwd().resolve()
     if milestone is Milestone.M1A:
+        if only:
+            print("--only is not supported for m1a", file=sys.stderr)
+            return 2
         try:
             return _run_m1a_verification(repository_root)
         except (OSError, ValueError, subprocess.SubprocessError):
@@ -1783,18 +1793,97 @@ def run_verification(milestone: Milestone) -> int:
             )
             return 2
     if milestone is Milestone.C1:
+        if only:
+            print("--only is not supported for c1", file=sys.stderr)
+            return 2
         try:
             return _run_c1_verification(repository_root)
         except (OSError, ValueError, subprocess.SubprocessError):
             print("C1 verification harness prerequisite failed", file=sys.stderr)
             return 2
+    if milestone is Milestone.M1B:
+        return _run_m1b_verification(repository_root, only=only)
     print("verification milestone is not registered", file=sys.stderr)
     return 2
 
 
+def _run_m1b_verification(
+    repository_root: Path,
+    only: list[str] | None = None,
+) -> int:
+    """Run focused M1b checks."""
+    if only is None:
+        print("full m1b verification is not yet implemented", file=sys.stderr)
+        return 2
+
+    for check_id in only:
+        if check_id not in _M1B_CHECK_IDS:
+            print(
+                f"unknown check_id: {check_id} (valid: {', '.join(_M1B_CHECK_IDS)})",
+                file=sys.stderr,
+            )
+            return 2
+
+    all_passed = True
+    for check_id in only:
+        if check_id == "canonical-json-conformance":
+            passed = _run_canonical_json_conformance(repository_root)
+        elif check_id == "schema-compatibility":
+            passed = _run_schema_compatibility(repository_root)
+        else:
+            passed = False
+        if not passed:
+            all_passed = False
+
+    return 0 if all_passed else 1
+
+
+def _run_canonical_json_conformance(repository_root: Path) -> bool:
+    """Run RFC 8785 vector conformance tests."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            str(repository_root / "tests" / "contract" / "test_rfc8785_vectors.py"),
+            "-q",
+        ],
+        cwd=repository_root,
+        capture_output=False,
+    )
+    if result.returncode == 0:
+        print("canonical-json-conformance PASS", flush=True)
+        return True
+    print("canonical-json-conformance FAIL", flush=True)
+    return False
+
+
+def _run_schema_compatibility(repository_root: Path) -> bool:
+    """Run schema compatibility tests."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            str(
+                repository_root / "tests" / "contract" / "test_schema_compatibility.py"
+            ),
+            "-q",
+        ],
+        cwd=repository_root,
+        capture_output=False,
+    )
+    if result.returncode == 0:
+        print("schema-compatibility PASS", flush=True)
+        return True
+    print("schema-compatibility FAIL", flush=True)
+    return False
+
+
 def _execute(arguments: argparse.Namespace) -> int:
     milestone = cast(Milestone, arguments.milestone)
-    return run_verification(milestone)
+    only = cast(list[str] | None, getattr(arguments, "only", None))
+    return run_verification(milestone, only=only)
 
 
 def add_verify_parser(
@@ -1807,5 +1896,12 @@ def add_verify_parser(
         type=Milestone,
         choices=tuple(Milestone),
         required=True,
+    )
+    parser.add_argument(
+        "--only",
+        action="append",
+        dest="only",
+        default=None,
+        help="Run only the named check (repeatable); focused mode, no completion evidence",
     )
     parser.set_defaults(handler=_execute)
