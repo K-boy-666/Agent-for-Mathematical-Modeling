@@ -23,7 +23,7 @@ class SchemaCatalog:
 
     @classmethod
     def load_packaged(cls, version: str = "0.1.0") -> SchemaCatalog:
-        if version != "0.1.0":
+        if version not in {"0.1.0", "1.0.0"}:
             raise ValueError(f"unsupported packaged tool contract version: {version}")
         root = files("modeling_core.contracts")
         tool_root = root.joinpath("schemas", "tools", version)

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/1.0.0/list_capabilities.result.schema.json",
+  "title": "list_capabilities result 0.1.0",
+  "oneOf": [
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["tool_contract_version", "correlation_id", "server_time", "detail", "registry", "capabilities"],
+      "properties": {
+        "tool_contract_version": {"const": "modeling-tools/1.0.0"},
+        "correlation_id": {"$ref": "#/$defs/entityId"},
+        "server_time": {"$ref": "#/$defs/timestamp"},
+        "detail": {"const": "summary"},
+        "registry": {"$ref": "#/$defs/registry"},
+        "capabilities": {"type": "array", "items": {"$ref": "#/$defs/capabilitySummary"}}
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["tool_contract_version", "correlation_id", "server_time", "detail", "registry", "capability"],
+      "properties": {
+        "tool_contract_version": {"const": "modeling-tools/1.0.0"},
+        "correlation_id": {"$ref": "#/$defs/entityId"},
+        "server_time": {"$ref": "#/$defs/timestamp"},
+        "detail": {"const": "contract"},
+        "registry": {"$ref": "#/$defs/registry"},
+        "capability": {"$ref": "#/$defs/capabilityContract"}
+      }
+    }
+  ],
+  "$defs": {
+    "entityId": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+    "hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "timestamp": {"type": "string", "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"},
+    "registry": {
+      "type": "object", "additionalProperties": false, "required": ["sealed", "fingerprint", "capability_count"],
+      "properties": {"sealed": {"type": "boolean"}, "fingerprint": {"$ref": "#/$defs/hash"}, "capability_count": {"type": "integer", "minimum": 0}}
+    },
+    "capabilitySummary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["capability_id", "contract_version", "title", "summary", "category", "tags", "determinism", "randomness", "input_schema_hash", "canonical_input_schema_version", "canonical_input_schema_hash", "success_schema_hash", "failure_schema_hash"],
+      "properties": {
+        "capability_id": {"type": "string"}, "contract_version": {"type": "string"}, "title": {"type": "string"}, "summary": {"type": "string"}, "category": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}, "determinism": {"type": "string"}, "randomness": {"type": "string"}, "input_schema_hash": {"$ref": "#/$defs/hash"}, "canonical_input_schema_version": {"type": "string"}, "canonical_input_schema_hash": {"$ref": "#/$defs/hash"}, "success_schema_hash": {"$ref": "#/$defs/hash"}, "failure_schema_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "limits": {
+      "type": "object", "additionalProperties": false, "required": ["timeout_ms", "max_iterations", "max_evaluations"],
+      "properties": {"timeout_ms": {"type": "integer", "minimum": 0}, "max_iterations": {"type": "integer", "minimum": 0}, "max_evaluations": {"type": "integer", "minimum": 0}}
+    },
+    "policyContract": {
+      "type": "object", "additionalProperties": false, "required": ["policy_version", "policy_schema", "policy_schema_hash"],
+      "properties": {"policy_version": {"type": "string"}, "policy_schema": {"type": "object"}, "policy_schema_hash": {"$ref": "#/$defs/hash"}}
+    },
+    "validatorSummary": {
+      "type": "object", "additionalProperties": false, "required": ["validator_id", "policies", "report_schema_version", "report_schema", "report_schema_hash", "summary"],
+      "properties": {"validator_id": {"type": "string"}, "policies": {"type": "array", "items": {"$ref": "#/$defs/policyContract"}}, "report_schema_version": {"type": "string"}, "report_schema": {"type": "object"}, "report_schema_hash": {"$ref": "#/$defs/hash"}, "summary": {"type": "string"}}
+    },
+    "capabilityContract": {
+      "type": "object", "additionalProperties": false,
+      "required": ["capability_id", "contract_version", "title", "summary", "category", "tags", "determinism", "randomness", "input_schema_hash", "canonical_input_schema_version", "canonical_input_schema_hash", "success_schema_hash", "failure_schema_hash", "capability_api_version", "implementation_id", "implementation_version", "input_schema", "canonical_input_schema", "success_schema", "failure_schema", "default_limits", "maximum_limits", "artifact_roles", "validators", "context_ref"],
+      "properties": {
+        "capability_id": {"type": "string"}, "contract_version": {"type": "string"}, "title": {"type": "string"}, "summary": {"type": "string"}, "category": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}, "determinism": {"type": "string"}, "randomness": {"type": "string"}, "input_schema_hash": {"$ref": "#/$defs/hash"}, "canonical_input_schema_version": {"type": "string"}, "canonical_input_schema_hash": {"$ref": "#/$defs/hash"}, "success_schema_hash": {"$ref": "#/$defs/hash"}, "failure_schema_hash": {"$ref": "#/$defs/hash"},
+        "capability_api_version": {"const": "modeling-capability/1.0.0"}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "input_schema": {"type": "object"}, "canonical_input_schema": {"type": "object"}, "success_schema": {"type": "object"}, "failure_schema": {"type": "object"}, "default_limits": {"$ref": "#/$defs/limits"}, "maximum_limits": {"$ref": "#/$defs/limits"}, "artifact_roles": {"type": "array", "maxItems": 0}, "validators": {"type": "array", "items": {"$ref": "#/$defs/validatorSummary"}}, "context_ref": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

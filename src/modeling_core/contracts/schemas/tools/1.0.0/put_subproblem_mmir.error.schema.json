@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/1.0.0/put_subproblem_mmir.error.schema.json",
+  "title": "put_subproblem_mmir error 0.1.0",
+  "allOf": [
+    {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json"},
+    {"properties": {"code": {"enum": ["INVALID_REQUEST", "NOT_FOUND", "CONFLICT", "PRECONDITION_FAILED", "RESOURCE_LIMIT_EXCEEDED", "INTERNAL_ERROR"]}}}
+  ]
+}

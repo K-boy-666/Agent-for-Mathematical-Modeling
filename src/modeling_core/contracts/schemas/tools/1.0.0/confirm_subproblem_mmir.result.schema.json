@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/1.0.0/confirm_subproblem_mmir.result.schema.json",
+  "title": "confirm_subproblem_mmir result 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "project_id", "subproblem_id", "mmir_revision", "status"],
+  "properties": {
+    "tool_contract_version": {"const": "modeling-tools/1.0.0"},
+    "correlation_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+    "server_time": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/timestamp"},
+    "operation_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+    "replayed": {"type": "boolean"},
+    "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+    "subproblem_id": {"type": "string"},
+    "mmir_revision": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/hash"},
+    "status": {"const": "CONFIRMED"}
+  }
+}

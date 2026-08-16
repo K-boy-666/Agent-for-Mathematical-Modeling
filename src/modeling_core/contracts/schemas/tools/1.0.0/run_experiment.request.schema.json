@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/1.0.0/run_experiment.request.schema.json",
+  "title": "run_experiment request 1.0.0",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id", "project_id", "mode", "capability", "payload"],
+      "properties": {
+        "operation_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+        "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+        "mode": {"const": "new"},
+        "capability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capability_id", "contract_version"],
+          "properties": {
+            "capability_id": {"const": "numerical.root_finding"},
+            "contract_version": {"const": "1.0.0"}
+          }
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["expression", "lower", "upper"],
+          "properties": {
+            "expression": {"type": "string", "minLength": 1},
+            "lower": {"type": "number"},
+            "upper": {"type": "number"},
+            "absolute_tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 1e-10},
+            "relative_tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 1e-10},
+            "function_tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 1e-10},
+            "max_iterations": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 100}
+          }
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 60000, "default": 10000},
+            "seed": {"type": ["integer", "null"], "minimum": -9007199254740991, "maximum": 9007199254740991, "default": null}
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id", "project_id", "mode", "experiment_id", "capability", "payload"],
+      "properties": {
+        "operation_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+        "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+        "mode": {"const": "rerun"},
+        "experiment_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+        "capability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capability_id", "contract_version"],
+          "properties": {
+            "capability_id": {"const": "numerical.root_finding"},
+            "contract_version": {"const": "1.0.0"}
+          }
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["expression", "lower", "upper"],
+          "properties": {
+            "expression": {"type": "string", "minLength": 1},
+            "lower": {"type": "number"},
+            "upper": {"type": "number"},
+            "absolute_tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 1e-10},
+            "relative_tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 1e-10},
+            "function_tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 1e-10},
+            "max_iterations": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 100}
+          }
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 60000, "default": 10000},
+            "seed": {"type": ["integer", "null"], "minimum": -9007199254740991, "maximum": 9007199254740991, "default": null}
+          }
+        }
+      }
+    }
+  ]
+}

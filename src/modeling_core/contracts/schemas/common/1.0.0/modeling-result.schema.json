@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-result.schema.json",
+  "title": "Modeling result snapshot 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "result_schema_version",
+    "capability_id",
+    "contract_version",
+    "result_kind",
+    "data"
+  ],
+  "properties": {
+    "result_schema_version": {"const": "modeling-result/1.0.0"},
+    "capability_id": {"const": "numerical.root_finding"},
+    "contract_version": {"const": "1.0.0"},
+    "result_kind": {"enum": ["success", "numerical_failure"]},
+    "data": {"type": "object"}
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "result_kind": {"const": "success"},
+        "data": {"$ref": "#/$defs/successData"}
+      }
+    },
+    {
+      "properties": {
+        "result_kind": {"const": "numerical_failure"},
+        "data": {"$ref": "#/$defs/failureData"}
+      }
+    }
+  ],
+  "$defs": {
+    "successData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "function_value",
+        "iterations",
+        "evaluations",
+        "termination_reason"
+      ],
+      "properties": {
+        "root": {"type": "number"},
+        "function_value": {"type": "number"},
+        "iterations": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "evaluations": {"type": "integer", "minimum": 1, "maximum": 20000},
+        "termination_reason": {
+          "enum": [
+            "endpoint_root",
+            "residual_tolerance",
+            "interval_tolerance"
+          ]
+        }
+      }
+    },
+    "failureData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["failure_code", "iterations", "evaluations"],
+      "properties": {
+        "failure_code": {
+          "enum": [
+            "no_sign_change",
+            "non_convergence",
+            "domain_error",
+            "non_finite_evaluation"
+          ]
+        },
+        "iterations": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "evaluations": {"type": "integer", "minimum": 0, "maximum": 20000}
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/1.0.0/register_problem_assets.error.schema.json",
+  "title": "register_problem_assets error 0.1.0",
+  "allOf": [
+    {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json"},
+    {"properties": {"code": {"enum": ["INVALID_REQUEST", "NOT_FOUND", "CONFLICT", "PRECONDITION_FAILED", "SECURITY_VIOLATION", "INTEGRITY_FAILURE", "RESOURCE_LIMIT_EXCEEDED", "INTERNAL_ERROR"]}}}
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/1.0.0/list_capabilities.request.schema.json",
+  "title": "list_capabilities request 0.1.0",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "detail": {"const": "summary"},
+        "category": {"type": "string", "minLength": 1},
+        "capability_id": {"type": "string", "minLength": 1}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["detail", "capability_id", "contract_version"],
+      "properties": {
+        "detail": {"const": "contract"},
+        "capability_id": {"type": "string", "minLength": 1},
+        "contract_version": {"type": "string", "minLength": 1}
+      }
+    }
+  ]
+}

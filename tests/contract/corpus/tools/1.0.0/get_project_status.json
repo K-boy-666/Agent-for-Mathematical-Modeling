@@ -1,0 +1,19 @@
+[
+  {"label": "valid_request", "kind": "request", "valid": true, "instance": {"project_id": "123e4567-e89b-42d3-a456-426614174000"}},
+  {
+    "label": "valid_result", "kind": "result", "valid": true,
+    "instance": {
+      "tool_contract_version": "modeling-tools/1.0.0", "correlation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "server_time": "2026-07-23T12:34:56.789Z", "view": "summary",
+      "project": {"project_id": "123e4567-e89b-42d3-a456-426614174000", "display_name": "demo", "project_format_version": "modeling-project/1.0.0", "project_state": "READY", "created_at": "2026-07-23T12:34:56.789Z"},
+      "attempt_status_counts": {"pending": 0, "running": 0, "succeeded": 0, "numerical_failure": 0, "errored": 0, "timed_out": 0, "abandoned": 0},
+      "validation_status_counts": {"pending": 0, "running": 0, "succeeded": 0, "errored": 0, "timed_out": 0, "abandoned": 0},
+      "registry_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "last_activity_at": "2026-07-23T12:34:56.789Z",
+      "experiments": {"items": [], "truncated": false}
+    }
+  },
+  {"label": "valid_error", "kind": "error", "valid": true, "instance": {"error_schema_version": "modeling-error/1.0.0", "code": "NOT_FOUND", "message": "not found", "retryable": false, "correlation_id": "123e4567-e89b-42d3-a456-426614174000", "details": {"resource_type": "project", "resource_id": "123e4567-e89b-42d3-a456-426614174000"}}},
+  {"label": "unknown_field", "kind": "request", "valid": false, "instance": {"project_id": "123e4567-e89b-42d3-a456-426614174000", "cursor": "forbidden"}},
+  {"label": "invalid_type", "kind": "request", "valid": false, "instance": {"project_id": 1}}
+]

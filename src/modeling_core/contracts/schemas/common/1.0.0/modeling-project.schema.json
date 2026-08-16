@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-project.schema.json",
+  "title": "Modeling Project Storage Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "project_format_version",
+    "canonicalization_version",
+    "storage_instance_id"
+  ],
+  "properties": {
+    "project_format_version": {
+      "const": "modeling-project/1.0.0"
+    },
+    "canonicalization_version": {
+      "const": "canonical-json/0.1.0"
+    },
+    "storage_instance_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    }
+  }
+}

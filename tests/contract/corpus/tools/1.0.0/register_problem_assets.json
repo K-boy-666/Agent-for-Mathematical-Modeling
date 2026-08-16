@@ -1,0 +1,83 @@
+[
+  {
+    "label": "valid_request",
+    "kind": "request",
+    "valid": true,
+    "instance": {
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "project_id": "223e4567-e89b-42d3-a456-426614174000",
+      "asset_paths": [
+        {"label": "problem_description", "path": "data/problem.md"},
+        {"label": "reference_data", "path": "data/reference.csv"}
+      ]
+    }
+  },
+  {
+    "label": "valid_result",
+    "kind": "result",
+    "valid": true,
+    "instance": {
+      "tool_contract_version": "modeling-tools/1.0.0",
+      "correlation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "server_time": "2026-07-23T12:34:56.789Z",
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "replayed": false,
+      "project_id": "223e4567-e89b-42d3-a456-426614174000",
+      "snapshots": [
+        {
+          "label": "problem_description",
+          "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "official_match": false
+        },
+        {
+          "label": "reference_data",
+          "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "official_match": false
+        }
+      ]
+    }
+  },
+  {
+    "label": "valid_error",
+    "kind": "error",
+    "valid": true,
+    "instance": {
+      "error_schema_version": "modeling-error/1.0.0",
+      "code": "NOT_FOUND",
+      "message": "project not found",
+      "retryable": false,
+      "correlation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "details": {
+        "resource_type": "project",
+        "resource_id": "223e4567-e89b-42d3-a456-426614174000"
+      }
+    }
+  },
+  {
+    "label": "unknown_field",
+    "kind": "request",
+    "valid": false,
+    "instance": {
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "project_id": "223e4567-e89b-42d3-a456-426614174000",
+      "asset_paths": [
+        {"label": "problem_description", "path": "data/problem.md"}
+      ],
+      "extra": true
+    }
+  },
+  {
+    "label": "invalid_type",
+    "kind": "result",
+    "valid": false,
+    "instance": {
+      "tool_contract_version": 1,
+      "correlation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "server_time": "2026-07-23T12:34:56.789Z",
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "replayed": false,
+      "project_id": "223e4567-e89b-42d3-a456-426614174000",
+      "snapshots": []
+    }
+  }
+]

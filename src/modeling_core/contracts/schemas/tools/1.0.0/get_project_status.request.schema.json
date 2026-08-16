@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/1.0.0/get_project_status.request.schema.json",
+  "title": "get_project_status request 1.0.0",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+        "view": {"const": "summary"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "view", "experiment_id"],
+      "properties": {
+        "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+        "view": {"const": "experiment"},
+        "experiment_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+        "cursor": {"type": "string", "minLength": 1}
+      }
+    }
+  ]
+}
