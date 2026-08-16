@@ -1639,7 +1639,55 @@ class ModelingApplication(ApplicationFacade):
     def export_subproblem(
         self, request: ExportSubproblemRequest
     ) -> ExportSubproblemResult:
-        raise NotImplementedError("C1.1 stub")
+        common = self._common()
+        correlation_id = common["correlation_id"]
+        try:
+            self._acquire_write(correlation_id)
+        except ProjectStoreError as error:
+            self._raise_store(error, correlation_id)
+
+        try:
+            self._require_ready(request.project_id, correlation_id)
+
+            # C1: export is blocked unless both validations (linear + power-law) are PASSED
+            if not hasattr(self, "_validation_results") or not self._validation_results:
+                self._raise_error(
+                    correlation_id=correlation_id,
+                    code="PRECONDITION_FAILED",
+                    message="export blocked: no validations have been completed",
+                    details={
+                        "condition": "export_blocked_validation_not_passed",
+                        "current_state": "no_validations",
+                    },
+                )
+
+            linear_passed = self._validation_results.get("linear", False)
+            power_law_passed = self._validation_results.get("power_law", False)
+            if not linear_passed or not power_law_passed:
+                self._raise_error(
+                    correlation_id=correlation_id,
+                    code="PRECONDITION_FAILED",
+                    message="export blocked: both validations must be PASSED",
+                    details={
+                        "condition": "export_blocked_validation_not_passed",
+                        "current_state": "validations_not_passed",
+                        "linear_passed": linear_passed,
+                        "power_law_passed": power_law_passed,
+                    },
+                )
+
+            return ExportSubproblemResult(
+                tool_contract_version="modeling-tools/0.1.0",
+                correlation_id=correlation_id,
+                server_time=common["server_time"],
+                operation_id=request.operation_id,
+                replayed=False,
+                project_id=request.project_id,
+                subproblem_id=request.subproblem_id,
+                exports=(),
+            )
+        finally:
+            self._release_write()
 
 
 __all__ = ["ModelingApplication"]
