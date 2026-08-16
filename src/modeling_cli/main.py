@@ -12,6 +12,7 @@ from modeling_core.contracts.versions import VersionSet
 from modeling_harness.verify import add_verify_parser
 from modeling_infrastructure.storage import StorageError, bootstrap_storage
 from modeling_cli.doctor import run_doctor
+from modeling_cli.tool_command import run_tool
 
 CommandHandler = Callable[[argparse.Namespace], int]
 
@@ -62,6 +63,14 @@ def _doctor(arguments: argparse.Namespace) -> int:
     )
 
 
+def _tool(arguments: argparse.Namespace) -> int:
+    return run_tool(
+        arguments.project_root,
+        arguments.tool_name,
+        arguments.input,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the stable top-level command parser."""
     parser = argparse.ArgumentParser(prog="modeling")
@@ -79,6 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.set_defaults(handler=_doctor)
 
     add_verify_parser(subparsers)
+
+    tool_parser = subparsers.add_parser("tool")
+    tool_parser.add_argument("--project-root", required=True, type=Path)
+    tool_parser.add_argument("tool_name")
+    tool_parser.add_argument("--input", required=True, type=str)
+    tool_parser.set_defaults(handler=_tool)
+
     return parser
 
 

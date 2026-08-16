@@ -1,0 +1,50 @@
+{
+  "name": "math-modeling",
+  "version": "0.1.0",
+  "description": "Mathematical modeling tools for contest problems: root-finding, coupled-heave dynamics, project management, and experimental validation.",
+  "i18n": {
+    "display_name": {
+      "en": "Math Modeling",
+      "zh-cn": "数学建模"
+    },
+    "description": {
+      "en": "Mathematical modeling tools: root-finding, ODE solvers, experiment validation, and project management",
+      "zh-cn": "数学建模工具：求根算法、ODE 求解器、实验验证与项目管理"
+    }
+  },
+  "author": {
+    "name": "Math Modeling MCP",
+    "url": "https://github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "math",
+    "modeling",
+    "root-finding",
+    "ode",
+    "dynamics",
+    "validation",
+    "contest"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Math Modeling",
+    "shortDescription": "Root-finding, ODE solvers, and experiment validation for math contests",
+    "longDescription": "Mathematical modeling tools for contest problems including numerical root-finding with bisection, coupled-heave dynamics with DOP853 solver, independent validation, and project management with SQLite persistence. Supports CUMCM contest workflows.",
+    "developerName": "Math Modeling MCP",
+    "category": "Science & Engineering",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com",
+    "defaultPrompt": [
+      "Solve a root-finding problem with bisection",
+      "Run a coupled-heave dynamics simulation",
+      "Create a math modeling project and run experiments"
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}
