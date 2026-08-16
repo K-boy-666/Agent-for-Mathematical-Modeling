@@ -71,6 +71,10 @@ def test_official_client_validates_advertised_health_schema_offline(
                     "list_capabilities",
                     "run_experiment",
                     "validate_experiment",
+                    "register_problem_assets",
+                    "put_subproblem_mmir",
+                    "confirm_subproblem_mmir",
+                    "export_subproblem",
                 )
                 result = await session.call_tool("health_check", arguments={})
                 assert result.isError is False

@@ -24,6 +24,10 @@ TOOL_NAMES = (
     "list_capabilities",
     "run_experiment",
     "validate_experiment",
+    "register_problem_assets",
+    "put_subproblem_mmir",
+    "confirm_subproblem_mmir",
+    "export_subproblem",
 )
 
 
@@ -825,3 +829,86 @@ ValidateExperimentResult: TypeAlias = (
     | ValidateExperimentErroredResult
     | ValidateExperimentStoppedResult
 )
+
+
+# ── C1 preview tool contracts ──
+
+
+class AssetPathEntry(StrictModel):
+    label: Annotated[str, Field(min_length=1, max_length=128)]
+    path: Annotated[str, Field(min_length=1)]
+
+
+class RegisterProblemAssetsRequest(StrictModel):
+    operation_id: EntityId
+    project_id: EntityId
+    asset_paths: Annotated[
+        tuple[AssetPathEntry, ...], Field(min_length=1, max_length=20)
+    ]
+
+
+class AssetSnapshotEntry(StrictModel):
+    label: str
+    sha256: Hash
+    official_match: bool
+
+
+class RegisterProblemAssetsResult(CommonWriteResult):
+    project_id: EntityId
+    snapshots: tuple[AssetSnapshotEntry, ...]
+
+
+class MmirContent(StrictModel):
+    schema_version: Literal["modeling-mmir/0.1.0"]
+    problem_id: Annotated[str, Field(min_length=1)]
+    question_id: Annotated[str, Field(min_length=1)]
+    assumptions: Annotated[tuple[str, ...], Field(min_length=1)]
+    asset_labels: tuple[str, ...] = ()
+    derivation: str = ""
+    parameters: JsonObject = {}
+
+
+class PutSubproblemMmirRequest(StrictModel):
+    operation_id: EntityId
+    project_id: EntityId
+    subproblem_id: Annotated[str, Field(min_length=1, max_length=128)]
+    mmir: MmirContent
+
+
+class PutSubproblemMmirResult(CommonWriteResult):
+    project_id: EntityId
+    subproblem_id: str
+    mmir_revision: Hash
+    status: Literal["UNCONFIRMED", "CONFIRMED"]
+
+
+class ConfirmSubproblemMmirRequest(StrictModel):
+    operation_id: EntityId
+    project_id: EntityId
+    subproblem_id: Annotated[str, Field(min_length=1, max_length=128)]
+    mmir_revision: Hash
+
+
+class ConfirmSubproblemMmirResult(CommonWriteResult):
+    project_id: EntityId
+    subproblem_id: str
+    mmir_revision: Hash
+    status: Literal["CONFIRMED"]
+
+
+class ExportEntry(StrictModel):
+    kind: Annotated[str, Field(min_length=1)]
+    label: Annotated[str, Field(min_length=1)]
+    sha256: Hash
+
+
+class ExportSubproblemRequest(StrictModel):
+    operation_id: EntityId
+    project_id: EntityId
+    subproblem_id: Annotated[str, Field(min_length=1, max_length=128)]
+
+
+class ExportSubproblemResult(CommonWriteResult):
+    project_id: EntityId
+    subproblem_id: str
+    exports: tuple[ExportEntry, ...]

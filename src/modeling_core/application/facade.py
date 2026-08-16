@@ -5,14 +5,22 @@ from __future__ import annotations
 from typing import Protocol
 
 from modeling_core.contracts.tools import (
+    ConfirmSubproblemMmirRequest,
+    ConfirmSubproblemMmirResult,
     CreateProjectRequest,
     CreateProjectResult,
+    ExportSubproblemRequest,
+    ExportSubproblemResult,
     GetProjectStatusRequest,
     GetProjectStatusResult,
     HealthCheckRequest,
     HealthCheckResult,
     ListCapabilitiesRequest,
     ListCapabilitiesResult,
+    PutSubproblemMmirRequest,
+    PutSubproblemMmirResult,
+    RegisterProblemAssetsRequest,
+    RegisterProblemAssetsResult,
     RunExperimentRequest,
     RunExperimentResult,
     ValidateExperimentRequest,
@@ -38,3 +46,19 @@ class ApplicationFacade(Protocol):
     def validate_experiment(
         self, request: ValidateExperimentRequest
     ) -> ValidateExperimentResult: ...
+
+    def register_problem_assets(
+        self, request: RegisterProblemAssetsRequest
+    ) -> RegisterProblemAssetsResult: ...
+
+    def put_subproblem_mmir(
+        self, request: PutSubproblemMmirRequest
+    ) -> PutSubproblemMmirResult: ...
+
+    def confirm_subproblem_mmir(
+        self, request: ConfirmSubproblemMmirRequest
+    ) -> ConfirmSubproblemMmirResult: ...
+
+    def export_subproblem(
+        self, request: ExportSubproblemRequest
+    ) -> ExportSubproblemResult: ...

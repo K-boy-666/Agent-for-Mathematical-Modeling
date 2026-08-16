@@ -46,6 +46,8 @@ from modeling_core.contracts.tools import (
     AttemptTrace,
     CapabilityContract,
     CanonicalRootFindingInput,
+    ConfirmSubproblemMmirRequest,
+    ConfirmSubproblemMmirResult,
     CreateProjectRequest,
     CreateProjectResult,
     DataSnapshotReference,
@@ -53,6 +55,9 @@ from modeling_core.contracts.tools import (
     ExecutionOptions,
     ExperimentItems,
     ExperimentRecord,
+    ExportSubproblemRequest,
+    ExportSubproblemResult,
+    FailureResultPayload,
     GetProjectStatusExperimentRequest,
     GetProjectStatusExperimentResult,
     GetProjectStatusRequest,
@@ -69,6 +74,10 @@ from modeling_core.contracts.tools import (
     ListCapabilitiesResult,
     ListCapabilitiesSummaryRequest,
     ListCapabilitiesSummaryResult,
+    PutSubproblemMmirRequest,
+    PutSubproblemMmirResult,
+    RegisterProblemAssetsRequest,
+    RegisterProblemAssetsResult,
     ResultTrace,
     RunExperimentErroredResult,
     RunExperimentNumericalFailureResult,
@@ -77,14 +86,13 @@ from modeling_core.contracts.tools import (
     RunExperimentStoppedResult,
     RunExperimentSucceededResult,
     SuccessResultPayload,
-    FailureResultPayload,
-    ValidateExperimentRequest,
     ValidateExperimentErroredResult,
+    ValidateExperimentRequest,
     ValidateExperimentResult,
     ValidateExperimentStoppedResult,
     ValidateExperimentSucceededResult,
-    ValidationTrace,
     ValidationReportPayload,
+    ValidationTrace,
 )
 from modeling_core.contracts.versions import VersionSet
 from modeling_core.domain.models import (
@@ -1358,6 +1366,26 @@ class ModelingApplication(ApplicationFacade):
             )
         finally:
             self._release_write()
+
+    def register_problem_assets(
+        self, request: RegisterProblemAssetsRequest
+    ) -> RegisterProblemAssetsResult:
+        raise NotImplementedError("C1.1 stub")
+
+    def put_subproblem_mmir(
+        self, request: PutSubproblemMmirRequest
+    ) -> PutSubproblemMmirResult:
+        raise NotImplementedError("C1.1 stub")
+
+    def confirm_subproblem_mmir(
+        self, request: ConfirmSubproblemMmirRequest
+    ) -> ConfirmSubproblemMmirResult:
+        raise NotImplementedError("C1.1 stub")
+
+    def export_subproblem(
+        self, request: ExportSubproblemRequest
+    ) -> ExportSubproblemResult:
+        raise NotImplementedError("C1.1 stub")
 
 
 __all__ = ["ModelingApplication"]

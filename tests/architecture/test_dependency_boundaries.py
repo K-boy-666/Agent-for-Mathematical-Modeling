@@ -172,6 +172,10 @@ def test_facade_has_exactly_six_concrete_contract_methods() -> None:
         "list_capabilities",
         "run_experiment",
         "validate_experiment",
+        "register_problem_assets",
+        "put_subproblem_mmir",
+        "confirm_subproblem_mmir",
+        "export_subproblem",
     }
     for method in methods.values():
         assert "return" in get_type_hints(method)

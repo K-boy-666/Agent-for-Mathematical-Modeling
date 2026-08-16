@@ -28,10 +28,14 @@ from modeling_core.contracts.common import JsonObject
 from modeling_core.contracts.schema_catalog import SchemaCatalog
 from modeling_core.contracts.tools import (
     TOOL_NAMES,
+    ConfirmSubproblemMmirRequest,
     CreateProjectRequest,
+    ExportSubproblemRequest,
     GetProjectStatusRequest,
     HealthCheckRequest,
     ListCapabilitiesRequest,
+    PutSubproblemMmirRequest,
+    RegisterProblemAssetsRequest,
     RunExperimentRequest,
     ValidateExperimentRequest,
 )
@@ -322,6 +326,34 @@ def _invoke_validate_experiment(
     return facade.validate_experiment(request)
 
 
+def _invoke_register_problem_assets(
+    facade: ApplicationFacade, arguments: ToolArguments
+) -> BaseModel:
+    request = RegisterProblemAssetsRequest.model_validate_json(_compact_json(arguments))
+    return facade.register_problem_assets(request)
+
+
+def _invoke_put_subproblem_mmir(
+    facade: ApplicationFacade, arguments: ToolArguments
+) -> BaseModel:
+    request = PutSubproblemMmirRequest.model_validate_json(_compact_json(arguments))
+    return facade.put_subproblem_mmir(request)
+
+
+def _invoke_confirm_subproblem_mmir(
+    facade: ApplicationFacade, arguments: ToolArguments
+) -> BaseModel:
+    request = ConfirmSubproblemMmirRequest.model_validate_json(_compact_json(arguments))
+    return facade.confirm_subproblem_mmir(request)
+
+
+def _invoke_export_subproblem(
+    facade: ApplicationFacade, arguments: ToolArguments
+) -> BaseModel:
+    request = ExportSubproblemRequest.model_validate_json(_compact_json(arguments))
+    return facade.export_subproblem(request)
+
+
 _DISPATCH: dict[str, ToolInvoker] = {
     "health_check": _invoke_health_check,
     "create_project": _invoke_create_project,
@@ -329,6 +361,10 @@ _DISPATCH: dict[str, ToolInvoker] = {
     "list_capabilities": _invoke_list_capabilities,
     "run_experiment": _invoke_run_experiment,
     "validate_experiment": _invoke_validate_experiment,
+    "register_problem_assets": _invoke_register_problem_assets,
+    "put_subproblem_mmir": _invoke_put_subproblem_mmir,
+    "confirm_subproblem_mmir": _invoke_confirm_subproblem_mmir,
+    "export_subproblem": _invoke_export_subproblem,
 }
 
 

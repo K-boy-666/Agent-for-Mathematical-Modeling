@@ -69,6 +69,10 @@ class SchemaCatalog:
             "list_capabilities",
             "run_experiment",
             "validate_experiment",
+            "register_problem_assets",
+            "put_subproblem_mmir",
+            "confirm_subproblem_mmir",
+            "export_subproblem",
         }
         expected = {
             (tool, kind)

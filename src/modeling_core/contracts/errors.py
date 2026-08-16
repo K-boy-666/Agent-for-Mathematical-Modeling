@@ -42,6 +42,13 @@ TOOL_ERROR_CODES: dict[str, frozenset[str]] = {
     - frozenset({"CONFLICT", "SECURITY_VIOLATION", "INTEGRITY_FAILURE"}),
     "run_experiment": ALL_ERROR_CODES,
     "validate_experiment": ALL_ERROR_CODES,
+    "register_problem_assets": ALL_ERROR_CODES,
+    "put_subproblem_mmir": ALL_ERROR_CODES
+    - frozenset({"SECURITY_VIOLATION", "INTEGRITY_FAILURE"}),
+    "confirm_subproblem_mmir": ALL_ERROR_CODES
+    - frozenset({"CONFLICT", "SECURITY_VIOLATION"}),
+    "export_subproblem": ALL_ERROR_CODES
+    - frozenset({"CONFLICT", "SECURITY_VIOLATION", "INTEGRITY_FAILURE"}),
 }
 
 
@@ -90,6 +97,8 @@ class PreconditionFailedDetails(StrictModel):
         "attempt_not_succeeded",
         "missing_success_result",
         "validator_incompatible",
+        "mmir_not_confirmed",
+        "export_blocked_validation_not_passed",
     ]
     current_state: str
 

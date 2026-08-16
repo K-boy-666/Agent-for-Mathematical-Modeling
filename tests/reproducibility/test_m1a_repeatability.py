@@ -681,7 +681,7 @@ def test_synthetic_wheel_inventory_is_utf8_ordered_and_hashes_real_payload(
     paths = [asset.path for asset in assets]
     by_path = {asset.path: asset.sha256 for asset in assets}
 
-    assert len(paths) == 92
+    assert len(paths) == 104
     assert paths == sorted(paths, key=lambda value: value.encode("utf-8"))
     assert "modeling_infrastructure/diagnostic_snapshot.py" in by_path
     assert "modeling_cli/doctor.py" in by_path
@@ -700,7 +700,7 @@ def test_synthetic_wheel_inventory_is_utf8_ordered_and_hashes_real_payload(
         "sha256:93033a61d4965fdd8b1c75e7f5b456a7b909768aa4bc395153285ef6b55dbf2e"
     )
     assert by_path["modeling_cli/templates/codex/config.toml"] == (
-        "sha256:703ccf13bfd7c37fb14e1ae48f8729a9f426ad874d926d8eb7850f12448ed5c0"
+        "sha256:1657ae746c6a34fe469202723e62aeaf28b90d4c108466f5df6f4e04a41ccf83"
     )
     assert by_path["modeling_core/AGENTS.md"] == (
         "sha256:8d58b34d8faf942d758f05916144c002bfd1219331c6660e17c05a0cde217965"
@@ -712,7 +712,7 @@ def test_synthetic_wheel_inventory_is_utf8_ordered_and_hashes_real_payload(
         "sha256:33c2cbe1da2725f04e0c9653c523111f56273765dfd69c1e6cfddca86254a230"
     )
     assert sum(path.endswith(".py") for path in paths) == 55
-    assert sum(not path.endswith(".py") for path in paths) == 37
+    assert sum(not path.endswith(".py") for path in paths) == 49
 
 
 def test_wheel_inventory_requires_the_exact_unique_seven_package_roots(

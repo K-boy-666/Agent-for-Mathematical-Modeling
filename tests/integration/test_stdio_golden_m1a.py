@@ -26,6 +26,10 @@ TOOL_NAMES = (
     "list_capabilities",
     "run_experiment",
     "validate_experiment",
+    "register_problem_assets",
+    "put_subproblem_mmir",
+    "confirm_subproblem_mmir",
+    "export_subproblem",
 )
 CREATE_OPERATION = "10000000-0000-4000-8000-000000000001"
 RUN_OPERATION = "10000000-0000-4000-8000-000000000002"

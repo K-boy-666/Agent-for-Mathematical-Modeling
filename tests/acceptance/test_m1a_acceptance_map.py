@@ -196,9 +196,9 @@ def test_a12_runtime_and_nested_context_assets_are_installed_offline_without_cor
     )
 
     catalog = SchemaCatalog.load_packaged("0.1.0")
-    assert len(catalog.tool_schemas) == 18
+    assert len(catalog.tool_schemas) == 30
     assert catalog.fingerprint == (
-        "sha256:b5f4f432df459ba103334f099796d8ef0b74e311921abacf6f84ea43bc2c2f6a"
+        "sha256:927a26b40a1cf0747a3f79d8ebb44f085cd7bf404ae22c7f957137a0d652bc73"
     )
 
 

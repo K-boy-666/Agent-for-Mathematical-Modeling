@@ -23,7 +23,7 @@ CORPUS_ROOT = Path(__file__).parent / "corpus" / "tools" / "0.1.0"
 
 def test_catalog_contains_18_meta_valid_tool_schemas() -> None:
     catalog = SchemaCatalog.load_packaged("0.1.0")
-    assert len(catalog.tool_schemas) == 18
+    assert len(catalog.tool_schemas) == 30
     assert catalog.fingerprint.startswith("sha256:")
     for schema in catalog.tool_schemas.values():
         Draft202012Validator.check_schema(schema)

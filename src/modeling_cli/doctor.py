@@ -46,7 +46,7 @@ CheckStatus = Literal["PASS", "WARN", "FAIL"]
 
 _SCHEMA_VERSION = "modeling-doctor-report/0.1.0"
 _EXPECTED_SCHEMA_CATALOG_FINGERPRINT = (
-    "sha256:b5f4f432df459ba103334f099796d8ef0b74e311921abacf6f84ea43bc2c2f6a"
+    "sha256:927a26b40a1cf0747a3f79d8ebb44f085cd7bf404ae22c7f957137a0d652bc73"
 )
 _EXPECTED_CONFIG = {
     "mcp_servers": {
@@ -71,6 +71,10 @@ _EXPECTED_CONFIG = {
                 "list_capabilities",
                 "run_experiment",
                 "validate_experiment",
+                "register_problem_assets",
+                "put_subproblem_mmir",
+                "confirm_subproblem_mmir",
+                "export_subproblem",
             ],
         }
     }
