@@ -146,6 +146,10 @@ class SQLiteProjectStore:
             session_id if session_id is not None else str(uuid.uuid4()),
         )
 
+    @property
+    def project_root(self) -> Path:
+        return self._paths.root
+
     def _transient_sqlite_layout(self, error: StorageError) -> bool:
         if (
             error.code != "INTEGRITY_FAILURE"

@@ -43,6 +43,7 @@ from modeling_core.contracts.errors import (
     UnsupportedVersionDetails,
 )
 from modeling_core.contracts.tools import (
+    AssetSnapshotEntry,
     AttemptTrace,
     CapabilityContract,
     CanonicalRootFindingInput,
@@ -1370,7 +1371,140 @@ class ModelingApplication(ApplicationFacade):
     def register_problem_assets(
         self, request: RegisterProblemAssetsRequest
     ) -> RegisterProblemAssetsResult:
-        raise NotImplementedError("C1.1 stub")
+        import hashlib
+        import os
+        import stat
+        from pathlib import Path
+
+        _OFFICIAL_SHA256: set[str] = {
+            "sha256:e29940eb9eb9382deb8eccb459c73cc47f0080483b8b75f9977830c987162253",
+            "sha256:50a5dd70f04dfb0a57fb2602422dc7999b30aad54ddc02353f5b8f01423fd612",
+            "sha256:c8eff812f5980d955b4f0e587c5f7a357b2571d8d903fcb4913fba77c7354d6d",
+            "sha256:83ed6e0f2ebcdbdcb53e99a3bfebfbd8dc16141f91396eba8806e781d7809c7a",
+            "sha256:cc0abbceff32f425e738a3d9c0534fc3fbab4b2a1d2d86b8dc4d51229fb820bf",
+        }
+
+        common = self._common()
+        correlation_id = common["correlation_id"]
+        try:
+            self._acquire_write(correlation_id)
+        except ProjectStoreError as error:
+            self._raise_store(error, correlation_id)
+
+        try:
+            state = self._store.inspect_project_state()
+            if state.state != ProjectState.READY:
+                self._raise_error(
+                    correlation_id=correlation_id,
+                    code="PRECONDITION_FAILED",
+                    message="project is not ready",
+                    details={
+                        "condition": "project_not_ready",
+                        "current_state": state.state.value,
+                    },
+                )
+
+            project_root = self._store.project_root
+
+            snapshots: list[AssetSnapshotEntry] = []
+            for entry in request.asset_paths:
+                raw_path = entry.path
+                if not raw_path:
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="INVALID_REQUEST",
+                        message="asset path is empty",
+                        details={
+                            "field_path": "/asset_paths/path",
+                            "reason": "invalid_format",
+                        },
+                    )
+
+                # Resolve the path against the project root
+                raw = Path(raw_path)
+                if raw.is_absolute():
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="SECURITY_VIOLATION",
+                        message="asset path must be relative and within the project root",
+                        details={
+                            "rule": "path_outside_project",
+                        },
+                    )
+                resolved = (project_root / raw_path).resolve()
+
+                if (
+                    not str(resolved).startswith(str(project_root.resolve()) + os.sep)
+                    and resolved != project_root.resolve()
+                ):
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="SECURITY_VIOLATION",
+                        message="asset path resolves outside the project root",
+                        details={
+                            "rule": "path_outside_project",
+                        },
+                    )
+
+                try:
+                    st = os.lstat(resolved)
+                except OSError:
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="NOT_FOUND",
+                        message=f"asset file not found: {entry.label}",
+                        details={
+                            "resource_type": "asset",
+                            "resource_id": entry.label,
+                        },
+                    )
+
+                reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+                if stat.S_ISLNK(st.st_mode) or (
+                    getattr(st, "st_file_attributes", 0) & reparse_flag
+                ):
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="SECURITY_VIOLATION",
+                        message="asset path is a symlink or reparse point",
+                        details={
+                            "rule": "unsafe_reparse_point",
+                        },
+                    )
+
+                if not stat.S_ISREG(st.st_mode):
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="INVALID_REQUEST",
+                        message="asset path is not a regular file",
+                        details={
+                            "field_path": "/asset_paths/path",
+                            "reason": "invalid_format",
+                        },
+                    )
+
+                content = resolved.read_bytes()
+                sha256_hex = hashlib.sha256(content).hexdigest()
+                sha256_str = f"sha256:{sha256_hex}"
+                snapshots.append(
+                    AssetSnapshotEntry(
+                        label=entry.label,
+                        sha256=sha256_str,
+                        official_match=sha256_str in _OFFICIAL_SHA256,
+                    )
+                )
+
+            return RegisterProblemAssetsResult(
+                tool_contract_version="modeling-tools/0.1.0",
+                correlation_id=correlation_id,
+                server_time=common["server_time"],
+                operation_id=request.operation_id,
+                replayed=False,
+                project_id=request.project_id,
+                snapshots=tuple(snapshots),
+            )
+        finally:
+            self._release_write()
 
     def put_subproblem_mmir(
         self, request: PutSubproblemMmirRequest

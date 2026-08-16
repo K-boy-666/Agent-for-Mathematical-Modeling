@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unicodedata
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Protocol, cast
@@ -631,6 +632,9 @@ class ProjectStoreError(Exception):
 
 
 class ProjectStore(Protocol):
+    @property
+    def project_root(self) -> Path: ...
+
     def inspect_project_state(self) -> ProjectStateInspection: ...
 
     def create_or_replay_project(
