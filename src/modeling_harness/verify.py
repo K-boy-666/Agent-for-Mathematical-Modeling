@@ -1772,13 +1772,14 @@ def _run_c1_verification(repository_root: Path) -> int:
 def run_verification(
     milestone: Milestone,
     only: list[str] | None = None,
+    capability: str | None = None,
 ) -> int:
     """Run the registered milestone verification profile."""
     print(milestone.value, flush=True)
     repository_root = Path.cwd().resolve()
     if milestone is Milestone.M1A:
-        if only:
-            print("--only is not supported for m1a", file=sys.stderr)
+        if only or capability:
+            print("--only/--capability is not supported for m1a", file=sys.stderr)
             return 2
         try:
             return _run_m1a_verification(repository_root)
@@ -1793,8 +1794,8 @@ def run_verification(
             )
             return 2
     if milestone is Milestone.C1:
-        if only:
-            print("--only is not supported for c1", file=sys.stderr)
+        if only or capability:
+            print("--only/--capability is not supported for c1", file=sys.stderr)
             return 2
         try:
             return _run_c1_verification(repository_root)
@@ -1802,6 +1803,8 @@ def run_verification(
             print("C1 verification harness prerequisite failed", file=sys.stderr)
             return 2
     if milestone is Milestone.M1B:
+        if capability:
+            return _run_capability_focused(repository_root, capability)
         return _run_m1b_verification(repository_root, only=only)
     print("verification milestone is not registered", file=sys.stderr)
     return 2
@@ -1883,7 +1886,41 @@ def _run_schema_compatibility(repository_root: Path) -> bool:
 def _execute(arguments: argparse.Namespace) -> int:
     milestone = cast(Milestone, arguments.milestone)
     only = cast(list[str] | None, getattr(arguments, "only", None))
-    return run_verification(milestone, only=only)
+    capability = cast(str | None, getattr(arguments, "capability", None))
+    return run_verification(milestone, only=only, capability=capability)
+
+
+def _run_capability_focused(repository_root: Path, capability_id: str) -> int:
+    """Run focused checks for a single capability — development feedback mode."""
+    if capability_id == "numerical.root_finding":
+        print(
+            "numerical.root_finding: running contract, solver, validator, architecture checks",
+            flush=True,
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                str(repository_root / "tests" / "unit" / "test_registry.py"),
+                str(repository_root / "tests" / "architecture"),
+                str(
+                    repository_root
+                    / "tests"
+                    / "contract"
+                    / "test_capability_schemas_v0.py"
+                ),
+                str(repository_root / "tests" / "contract" / "test_tool_schemas_v1.py"),
+                str(repository_root / "tests" / "math"),
+                "-q",
+            ],
+            cwd=repository_root,
+            capture_output=False,
+        )
+        return result.returncode
+
+    print(f"unregistered capability: {capability_id}", file=sys.stderr)
+    return 2
 
 
 def add_verify_parser(
@@ -1903,5 +1940,11 @@ def add_verify_parser(
         dest="only",
         default=None,
         help="Run only the named check (repeatable); focused mode, no completion evidence",
+    )
+    parser.add_argument(
+        "--capability",
+        dest="capability",
+        default=None,
+        help="Run only the checks for the named capability; development feedback mode",
     )
     parser.set_defaults(handler=_execute)

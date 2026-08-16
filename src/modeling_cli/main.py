@@ -9,6 +9,7 @@ from typing import cast
 
 from modeling_core import APPLICATION_VERSION
 from modeling_core.contracts.versions import VersionSet
+from modeling_harness.capability_scaffold import scaffold_builtin_capability
 from modeling_harness.verify import add_verify_parser
 from modeling_infrastructure.storage import StorageError, bootstrap_storage
 from modeling_cli.doctor import run_doctor
@@ -71,6 +72,19 @@ def _tool(arguments: argparse.Namespace) -> int:
     )
 
 
+def _capability_scaffold(arguments: argparse.Namespace) -> int:
+    try:
+        _ = scaffold_builtin_capability(
+            arguments.capability_id,
+            arguments.destination,
+            arguments.tests_destination,
+        )
+    except (OSError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the stable top-level command parser."""
     parser = argparse.ArgumentParser(prog="modeling")
@@ -94,6 +108,14 @@ def build_parser() -> argparse.ArgumentParser:
     tool_parser.add_argument("tool_name")
     tool_parser.add_argument("--input", required=True, type=str)
     tool_parser.set_defaults(handler=_tool)
+
+    capability_parser = subparsers.add_parser("capability")
+    capability_sub = capability_parser.add_subparsers(dest="capability_command")
+    scaffold_parser = capability_sub.add_parser("scaffold")
+    scaffold_parser.add_argument("capability_id")
+    scaffold_parser.add_argument("--destination", required=True, type=Path)
+    scaffold_parser.add_argument("--tests-destination", required=True, type=Path)
+    scaffold_parser.set_defaults(handler=_capability_scaffold)
 
     return parser
 
