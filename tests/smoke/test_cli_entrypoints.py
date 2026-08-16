@@ -29,7 +29,7 @@ def test_modeling_help_exposes_three_m1a_commands() -> None:
 def test_verify_help_requires_a_milestone_for_evidence() -> None:
     completed = run_module("modeling_cli", "verify", "--help")
     assert completed.returncode == 0
-    assert "--milestone {m1a,m1b}" in completed.stdout
+    assert "--milestone {m1a,c1,m1b}" in completed.stdout
 
 
 def test_editable_install_is_safe_in_checkout_locale() -> None:

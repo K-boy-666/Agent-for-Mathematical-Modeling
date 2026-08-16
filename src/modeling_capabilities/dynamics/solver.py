@@ -100,7 +100,7 @@ def solve_coupled_heave(
         ) / m_f_plus_m_a
 
         dx_o = v_o
-        dv_o = (-params.k * (x_o - x_f) - d_force) / params.m_o
+        dv_o = (-params.k * (x_o - x_f) + d_force) / params.m_o
 
         return np.array([dx_f, dv_f, dx_o, dv_o], dtype=np.float64)
 

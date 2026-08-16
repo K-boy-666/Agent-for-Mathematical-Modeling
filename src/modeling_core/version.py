@@ -9,4 +9,5 @@ class Milestone(StrEnum):
     """Verification milestones understood by the application."""
 
     M1A = "m1a"
+    C1 = "c1"
     M1B = "m1b"

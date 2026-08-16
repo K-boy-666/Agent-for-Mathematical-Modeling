@@ -20,7 +20,7 @@ import sysconfig
 import tempfile
 import time
 import tomllib
-from typing import Callable, Final, Literal, cast
+from typing import Any, Callable, Final, Literal, cast
 import unicodedata
 import xml.etree.ElementTree as element_tree
 import zipfile
@@ -1652,24 +1652,102 @@ def _publish_failure_diagnostic(repository_root: Path) -> None:
     )
 
 
+def _run_c1_verification(repository_root: Path) -> int:
+    """Run C1 milestone verification: contract tests + solver/validator checks."""
+    from modeling_harness.c1_verify import verify_c1
+
+    initial_inventory = _collect_source_inventory(repository_root)
+
+    # 1. Run C1 contract tests
+    uv = _validate_uv_executable(repository_root)
+    os.environ["UV_OFFLINE"] = "1"
+    environment = _offline_environment()
+
+    c1_test_files = [
+        "tests/contract/test_c1_preview_contracts.py",
+        "tests/contract/test_c1_asset_snapshots.py",
+        "tests/contract/test_c1_mmir_confirmation.py",
+        "tests/contract/test_c1_worker_isolation.py",
+        "tests/contract/test_c1_coupled_heave_solver.py",
+        "tests/contract/test_c1_validators.py",
+        "tests/contract/test_c1_export.py",
+    ]
+
+    all_passed = True
+    for test_file in c1_test_files:
+        try:
+            completed = subprocess.run(
+                [str(uv), "run", "--locked", "--no-sync", "pytest", test_file, "-q"],
+                cwd=repository_root,
+                env=environment,
+                timeout=120,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"C1 contract test timed out: {test_file}", file=sys.stderr)
+            all_passed = False
+            continue
+
+        if completed.returncode != 0:
+            print(
+                f"C1 contract test FAILED ({completed.returncode}): {test_file}",
+                file=sys.stderr,
+            )
+            print(completed.stdout[-2000:], file=sys.stderr)
+            all_passed = False
+
+    # 2. Run solver/validator/worker checks
+    c1_passed, c1_report = verify_c1(repository_root)
+    if not c1_passed:
+        all_passed = False
+        for check in cast(list[dict[str, Any]], c1_report["checks"]):
+            if check["status"] == "FAIL":
+                print(
+                    f"  C1 check FAIL: {check['name']} — {check['details']}",
+                    file=sys.stderr,
+                )
+
+    # 3. Source drift check
+    final_inventory = _collect_source_inventory(repository_root)
+    if final_inventory != initial_inventory:
+        print("C1 verification: source drift detected", file=sys.stderr)
+        all_passed = False
+
+    if all_passed:
+        print("C1 verification: PASSED", flush=True)
+        return 0
+    else:
+        print("C1 verification: FAILED", file=sys.stderr)
+        return 1
+
+
 def run_verification(milestone: Milestone) -> int:
     """Run the registered milestone verification profile."""
     print(milestone.value, flush=True)
-    if milestone is not Milestone.M1A:
-        print("verification milestone is not registered", file=sys.stderr)
-        return 2
     repository_root = Path.cwd().resolve()
-    try:
-        return _run_m1a_verification(repository_root)
-    except (OSError, ValueError, subprocess.SubprocessError):
+    if milestone is Milestone.M1A:
         try:
-            _publish_failure_diagnostic(repository_root)
-        except OSError:
-            pass
-        print(
-            "verification harness prerequisite or publication failed", file=sys.stderr
-        )
-        return 2
+            return _run_m1a_verification(repository_root)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            try:
+                _publish_failure_diagnostic(repository_root)
+            except OSError:
+                pass
+            print(
+                "verification harness prerequisite or publication failed",
+                file=sys.stderr,
+            )
+            return 2
+    if milestone is Milestone.C1:
+        try:
+            return _run_c1_verification(repository_root)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            print("C1 verification harness prerequisite failed", file=sys.stderr)
+            return 2
+    print("verification milestone is not registered", file=sys.stderr)
+    return 2
 
 
 def _execute(arguments: argparse.Namespace) -> int:
