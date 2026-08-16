@@ -758,6 +758,20 @@ class ModelingApplication(ApplicationFacade):
         self._acquire_write(correlation_id)
         try:
             self._require_ready(request.project_id, correlation_id)
+            # C1: MMIR must be confirmed before any experiment is run.
+            # Only enforce when MMIR has been put (C1 context); M1a projects
+            # without any MMIR proceed normally.
+            if hasattr(self, "_mmir_revisions") and self._mmir_revisions:
+                if not getattr(self, "_confirmed_mmir", None):
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="PRECONDITION_FAILED",
+                        message="MMIR has not been confirmed for this project",
+                        details={
+                            "condition": "mmir_not_confirmed",
+                            "current_state": "unconfirmed",
+                        },
+                    )
             try:
                 capability = self._registry.resolve(
                     request.capability.capability_id,
@@ -1509,12 +1523,118 @@ class ModelingApplication(ApplicationFacade):
     def put_subproblem_mmir(
         self, request: PutSubproblemMmirRequest
     ) -> PutSubproblemMmirResult:
-        raise NotImplementedError("C1.1 stub")
+        from modeling_core.contracts.canonical_json import sha256_json
+
+        common = self._common()
+        correlation_id = common["correlation_id"]
+        try:
+            self._acquire_write(correlation_id)
+        except ProjectStoreError as error:
+            self._raise_store(error, correlation_id)
+
+        try:
+            state = self._store.inspect_project_state()
+            if state.state != ProjectState.READY:
+                self._raise_error(
+                    correlation_id=correlation_id,
+                    code="PRECONDITION_FAILED",
+                    message="project is not ready",
+                    details={
+                        "condition": "project_not_ready",
+                        "current_state": state.state.value,
+                    },
+                )
+
+            mmir_document = request.mmir.model_dump(mode="json")
+            mmir_revision = sha256_json(mmir_document)
+
+            # Store the revision for later confirmation validation
+            if not hasattr(self, "_mmir_revisions"):
+                self._mmir_revisions: dict[str, str] = {}
+            self._mmir_revisions[request.subproblem_id] = mmir_revision
+
+            return PutSubproblemMmirResult(
+                tool_contract_version="modeling-tools/0.1.0",
+                correlation_id=correlation_id,
+                server_time=common["server_time"],
+                operation_id=request.operation_id,
+                replayed=False,
+                project_id=request.project_id,
+                subproblem_id=request.subproblem_id,
+                mmir_revision=mmir_revision,
+                status="UNCONFIRMED",
+            )
+        finally:
+            self._release_write()
 
     def confirm_subproblem_mmir(
         self, request: ConfirmSubproblemMmirRequest
     ) -> ConfirmSubproblemMmirResult:
-        raise NotImplementedError("C1.1 stub")
+        common = self._common()
+        correlation_id = common["correlation_id"]
+        try:
+            self._acquire_write(correlation_id)
+        except ProjectStoreError as error:
+            self._raise_store(error, correlation_id)
+
+        try:
+            state = self._store.inspect_project_state()
+            if state.state != ProjectState.READY:
+                self._raise_error(
+                    correlation_id=correlation_id,
+                    code="PRECONDITION_FAILED",
+                    message="project is not ready",
+                    details={
+                        "condition": "project_not_ready",
+                        "current_state": state.state.value,
+                    },
+                )
+
+            # Verify the subproblem was previously put
+            if (
+                not hasattr(self, "_mmir_revisions")
+                or request.subproblem_id not in self._mmir_revisions
+            ):
+                self._raise_error(
+                    correlation_id=correlation_id,
+                    code="NOT_FOUND",
+                    message="subproblem MMIR has not been put yet",
+                    details={
+                        "resource_type": "subproblem_mmir",
+                        "resource_id": request.subproblem_id,
+                    },
+                )
+
+            expected_revision = self._mmir_revisions[request.subproblem_id]
+            if request.mmir_revision != expected_revision:
+                self._raise_error(
+                    correlation_id=correlation_id,
+                    code="INTEGRITY_FAILURE",
+                    message="MMIR revision does not match the previously put revision",
+                    details={
+                        "subject": "input_snapshot",
+                        "expected_hash": expected_revision,
+                        "observed_hash": request.mmir_revision,
+                    },
+                )
+
+            if not hasattr(self, "_confirmed_mmir"):
+                self._confirmed_mmir: dict[str, str] = {}
+            self._confirmed_mmir[request.subproblem_id] = request.mmir_revision
+
+            return ConfirmSubproblemMmirResult(
+                tool_contract_version="modeling-tools/0.1.0",
+                correlation_id=correlation_id,
+                server_time=common["server_time"],
+                operation_id=request.operation_id,
+                replayed=False,
+                project_id=request.project_id,
+                subproblem_id=request.subproblem_id,
+                mmir_revision=request.mmir_revision,
+                status="CONFIRMED",
+            )
+        finally:
+            self._release_write()
 
     def export_subproblem(
         self, request: ExportSubproblemRequest
