@@ -610,6 +610,7 @@ _NON_PYTHON_PACKAGE_ASSETS = frozenset(
         "modeling_cli/schemas/doctor/0.1.0/report.schema.json",
         "modeling_cli/templates/codex/config.toml",
         "modeling_infrastructure/sqlite/schema_v1.sql",
+        "modeling_infrastructure/sqlite/schema_v2.sql",
         "modeling_mcp/AGENTS.md",
     }
 )

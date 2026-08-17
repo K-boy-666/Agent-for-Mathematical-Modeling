@@ -1,4 +1,4 @@
-"""Atomic project-storage bootstrap for SQLite schema 1."""
+"""Atomic project-storage bootstrap for SQLite schema 1 and 2."""
 
 from __future__ import annotations
 
@@ -17,7 +17,10 @@ from modeling_core.domain.states import ProjectState
 from modeling_infrastructure.project_paths import ProjectPaths
 
 
-_LAYOUT = frozenset({"project.json", "state.sqlite3", "project.lock"})
+_LAYOUT_V1 = frozenset({"project.json", "state.sqlite3", "project.lock"})
+_LAYOUT_V2 = frozenset(
+    {"project.json", "state.sqlite3", "project.lock", "staging", "artifacts"}
+)
 _PROJECT_KEYS = frozenset(
     {
         "project_format_version",
@@ -139,7 +142,10 @@ def _configure_connection(connection: sqlite3.Connection) -> None:
 def _create_database(
     database: Path, versions: VersionSet, storage_instance_id: str
 ) -> None:
-    schema_path = Path(__file__).with_name("sqlite") / "schema_v1.sql"
+    schema_name = (
+        "schema_v2.sql" if versions.database_schema_version == 2 else "schema_v1.sql"
+    )
+    schema_path = Path(__file__).with_name("sqlite") / schema_name
     schema = schema_path.read_text(encoding="utf-8")
     connection = sqlite3.connect(database, timeout=0.25)
     try:
@@ -235,11 +241,15 @@ def _read_database_metadata(
                         "supported_versions": [str(versions.database_schema_version)],
                     },
                 )
-            if user_version != versions.database_schema_version:
+            if user_version < versions.database_schema_version:
                 raise StorageError(
-                    "INTEGRITY_FAILURE",
-                    "database schema version does not match project metadata",
-                    details={"subject": "project_metadata"},
+                    "UNSUPPORTED_VERSION",
+                    "database schema is older than this application",
+                    details={
+                        "subject": "database_schema",
+                        "requested_version": str(user_version),
+                        "supported_versions": [str(versions.database_schema_version)],
+                    },
                 )
             pragmas = {
                 "foreign_keys": connection.execute("PRAGMA foreign_keys").fetchone()[0],
@@ -255,7 +265,7 @@ def _read_database_metadata(
             }:
                 raise StorageError(
                     "INTEGRITY_FAILURE",
-                    "SQLite pragmas do not match schema 1",
+                    "SQLite pragmas do not match required values",
                     details={"subject": "project_metadata"},
                 )
             rows = connection.execute("SELECT key, value FROM metadata").fetchall()
@@ -301,12 +311,6 @@ def load_storage_metadata(
             "project storage cannot be enumerated",
             details={"subject": "project_metadata"},
         ) from error
-    if entries != _LAYOUT:
-        raise StorageError(
-            "INTEGRITY_FAILURE",
-            "project storage layout is incomplete or unexpected",
-            details={"subject": "project_metadata"},
-        )
     project = _read_project_json(paths.project_json)
     storage_instance_id = project["storage_instance_id"]
     if not _is_uuid4(storage_instance_id):
@@ -316,6 +320,13 @@ def load_storage_metadata(
             details={"subject": "project_metadata"},
         )
     user_version, database_metadata = _read_database_metadata(paths.database, versions)
+    expected_layout = _LAYOUT_V2 if user_version == 2 else _LAYOUT_V1
+    if entries != expected_layout:
+        raise StorageError(
+            "INTEGRITY_FAILURE",
+            "project storage layout is incomplete or unexpected",
+            details={"subject": "project_metadata"},
+        )
     project_format_version = project["project_format_version"]
     if project_format_version == database_metadata.get(
         "project_format_version"
@@ -358,7 +369,7 @@ def load_storage_metadata(
 
 
 def bootstrap_storage(project_root: Path, versions: VersionSet) -> StorageMetadata:
-    """Atomically establish schema-1 storage without creating a Project row."""
+    """Atomically establish storage without creating a Project row."""
     paths = _bind_paths(project_root)
     if paths.modeling.exists():
         return load_storage_metadata(paths.root, versions)
@@ -373,6 +384,9 @@ def bootstrap_storage(project_root: Path, versions: VersionSet) -> StorageMetada
         project_json.write_bytes(_project_bytes(versions, storage_instance_id))
         lock.write_bytes(b"\0")
         _create_database(database, versions, storage_instance_id)
+        if versions.database_schema_version == 2:
+            (temporary / "staging").mkdir(mode=0o700)
+            (temporary / "artifacts").mkdir(mode=0o700)
         for path in (project_json, database, lock):
             _fsync_file(path)
         _fsync_directory(temporary)

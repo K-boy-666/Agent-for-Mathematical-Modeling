@@ -47,6 +47,8 @@ class ProjectPaths:
     project_json: Path
     database: Path
     lock: Path
+    staging: Path
+    artifacts: Path
 
     @classmethod
     def bind(cls, project_root: Path) -> ProjectPaths:
@@ -68,6 +70,8 @@ class ProjectPaths:
             project_json=modeling / "project.json",
             database=modeling / "state.sqlite3",
             lock=modeling / "project.lock",
+            staging=modeling / "staging",
+            artifacts=modeling / "artifacts",
         )
 
     def temporary_modeling(self, suffix: str) -> Path:
