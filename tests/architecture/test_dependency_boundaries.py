@@ -39,6 +39,7 @@ from modeling_core.ports.project_store import (
     ProjectStore,
     ProjectWriteResult,
     ValidationSource,
+    VerifiedResult,
     StoreIntegrityReport,
     StoredRunResult,
     StoredValidationResult,
@@ -93,6 +94,7 @@ def test_project_store_exposes_exact_typed_use_case_methods() -> None:
         "get_project_status",
         "get_experiment_trace",
         "get_validation_source",
+        "load_verified_result",
         "begin_run",
         "mark_attempt_running",
         "complete_attempt",
@@ -120,6 +122,10 @@ def test_project_store_exposes_exact_typed_use_case_methods() -> None:
         "project_id": str,
         "attempt_id": str,
         "return": ValidationSource,
+    }
+    assert get_type_hints(methods["load_verified_result"]) == {
+        "attempt_id": str,
+        "return": VerifiedResult,
     }
     assert get_type_hints(methods["begin_run"]) == {
         "command": BeginRunCommand,

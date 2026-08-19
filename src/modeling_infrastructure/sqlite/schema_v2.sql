@@ -27,7 +27,11 @@ CREATE TABLE projects (
             AND lower(storage_instance_id) = storage_instance_id
         ),
     project_format_version TEXT NOT NULL
-        CHECK (project_format_version = 'modeling-project/1.0.0'),
+        CHECK (
+            project_format_version IN (
+                'modeling-project/0.1.0', 'modeling-project/1.0.0'
+            )
+        ),
     display_name TEXT NOT NULL
         CHECK (length(display_name) BETWEEN 1 AND 128),
     created_at TEXT NOT NULL
@@ -95,7 +99,11 @@ CREATE TABLE experiments (
             AND lower(canonical_payload_hash) = canonical_payload_hash
         ),
     canonicalization_version TEXT NOT NULL
-        CHECK (canonicalization_version = 'canonical-json/1.0.0'),
+        CHECK (
+            canonicalization_version IN (
+                'canonical-json/0.1.0', 'canonical-json/1.0.0'
+            )
+        ),
     model_snapshot_hash TEXT NOT NULL
         CHECK (
             length(model_snapshot_hash) = 71
@@ -218,7 +226,11 @@ CREATE TABLE result_snapshots (
     result_kind TEXT NOT NULL
         CHECK (result_kind IN ('success', 'numerical_failure')),
     result_schema_version TEXT NOT NULL
-        CHECK (result_schema_version = 'modeling-result/0.1.0'),
+        CHECK (
+            result_schema_version IN (
+                'modeling-result/0.1.0', 'modeling-result/1.0.0'
+            )
+        ),
     result_hash TEXT NOT NULL
         CHECK (
             length(result_hash) = 71
@@ -317,8 +329,11 @@ CREATE TABLE validations (
                 AND lower(validation_report_hash) = validation_report_hash
             )
         ),
-    report_artifact_id TEXT NOT NULL
-        CHECK (length(report_artifact_id) = 71),
+    report_artifact_id TEXT
+        CHECK (
+            report_artifact_id IS NULL
+            OR (length(report_artifact_id) = 71 AND report_artifact_id LIKE 'sha256:%')
+        ),
     operational_error TEXT
         CHECK (operational_error IS NULL OR json_valid(operational_error)),
     terminal_reason TEXT

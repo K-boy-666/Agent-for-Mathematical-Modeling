@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import threading
 import unicodedata
 from datetime import UTC, datetime
@@ -15,7 +17,11 @@ from modeling_core.application.idempotency import (
     run_experiment_request_hash,
     validate_experiment_request_hash,
 )
-from modeling_core.contracts.canonical_json import sha256_json
+from modeling_core.contracts.canonical_json import (
+    canonical_json_bytes,
+    sha256_json,
+    strict_json_loads,
+)
 from modeling_core.contracts.capability import (
     CancellationSignal,
     CanonicalInputRecord,
@@ -97,8 +103,11 @@ from modeling_core.contracts.tools import (
 )
 from modeling_core.contracts.versions import VersionSet
 from modeling_core.domain.models import (
+    Artifact,
     Attempt,
+    EnvironmentSnapshot,
     Experiment,
+    InputSnapshot,
     Project,
     ResultSnapshot,
     Validation,
@@ -111,6 +120,12 @@ from modeling_core.domain.states import (
     ValidationOutcome,
     ValidationStatus,
 )
+from modeling_core.ports.artifact_store import (
+    ArtifactManifest,
+    ArtifactStore,
+    ArtifactStoreError,
+    AttemptArtifactSink,
+)
 from modeling_core.ports.clock import Clock
 from modeling_core.ports.ids import IdGenerator
 from modeling_core.ports.project_store import (
@@ -122,11 +137,20 @@ from modeling_core.ports.project_store import (
     ExperimentTraceQuery,
     ProjectStore,
     ProjectStoreError,
+    VerifiedResult,
     WriteOperation,
 )
 from modeling_core.registry import CapabilityRegistry, RegistryError
 
 _ENTITY_ID = TypeAdapter(EntityId)
+_RESULT_SCHEMA_ID = (
+    "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-result.schema.json"
+)
+_REPORT_SCHEMA_ID = (
+    "https://schemas.math-modeling-mcp.local/common/0.1.0/"
+    "modeling-validation-report.schema.json"
+)
+_MAX_RESPONSE_BYTES = 262144
 
 
 class _CommonFields(TypedDict):
@@ -279,6 +303,8 @@ class ModelingApplication(ApplicationFacade):
         environment_summary: EnvironmentSummary,
         cancellation: CancellationSignal,
         default_display_name: str,
+        artifact_store: ArtifactStore | None = None,
+        environment_document: JsonObject | None = None,
     ) -> None:
         self._store = store
         self._registry = registry
@@ -289,12 +315,39 @@ class ModelingApplication(ApplicationFacade):
         self._session_id = _ENTITY_ID.validate_python(session_id, strict=True)
         self._environment_summary = environment_summary
         self._cancellation = cancellation
+        self._schema_two = versions.database_schema_version == 2
+        if self._schema_two:
+            if artifact_store is None or environment_document is None:
+                raise ValueError(
+                    "schema 2 composition requires an artifact store and an "
+                    "environment document"
+                )
+        elif artifact_store is not None or environment_document is not None:
+            raise ValueError(
+                "schema 1 composition does not accept artifacts or environment "
+                "documents"
+            )
+        self._artifact_store = artifact_store
+        self._environment_document = environment_document
         if not 1 <= len(default_display_name) <= 128:
             raise ValueError("default_display_name must contain 1 to 128 characters")
         if unicodedata.normalize("NFC", default_display_name) != default_display_name:
             raise ValueError("default_display_name must be Unicode NFC")
         self._default_display_name = default_display_name
         self._write_gate = threading.Lock()
+
+    def _artifact_record(self, manifest: ArtifactManifest) -> Artifact:
+        return Artifact(
+            artifact_id=manifest.artifact_id,
+            role=manifest.role,
+            media_type=manifest.media_type,
+            byte_size=manifest.byte_size,
+            sha256=manifest.sha256,
+            schema_id=manifest.schema_id,
+            created_at=datetime.fromisoformat(
+                manifest.created_at.replace("Z", "+00:00")
+            ),
+        )
 
     def _common(self) -> _CommonFields:
         return {
@@ -530,6 +583,89 @@ class ModelingApplication(ApplicationFacade):
         finally:
             self._release_write()
 
+    @staticmethod
+    def _record_key(
+        item: AttemptTrace | ValidationTrace,
+    ) -> tuple[str, str, str]:
+        return (
+            item.created_at,
+            item.record_type,
+            item.attempt_id if isinstance(item, AttemptTrace) else item.validation_id,
+        )
+
+    @staticmethod
+    def _encode_cursor(document: JsonObject) -> str:
+        return (
+            base64.urlsafe_b64encode(canonical_json_bytes(document))
+            .decode("ascii")
+            .rstrip("=")
+        )
+
+    def _decode_experiment_cursor(
+        self,
+        cursor: str,
+        request: GetProjectStatusExperimentRequest,
+        correlation_id: str,
+    ) -> tuple[str, str, str]:
+        def invalid() -> NoReturn:
+            self._raise_error(
+                correlation_id=correlation_id,
+                code="INVALID_REQUEST",
+                message="cursor is malformed or bound to another view or experiment",
+                details={"field_path": "/cursor", "reason": "invalid_cursor"},
+            )
+
+        try:
+            padded = cursor + "=" * (-len(cursor) % 4)
+            raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+            decoded = strict_json_loads(raw)
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            invalid()
+        if not isinstance(decoded, dict) or set(decoded) != {
+            "view",
+            "experiment_id",
+            "created_at",
+            "record_type",
+            "entity_id",
+        }:
+            invalid()
+        view = decoded.get("view")
+        experiment_id = decoded.get("experiment_id")
+        created_at = decoded.get("created_at")
+        record_type = decoded.get("record_type")
+        entity_id = decoded.get("entity_id")
+        if (
+            view != "experiment"
+            or experiment_id != request.experiment_id
+            or not isinstance(created_at, str)
+            or not isinstance(record_type, str)
+            or not isinstance(entity_id, str)
+            or record_type not in {"attempt", "validation"}
+        ):
+            invalid()
+        return (created_at, record_type, entity_id)
+
+    @staticmethod
+    def _record_cursor(
+        item: AttemptTrace | ValidationTrace,
+        experiment_id: str,
+    ) -> JsonObject:
+        if isinstance(item, AttemptTrace):
+            return {
+                "view": "experiment",
+                "experiment_id": experiment_id,
+                "created_at": item.created_at,
+                "record_type": "attempt",
+                "entity_id": item.attempt_id,
+            }
+        return {
+            "view": "experiment",
+            "experiment_id": experiment_id,
+            "created_at": item.created_at,
+            "record_type": "validation",
+            "entity_id": item.validation_id,
+        }
+
     def get_project_status(
         self, request: GetProjectStatusRequest
     ) -> GetProjectStatusResult:
@@ -539,6 +675,9 @@ class ModelingApplication(ApplicationFacade):
         try:
             if isinstance(request, GetProjectStatusSummaryRequest):
                 snapshot = self._store.get_project_status(request.project_id)
+                page_limit = request.limit if request.limit is not None else 20
+                items = snapshot.experiments[:page_limit]
+                truncated = snapshot.truncated or len(items) < len(snapshot.experiments)
                 return GetProjectStatusSummaryResult(
                     **common,
                     view="summary",
@@ -548,7 +687,7 @@ class ModelingApplication(ApplicationFacade):
                     registry_fingerprint=self._registry_summary.fingerprint,
                     last_activity_at=_timestamp(snapshot.last_activity_at),
                     experiments=ExperimentItems(
-                        items=snapshot.experiments, truncated=snapshot.truncated
+                        items=items, truncated=truncated, next_cursor=None
                     ),
                 )
             assert isinstance(request, GetProjectStatusExperimentRequest)
@@ -559,25 +698,71 @@ class ModelingApplication(ApplicationFacade):
             )
         except ProjectStoreError as error:
             self._raise_store(error, correlation_id)
+        page_limit = request.limit if request.limit is not None else 20
         records: list[AttemptTrace | ValidationTrace] = [
             *(_attempt_trace(item) for item in trace.attempts),
             *(_validation_trace(item) for item in trace.validations),
         ]
-        records.sort(
-            key=lambda item: (
-                item.created_at,
-                item.record_type,
-                item.attempt_id
-                if isinstance(item, AttemptTrace)
-                else item.validation_id,
+        records.sort(key=self._record_key)
+        if request.cursor is not None:
+            cursor_key = self._decode_experiment_cursor(
+                request.cursor, request, correlation_id
             )
-        )
+            records = [
+                record for record in records if self._record_key(record) > cursor_key
+            ]
+
+        project = _project_summary(trace.project)
+        experiment = _experiment_record(trace.experiment)
+
+        def response_bytes(page: list[AttemptTrace | ValidationTrace]) -> int:
+            candidate = GetProjectStatusExperimentResult(
+                **common,
+                view="experiment",
+                project=project,
+                experiment=experiment,
+                trace=tuple(page),
+            )
+            return len(
+                canonical_json_bytes(
+                    cast(JsonObject, candidate.model_dump(mode="json"))
+                )
+            )
+
+        page: list[AttemptTrace | ValidationTrace] = []
+        next_cursor: str | None = None
+        for record in records:
+            if len(page) >= page_limit:
+                next_cursor = self._encode_cursor(
+                    self._record_cursor(page[-1], request.experiment_id)
+                )
+                break
+            candidate_page = page + [record]
+            observed = response_bytes(candidate_page)
+            if observed > _MAX_RESPONSE_BYTES:
+                if not page:
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="RESOURCE_LIMIT_EXCEEDED",
+                        message="inline response exceeds the byte budget",
+                        details={
+                            "resource": "inline_response_bytes",
+                            "limit": _MAX_RESPONSE_BYTES,
+                            "observed": observed,
+                        },
+                    )
+                next_cursor = self._encode_cursor(
+                    self._record_cursor(page[-1], request.experiment_id)
+                )
+                break
+            page = candidate_page
         return GetProjectStatusExperimentResult(
             **common,
             view="experiment",
-            project=_project_summary(trace.project),
-            experiment=_experiment_record(trace.experiment),
-            trace=tuple(records),
+            project=project,
+            experiment=experiment,
+            trace=tuple(page),
+            next_cursor=next_cursor,
         )
 
     def list_capabilities(
@@ -851,6 +1036,30 @@ class ModelingApplication(ApplicationFacade):
                 ),
             )
             created_at = _millisecond_utc(self._clock.utc_now())
+            input_snapshot: InputSnapshot | None = None
+            environment_snapshot: EnvironmentSnapshot | None = None
+            if self._schema_two:
+                input_snapshot = InputSnapshot(
+                    input_snapshot_id=self._ids.new_uuid4(),
+                    canonical_input_schema_version=(
+                        canonical.canonical_input_schema_version
+                    ),
+                    canonical_payload_hash=canonical.canonical_payload_hash,
+                    model_snapshot_hash=canonical.model_snapshot_hash,
+                    data_snapshot_references=tuple(
+                        DataSnapshotReference.model_validate(item, strict=True)
+                        for item in canonical.data_snapshot_references
+                    ),
+                    data_snapshot_set_hash=canonical.data_snapshot_set_hash,
+                    created_at=created_at,
+                )
+                environment_document = cast(JsonObject, self._environment_document)
+                environment_snapshot = EnvironmentSnapshot(
+                    environment_snapshot_id=self._ids.new_uuid4(),
+                    environment_document=environment_document,
+                    environment_hash=sha256_json(environment_document),
+                    created_at=created_at,
+                )
             experiment = Experiment(
                 experiment_id=self._ids.new_uuid4(),
                 project_id=request.project_id,
@@ -891,6 +1100,8 @@ class ModelingApplication(ApplicationFacade):
                         operation=operation,
                         experiment=experiment,
                         attempt=pending,
+                        input_snapshot=input_snapshot,
+                        environment_snapshot=environment_snapshot,
                     )
                 )
             except ProjectStoreError as error:
@@ -919,6 +1130,11 @@ class ModelingApplication(ApplicationFacade):
                 )
                 / 1000.0
             )
+            artifact_sink: AttemptArtifactSink | None = None
+            if self._schema_two and self._artifact_store is not None:
+                artifact_sink = AttemptArtifactSink(
+                    self._artifact_store, pending.attempt_id
+                )
             result_snapshot: ResultSnapshot | None = None
             system_error: ErrorResponse | None = None
             terminal_reason: TerminalReason | None = None
@@ -933,6 +1149,7 @@ class ModelingApplication(ApplicationFacade):
                         deadline=deadline,
                         clock=self._clock,
                         cancellation=self._cancellation,
+                        artifact_sink=artifact_sink,
                     ),
                 )
                 result_document = cast(
@@ -996,6 +1213,52 @@ class ModelingApplication(ApplicationFacade):
                     details={"event_id": self._ids.new_uuid4()},
                 )
 
+            result_artifact: Artifact | None = None
+            if (
+                self._schema_two
+                and artifact_sink is not None
+                and result_snapshot is not None
+                and system_error is None
+            ):
+                try:
+                    manifest = artifact_sink.publish_json(
+                        "result",
+                        result_snapshot.result_payload.model_dump(mode="json"),
+                        _RESULT_SCHEMA_ID,
+                    )
+                    if manifest.artifact_id != result_snapshot.result_hash:
+                        raise ArtifactStoreError(
+                            code="INTEGRITY_FAILURE",
+                            message="published artifact identity does not match the "
+                            "result hash",
+                        )
+                    result_artifact = self._artifact_record(manifest)
+                except ArtifactStoreError as error:
+                    result_snapshot = None
+                    numerical_failure = None
+                    final_status = AttemptStatus.ERRORED
+                    if error.code == "RESOURCE_LIMIT_EXCEEDED":
+                        system_error = self._error_response(
+                            correlation_id=correlation_id,
+                            code="RESOURCE_LIMIT_EXCEEDED",
+                            message=str(error),
+                            details=cast(ErrorDetails, cast(JsonObject, error.details)),
+                        )
+                    else:
+                        system_error = self._error_response(
+                            correlation_id=correlation_id,
+                            code="INTERNAL_ERROR",
+                            message="result artifact publication failed",
+                            details={"event_id": self._ids.new_uuid4()},
+                        )
+                else:
+                    if self._clock.monotonic() > deadline:
+                        result_snapshot = None
+                        numerical_failure = None
+                        result_artifact = None
+                        final_status = AttemptStatus.TIMED_OUT
+                        terminal_reason = TerminalReason.DEADLINE_EXCEEDED
+
             final_attempt = Attempt(
                 attempt_id=pending.attempt_id,
                 experiment_id=pending.experiment_id,
@@ -1020,6 +1283,7 @@ class ModelingApplication(ApplicationFacade):
                     CompleteAttemptCommand(
                         operation=operation,
                         attempt=final_attempt,
+                        result_artifact=result_artifact,
                     )
                 )
             except ProjectStoreError as error:
@@ -1173,6 +1437,43 @@ class ModelingApplication(ApplicationFacade):
                     },
                 )
 
+            verified_result: VerifiedResult | None = None
+            if self._schema_two:
+                try:
+                    verified_result = self._store.load_verified_result(
+                        request.attempt_id
+                    )
+                except ProjectStoreError as error:
+                    self._raise_store(error, correlation_id)
+                assert verified_result is not None
+                verified_payload = cast(
+                    JsonObject,
+                    verified_result.result_snapshot.result_payload.model_dump(
+                        mode="json"
+                    ),
+                )
+                if (
+                    sha256_json(verified_payload)
+                    != verified_result.result_snapshot.result_hash
+                    or verified_result.result_snapshot.result_hash
+                    != source.attempt.result.result_hash
+                    or request.expected_result_hash
+                    != verified_result.result_snapshot.result_hash
+                    or verified_result.artifact is None
+                    or verified_result.artifact.artifact_id
+                    != verified_result.result_snapshot.result_hash
+                ):
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="INTEGRITY_FAILURE",
+                        message="verified result does not match committed evidence",
+                        details={
+                            "subject": "result_artifact",
+                            "expected_hash": request.expected_result_hash,
+                            "observed_hash": verified_result.result_snapshot.result_hash,
+                        },
+                    )
+
             try:
                 validator = self._registry.resolve_validator(
                     request.validator_id,
@@ -1280,18 +1581,21 @@ class ModelingApplication(ApplicationFacade):
             report_payload = None
             operational_error: ErrorResponse | None = None
             terminal_reason: TerminalReason | None = None
+            verified_view = (
+                verified_result.result_snapshot
+                if verified_result is not None
+                else source.attempt.result
+            )
             try:
                 raw_report_payload = validator.validate(
                     canonical,
                     ResultSnapshotView(
-                        result_snapshot_id=(source.attempt.result.result_snapshot_id),
+                        result_snapshot_id=(verified_view.result_snapshot_id),
                         capability_id=source.experiment.capability_id,
                         contract_version=source.experiment.contract_version,
-                        result_schema_version=(
-                            source.attempt.result.result_schema_version
-                        ),
-                        result_hash=source.attempt.result.result_hash,
-                        result_payload=source.attempt.result.result_payload,
+                        result_schema_version=(verified_view.result_schema_version),
+                        result_hash=verified_view.result_hash,
+                        result_payload=verified_view.result_payload,
                     ),
                     request.policy,
                     ValidationContext(
@@ -1340,6 +1644,49 @@ class ModelingApplication(ApplicationFacade):
                     details={"event_id": self._ids.new_uuid4()},
                 )
 
+            report_artifact: Artifact | None = None
+            if (
+                self._schema_two
+                and self._artifact_store is not None
+                and final_status is ValidationStatus.SUCCEEDED
+                and report_payload is not None
+            ):
+                try:
+                    report_manifest = self._artifact_store.publish_json(
+                        "validation_report",
+                        report_payload.model_dump(mode="json"),
+                        _REPORT_SCHEMA_ID,
+                    )
+                    if report_manifest.artifact_id != report_hash:
+                        raise ArtifactStoreError(
+                            code="INTEGRITY_FAILURE",
+                            message=(
+                                "published report artifact identity does not match "
+                                "the report hash"
+                            ),
+                        )
+                    report_artifact = self._artifact_record(report_manifest)
+                except ArtifactStoreError as error:
+                    report_payload = None
+                    metrics = None
+                    outcome = None
+                    report_hash = None
+                    final_status = ValidationStatus.ERRORED
+                    if error.code == "RESOURCE_LIMIT_EXCEEDED":
+                        operational_error = self._error_response(
+                            correlation_id=correlation_id,
+                            code="RESOURCE_LIMIT_EXCEEDED",
+                            message=str(error),
+                            details=cast(ErrorDetails, cast(JsonObject, error.details)),
+                        )
+                    else:
+                        operational_error = self._error_response(
+                            correlation_id=correlation_id,
+                            code="INTERNAL_ERROR",
+                            message="report artifact publication failed",
+                            details={"event_id": self._ids.new_uuid4()},
+                        )
+
             final_validation = Validation(
                 validation_id=pending.validation_id,
                 attempt_id=pending.attempt_id,
@@ -1369,6 +1716,7 @@ class ModelingApplication(ApplicationFacade):
                     CompleteValidationCommand(
                         operation=operation,
                         validation=final_validation,
+                        report_artifact=report_artifact,
                     )
                 )
             except ProjectStoreError as error:

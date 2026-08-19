@@ -89,7 +89,8 @@ def test_validator_real_import_graph_has_only_explicitly_allowed_modules() -> No
         module
         for module in core_modules
         if not module.startswith("modeling_core.contracts.")
-        and module != "modeling_core.ports.clock"
+        and module
+        not in {"modeling_core.ports.clock", "modeling_core.ports.artifact_store"}
     } == set()
     assert (
         "modeling_capabilities.root_finding.expression.validator_evaluator"

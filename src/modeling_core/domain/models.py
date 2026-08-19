@@ -480,3 +480,106 @@ class Validation:
             not in {TerminalReason.HOST_CANCELLED, TerminalReason.SERVER_RECOVERY}
         ):
             raise ValueError("ABANDONED validation requires an allowed terminal reason")
+
+
+@dataclass(frozen=True)
+class InputSnapshot:
+    """Immutable independently referenced canonical input provenance."""
+
+    input_snapshot_id: EntityId
+    canonical_input_schema_version: str
+    canonical_payload_hash: Hash
+    model_snapshot_hash: Hash
+    data_snapshot_references: tuple[DataSnapshotReference, ...]
+    data_snapshot_set_hash: Hash
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "input_snapshot_id",
+            _validate(self.input_snapshot_id, EntityId),
+        )
+        object.__setattr__(
+            self,
+            "canonical_input_schema_version",
+            _validate(self.canonical_input_schema_version, str),
+        )
+        if not self.canonical_input_schema_version:
+            raise ValueError("canonical_input_schema_version must not be empty")
+        object.__setattr__(
+            self,
+            "canonical_payload_hash",
+            _validate(self.canonical_payload_hash, Hash),
+        )
+        object.__setattr__(
+            self, "model_snapshot_hash", _validate(self.model_snapshot_hash, Hash)
+        )
+        object.__setattr__(
+            self,
+            "data_snapshot_references",
+            _validate(self.data_snapshot_references, tuple[DataSnapshotReference, ...]),
+        )
+        object.__setattr__(
+            self, "data_snapshot_set_hash", _validate(self.data_snapshot_set_hash, Hash)
+        )
+        object.__setattr__(self, "created_at", _validate_timestamp(self.created_at))
+
+
+@dataclass(frozen=True)
+class EnvironmentSnapshot:
+    """Immutable allowlisted environment evidence captured per attempt."""
+
+    environment_snapshot_id: EntityId
+    environment_document: JsonObject
+    environment_hash: Hash
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "environment_snapshot_id",
+            _validate(self.environment_snapshot_id, EntityId),
+        )
+        object.__setattr__(
+            self,
+            "environment_document",
+            _validate(self.environment_document, JsonObject),
+        )
+        object.__setattr__(
+            self, "environment_hash", _validate(self.environment_hash, Hash)
+        )
+        object.__setattr__(self, "created_at", _validate_timestamp(self.created_at))
+
+
+@dataclass(frozen=True)
+class Artifact:
+    """One immutable content-addressed JSON artifact reference."""
+
+    artifact_id: Hash
+    role: str
+    media_type: str
+    byte_size: int
+    sha256: Hash
+    schema_id: str
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artifact_id", _validate(self.artifact_id, Hash))
+        object.__setattr__(self, "role", _validate(self.role, str))
+        if not self.role:
+            raise ValueError("role must not be empty")
+        object.__setattr__(self, "media_type", _validate(self.media_type, str))
+        if not self.media_type:
+            raise ValueError("media_type must not be empty")
+        if isinstance(self.byte_size, bool) or not isinstance(self.byte_size, int):
+            raise ValueError("byte_size must be an integer")
+        if self.byte_size < 0:
+            raise ValueError("byte_size must be non-negative")
+        object.__setattr__(self, "sha256", _validate(self.sha256, Hash))
+        if self.artifact_id != self.sha256:
+            raise ValueError("artifact_id must equal its content sha256")
+        object.__setattr__(self, "schema_id", _validate(self.schema_id, str))
+        if not self.schema_id:
+            raise ValueError("schema_id must not be empty")
+        object.__setattr__(self, "created_at", _validate_timestamp(self.created_at))

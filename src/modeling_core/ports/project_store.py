@@ -23,8 +23,12 @@ from modeling_core.contracts.tools import (
 )
 from modeling_core.domain.models import (
     Attempt,
+    Artifact,
+    EnvironmentSnapshot,
     Experiment,
+    InputSnapshot,
     Project,
+    ResultSnapshot,
     Validation,
 )
 from modeling_core.domain.states import (
@@ -287,6 +291,8 @@ class BeginRunCommand:
     operation: WriteOperation
     experiment: Experiment
     attempt: Attempt
+    input_snapshot: InputSnapshot | None = None
+    environment_snapshot: EnvironmentSnapshot | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "operation", _validate(self.operation, WriteOperation))
@@ -297,8 +303,32 @@ class BeginRunCommand:
             raise ValueError("begin-run attempt must be PENDING")
         if attempt.experiment_id != experiment.experiment_id:
             raise ValueError("attempt must belong to experiment")
+        input_snapshot = self.input_snapshot
+        if input_snapshot is not None:
+            input_snapshot = _validate(input_snapshot, InputSnapshot)
+            if input_snapshot.canonical_payload_hash != (
+                experiment.canonical_payload_hash
+            ):
+                raise ValueError(
+                    "input snapshot must match the experiment canonical payload hash"
+                )
+            if input_snapshot.model_snapshot_hash != experiment.model_snapshot_hash:
+                raise ValueError(
+                    "input snapshot must match the experiment model snapshot hash"
+                )
+            if input_snapshot.data_snapshot_set_hash != (
+                experiment.data_snapshot_set_hash
+            ):
+                raise ValueError(
+                    "input snapshot must match the experiment data snapshot set hash"
+                )
+        environment_snapshot = self.environment_snapshot
+        if environment_snapshot is not None:
+            environment_snapshot = _validate(environment_snapshot, EnvironmentSnapshot)
         object.__setattr__(self, "experiment", experiment)
         object.__setattr__(self, "attempt", attempt)
+        object.__setattr__(self, "input_snapshot", input_snapshot)
+        object.__setattr__(self, "environment_snapshot", environment_snapshot)
 
 
 @dataclass(frozen=True)
@@ -327,12 +357,25 @@ class BeginRunResult:
 class CompleteAttemptCommand:
     operation: WriteOperation
     attempt: Attempt
+    result_artifact: Artifact | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "operation", _validate(self.operation, WriteOperation))
         attempt = _validate(self.attempt, Attempt)
         _require_terminal_attempt(attempt)
+        result_artifact = self.result_artifact
+        if result_artifact is not None:
+            result_artifact = _validate(result_artifact, Artifact)
+            if result_artifact.role != "result":
+                raise ValueError("result artifact must declare the result role")
+            if attempt.result is None:
+                raise ValueError(
+                    "a result artifact requires an embedded result snapshot"
+                )
+            if result_artifact.artifact_id != attempt.result.result_hash:
+                raise ValueError("result artifact identity must equal the result hash")
         object.__setattr__(self, "attempt", attempt)
+        object.__setattr__(self, "result_artifact", result_artifact)
 
 
 @dataclass(frozen=True)
@@ -399,12 +442,27 @@ class BeginValidationResult:
 class CompleteValidationCommand:
     operation: WriteOperation
     validation: Validation
+    report_artifact: Artifact | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "operation", _validate(self.operation, WriteOperation))
         validation = _validate(self.validation, Validation)
         _require_terminal_validation(validation)
+        report_artifact = self.report_artifact
+        if report_artifact is not None:
+            report_artifact = _validate(report_artifact, Artifact)
+            if report_artifact.role != "validation_report":
+                raise ValueError("report artifact must declare the report role")
+            if validation.report_payload is None:
+                raise ValueError(
+                    "a report artifact requires an embedded report payload"
+                )
+            if validation.validation_report_hash is None:
+                raise ValueError("a report artifact requires a report hash")
+            if report_artifact.artifact_id != validation.validation_report_hash:
+                raise ValueError("report artifact identity must equal the report hash")
         object.__setattr__(self, "validation", validation)
+        object.__setattr__(self, "report_artifact", report_artifact)
 
 
 @dataclass(frozen=True)
@@ -415,6 +473,32 @@ class StoredValidationResult:
         validation = _validate(self.validation, Validation)
         _require_terminal_validation(validation)
         object.__setattr__(self, "validation", validation)
+
+
+@dataclass(frozen=True)
+class VerifiedResult:
+    """A committed result reread through verified storage."""
+
+    result_snapshot: ResultSnapshot
+    artifact: Artifact | None
+    payload_bytes: bytes
+
+    def __post_init__(self) -> None:
+        result_snapshot = _validate(self.result_snapshot, ResultSnapshot)
+        artifact = self.artifact
+        if artifact is not None:
+            artifact = _validate(artifact, Artifact)
+            if artifact.role != "result":
+                raise ValueError("verified result artifact must declare the role")
+            if artifact.artifact_id != result_snapshot.result_hash:
+                raise ValueError(
+                    "verified artifact identity must equal the result hash"
+                )
+        if not isinstance(self.payload_bytes, (bytes, bytearray)):
+            raise ValueError("payload_bytes must be bytes")
+        object.__setattr__(self, "result_snapshot", result_snapshot)
+        object.__setattr__(self, "artifact", artifact)
+        object.__setattr__(self, "payload_bytes", bytes(self.payload_bytes))
 
 
 @dataclass(frozen=True)
@@ -649,6 +733,8 @@ class ProjectStore(Protocol):
         self, project_id: str, attempt_id: str
     ) -> ValidationSource: ...
 
+    def load_verified_result(self, attempt_id: str) -> VerifiedResult: ...
+
     def begin_run(self, command: BeginRunCommand) -> BeginRunResult: ...
 
     def mark_attempt_running(
@@ -699,5 +785,6 @@ __all__ = [
     "StoredRunResult",
     "StoredValidationResult",
     "ValidationSource",
+    "VerifiedResult",
     "WriteOperation",
 ]

@@ -43,12 +43,15 @@ class CreateProjectRequest(StrictModel):
 class GetProjectStatusSummaryRequest(StrictModel):
     project_id: EntityId
     view: Literal["summary"] = "summary"
+    limit: Annotated[int, Field(ge=1, le=100)] | None = None
 
 
 class GetProjectStatusExperimentRequest(StrictModel):
     project_id: EntityId
     view: Literal["experiment"]
     experiment_id: EntityId
+    cursor: Annotated[str, Field(min_length=1)] | None = None
+    limit: Annotated[int, Field(ge=1, le=100)] | None = None
 
 
 def _get_project_status_view(value: object) -> str | None:
@@ -249,6 +252,7 @@ class ExperimentSummary(StrictModel):
 class ExperimentItems(StrictModel):
     items: Annotated[tuple[ExperimentSummary, ...], Field(max_length=20)]
     truncated: bool
+    next_cursor: Annotated[str | None, Field(exclude=True)] = None
 
 
 class GetProjectStatusSummaryResult(CommonResult):
@@ -674,6 +678,7 @@ class GetProjectStatusExperimentResult(CommonResult):
     project: ProjectSummary
     experiment: ExperimentRecord
     trace: tuple[TraceRecord, ...]
+    next_cursor: Annotated[str | None, Field(exclude=True)] = None
 
 
 GetProjectStatusResult: TypeAlias = Annotated[

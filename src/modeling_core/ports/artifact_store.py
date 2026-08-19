@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Protocol, cast
+from typing import Annotated, Any, Literal, Protocol, cast, runtime_checkable
 
 from pydantic import Field, TypeAdapter
 
-from modeling_core.contracts.common import Hash, JsonObject, Timestamp
+from modeling_core.contracts.canonical_json import canonical_json_bytes
+from modeling_core.contracts.common import EntityId, Hash, JsonObject, Timestamp
 
 ArtifactRole = Literal[
     "result", "validation_report", "input_snapshot", "environment_snapshot"
 ]
 
+_MAX_ARTIFACTS_PER_ATTEMPT = 16
+_MAX_CUMULATIVE_ARTIFACT_BYTES = 64 * 1024 * 1024
+
 _ARTIFACT_ROLE: TypeAdapter[ArtifactRole] = TypeAdapter(ArtifactRole)
+_ENTITY_ID: TypeAdapter[EntityId] = TypeAdapter(EntityId)
 _HASH = TypeAdapter(Hash)
 _TIMESTAMP = TypeAdapter(Timestamp)
 _STR = TypeAdapter(str)
@@ -158,10 +163,87 @@ class ArtifactStore(Protocol):
     ) -> ArtifactInspectionReport: ...
 
 
+@runtime_checkable
+class ArtifactSink(Protocol):
+    """Write-only, attempt-scoped JSON publication surface for capabilities."""
+
+    def publish_json(
+        self,
+        role: ArtifactRole,
+        payload: JsonObject,
+        schema_id: str,
+    ) -> ArtifactManifest: ...
+
+
+class AttemptArtifactSink:
+    """The sole write authority granted to one Attempt execution.
+
+    Enforces the per-Attempt artifact budget (at most sixteen artifacts and
+    sixty-four cumulative MiB) before staging anything. It never exposes
+    paths, reads, deletes or database methods.
+    """
+
+    def __init__(self, store: ArtifactStore, attempt_id: str) -> None:
+        self._store = store
+        self._attempt_id = _ENTITY_ID.validate_python(attempt_id, strict=True)
+        self._published_count = 0
+        self._published_bytes = 0
+
+    @property
+    def attempt_id(self) -> str:
+        return self._attempt_id
+
+    @property
+    def published_count(self) -> int:
+        return self._published_count
+
+    @property
+    def published_bytes(self) -> int:
+        return self._published_bytes
+
+    def publish_json(
+        self,
+        role: ArtifactRole,
+        payload: JsonObject,
+        schema_id: str,
+    ) -> ArtifactManifest:
+        canonical = canonical_json_bytes(payload)
+        observed_count = self._published_count + 1
+        if observed_count > _MAX_ARTIFACTS_PER_ATTEMPT:
+            raise ArtifactStoreError(
+                code="RESOURCE_LIMIT_EXCEEDED",
+                message=("attempt artifact count exceeds the per-attempt budget"),
+                details={
+                    "resource": "attempt_artifacts",
+                    "limit": _MAX_ARTIFACTS_PER_ATTEMPT,
+                    "observed": observed_count,
+                },
+            )
+        observed_bytes = self._published_bytes + len(canonical)
+        if observed_bytes > _MAX_CUMULATIVE_ARTIFACT_BYTES:
+            raise ArtifactStoreError(
+                code="RESOURCE_LIMIT_EXCEEDED",
+                message="attempt artifact bytes exceed the per-attempt budget",
+                details={
+                    "resource": "attempt_artifact_bytes",
+                    "limit": _MAX_CUMULATIVE_ARTIFACT_BYTES,
+                    "observed": observed_bytes,
+                },
+            )
+        manifest = self._store.publish_json(
+            role, cast(dict[str, object], payload), schema_id
+        )
+        self._published_count = observed_count
+        self._published_bytes = observed_bytes
+        return manifest
+
+
 __all__ = [
     "ArtifactInspectionReport",
     "ArtifactManifest",
     "ArtifactRole",
+    "ArtifactSink",
     "ArtifactStore",
     "ArtifactStoreError",
+    "AttemptArtifactSink",
 ]

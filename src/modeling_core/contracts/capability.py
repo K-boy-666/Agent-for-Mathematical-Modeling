@@ -35,6 +35,7 @@ from modeling_core.contracts.tools import (
     ValidationReportPayload,
     ValidatorSummary,
 )
+from modeling_core.ports.artifact_store import ArtifactSink
 from modeling_core.ports.clock import Clock
 
 CapabilityKey: TypeAlias = tuple[str, str]
@@ -542,7 +543,13 @@ class CancellationSignal(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ExecutionContext:
-    """The entire M1a authority surface available during execution."""
+    """The entire authority surface available during execution.
+
+    M1a exposes only attempt identity, randomness, deadline and cooperative
+    cancellation. M1b additionally exposes a write-only, attempt-scoped
+    ArtifactSink; capabilities never receive paths, reads, deletes or any
+    database method.
+    """
 
     attempt_id: str
     randomness: str
@@ -550,6 +557,7 @@ class ExecutionContext:
     deadline: float
     clock: Clock
     cancellation: CancellationSignal
+    artifact_sink: ArtifactSink | None = None
 
     def __post_init__(self) -> None:
         _ENTITY_ID.validate_python(self.attempt_id, strict=True)
@@ -563,6 +571,10 @@ class ExecutionContext:
             raise ValueError("randomness=not_used requires seed is None")
         if not isinstance(self.deadline, float) or not math.isfinite(self.deadline):
             raise ValueError("deadline must be a finite monotonic float")
+        if self.artifact_sink is not None and not isinstance(
+            self.artifact_sink, ArtifactSink
+        ):
+            raise ValueError("artifact_sink must implement the ArtifactSink protocol")
 
 
 @dataclass(frozen=True, slots=True)

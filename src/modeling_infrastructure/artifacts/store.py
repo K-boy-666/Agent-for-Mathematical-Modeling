@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+
 from modeling_core.contracts.canonical_json import (
     canonical_json_bytes,
     strict_json_loads,
@@ -44,6 +46,21 @@ class ContentAddressedArtifactStore:
     def __init__(self, paths: ProjectPaths) -> None:
         self._paths = paths
         self._schema_catalog = SchemaCatalog.load_packaged("0.1.0")
+
+    def _resolve_validator(self, schema_id: str) -> Draft202012Validator:
+        """Resolve a common-schema $id or a 'tool.kind' identifier."""
+        common = self._schema_catalog.common_schemas.get(schema_id)
+        if common is not None:
+            return Draft202012Validator(common)
+        schema_id_parts = schema_id.rsplit(".", 1)
+        if len(schema_id_parts) != 2:
+            raise ArtifactStoreError(
+                code="INVALID_SCHEMA_ID",
+                message=f"schema_id must be a common $id or 'tool.kind', "
+                f"got: {schema_id!r}",
+            )
+        tool, kind = schema_id_parts
+        return self._schema_catalog.validator(tool, kind)
 
     # ------------------------------------------------------------------
     # publish_json
@@ -90,18 +107,13 @@ class ContentAddressedArtifactStore:
         artifact_id = f"sha256:{full_hex}"
 
         # 7. Validate decoded content with SchemaCatalog
-        _schema_id_parts = schema_id.rsplit(".", 1)
-        if len(_schema_id_parts) != 2:
-            _cleanup_staging(staging_path)
-            raise ArtifactStoreError(
-                code="INVALID_SCHEMA_ID",
-                message=f"schema_id must be 'tool.kind', got: {schema_id!r}",
-            )
-        _tool, _kind = _schema_id_parts
         try:
-            _validator = self._schema_catalog.validator(_tool, _kind)
             _decoded = strict_json_loads(canonical_bytes)
+            _validator = self._resolve_validator(schema_id)
             _validator.validate(_decoded)
+        except ArtifactStoreError:
+            _cleanup_staging(staging_path)
+            raise
         except Exception as exc:
             _cleanup_staging(staging_path)
             raise ArtifactStoreError(

@@ -134,6 +134,9 @@ class IntegrityFailureDetails(StrictModel):
         "result_hash",
         "validation_report_hash",
         "input_snapshot",
+        "result_artifact",
+        "report_artifact",
+        "environment_snapshot",
     ]
     expected_hash: Hash | None = None
     observed_hash: Hash | None = None

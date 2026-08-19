@@ -1,4 +1,4 @@
-"""Schema-1 SQLite implementation of the host-neutral project-store port."""
+"""Schema-1 and schema-2 SQLite implementation of the project-store port."""
 
 from __future__ import annotations
 
@@ -9,14 +9,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterator, Literal, cast
 
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from jsonschema.exceptions import ValidationError as SchemaValidationError  # type: ignore[import-untyped]
 from pydantic import TypeAdapter
 
 from modeling_core.contracts.canonical_json import (
     canonical_json_bytes,
+    sha256_json,
     strict_json_loads,
 )
 from modeling_core.contracts.common import JsonObject, Warning
 from modeling_core.contracts.errors import ErrorResponse
+from modeling_core.contracts.schema_catalog import SchemaCatalog
 from modeling_core.contracts.tools import (
     AttemptStatusCounts,
     CanonicalRootFindingInput,
@@ -32,8 +36,11 @@ from modeling_core.contracts.tools import (
 )
 from modeling_core.contracts.versions import VersionSet
 from modeling_core.domain.models import (
+    Artifact,
     Attempt,
+    EnvironmentSnapshot,
     Experiment,
+    InputSnapshot,
     Project,
     ResultSnapshot,
     Validation,
@@ -46,6 +53,7 @@ from modeling_core.domain.states import (
     ValidationOutcome,
     ValidationStatus,
 )
+from modeling_core.ports.artifact_store import ArtifactStore, ArtifactStoreError
 from modeling_core.ports.clock import Clock
 from modeling_core.ports.ids import IdGenerator
 from modeling_core.ports.project_store import (
@@ -71,6 +79,7 @@ from modeling_core.ports.project_store import (
     StoredRunResult,
     StoredValidationResult,
     ValidationSource,
+    VerifiedResult,
     WriteOperation,
 )
 from modeling_infrastructure.project_lock import ProjectLock, StorageConflict
@@ -88,6 +97,7 @@ if TYPE_CHECKING:
 _RESULT_PAYLOAD: TypeAdapter[ResultPayload] = TypeAdapter(ResultPayload)
 _DATA_REFS = TypeAdapter(tuple[DataSnapshotReference, ...])
 _WARNINGS = TypeAdapter(tuple[Warning, ...])
+_RESULT_SCHEMA_BASE = "https://schemas.math-modeling-mcp.local/common/"
 
 
 def _timestamp(value: datetime) -> str:
@@ -126,7 +136,7 @@ def _validation_report(value: str) -> ValidationReportPayload:
 
 
 class SQLiteProjectStore:
-    """One-project schema-1 store with short explicit write transactions."""
+    """One-project store with short explicit write transactions."""
 
     def __init__(
         self,
@@ -135,15 +145,191 @@ class SQLiteProjectStore:
         clock: Clock | None = None,
         id_generator: IdGenerator | None = None,
         session_id: str | None = None,
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         self._paths = ProjectPaths.bind(project_root)
         self._versions = versions
+        self._schema_version = versions.database_schema_version
         self._clock = clock
         self._id_generator = id_generator
         self._degraded = False
+        self._artifact_store = artifact_store
+        self._catalogs: dict[str, SchemaCatalog] = {}
         self._project_lock = ProjectLock(
             self._paths.lock,
             session_id if session_id is not None else str(uuid.uuid4()),
+        )
+
+    @property
+    def _schema_two(self) -> bool:
+        return self._schema_version == 2
+
+    def _result_schema_validator(
+        self, result_schema_version: str
+    ) -> Draft202012Validator:
+        schema_axis = result_schema_version.split("/", 1)[-1]
+        if schema_axis not in {"0.1.0", "1.0.0"}:
+            raise ProjectStoreError(
+                "UNSUPPORTED_VERSION",
+                "stored result schema version is not supported",
+                False,
+                {"subject": "result_artifact"},
+            )
+        catalog = self._catalogs.get(schema_axis)
+        if catalog is None:
+            catalog = SchemaCatalog.load_packaged(schema_axis)
+            self._catalogs[schema_axis] = catalog
+        schema_id = f"{_RESULT_SCHEMA_BASE}{schema_axis}/modeling-result.schema.json"
+        try:
+            schema = catalog.common_schemas[schema_id]
+        except KeyError as error:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "result schema asset is missing",
+                False,
+                {"subject": "result_artifact"},
+            ) from error
+        return Draft202012Validator(schema)
+
+    def _read_result_bytes(self, row: sqlite3.Row) -> bytes:
+        artifact_id = row["result_artifact_id"]
+        byte_size = row["artifact_byte_size"]
+        sha256 = row["artifact_sha256"]
+        if artifact_id is None or byte_size is None or sha256 is None:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "committed result is missing its artifact reference",
+                False,
+                {"subject": "result_artifact"},
+            )
+        if artifact_id != sha256 or artifact_id != row["result_hash"]:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "committed result artifact identity disagrees with its hash",
+                False,
+                {"subject": "result_artifact"},
+            )
+        if self._artifact_store is None:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "artifact store is unavailable for verified reads",
+                False,
+                {"subject": "result_artifact"},
+            )
+        try:
+            return self._artifact_store.read_verified(artifact_id, byte_size, sha256)
+        except ArtifactStoreError as error:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "committed result artifact failed verification",
+                False,
+                {"subject": "result_artifact"},
+            ) from error
+
+    def _result_payload_from_artifact(self, row: sqlite3.Row) -> ResultPayload:
+        raw = self._read_result_bytes(row)
+        validator = self._result_schema_validator(row["result_schema_version"])
+        try:
+            decoded = strict_json_loads(raw)
+        except ValueError as error:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "committed result payload failed strict reconstruction",
+                False,
+                {"subject": "result_artifact"},
+            ) from error
+        try:
+            validator.validate(decoded)
+        except SchemaValidationError as error:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "committed result payload failed schema validation",
+                False,
+                {"subject": "result_artifact"},
+            ) from error
+        try:
+            return _RESULT_PAYLOAD.validate_python(decoded, strict=True)
+        except (ValueError, TypeError) as error:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "committed result payload failed strict reconstruction",
+                False,
+                {"subject": "result_artifact"},
+            ) from error
+
+    def _report_payload_from_artifact(
+        self, row: sqlite3.Row
+    ) -> ValidationReportPayload:
+        artifact_id = row["report_artifact_id"]
+        byte_size = row["artifact_byte_size"]
+        sha256 = row["artifact_sha256"]
+        report_hash = row["validation_report_hash"]
+        if artifact_id is None or byte_size is None or sha256 is None:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "committed validation is missing its report artifact reference",
+                False,
+                {"subject": "report_artifact"},
+            )
+        if artifact_id != sha256 or artifact_id != report_hash:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "committed report artifact identity disagrees with its hash",
+                False,
+                {"subject": "report_artifact"},
+            )
+        if self._artifact_store is None:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "artifact store is unavailable for verified reads",
+                False,
+                {"subject": "report_artifact"},
+            )
+        try:
+            raw = self._artifact_store.read_verified(artifact_id, byte_size, sha256)
+        except ArtifactStoreError as error:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "committed report artifact failed verification",
+                False,
+                {"subject": "report_artifact"},
+            ) from error
+        try:
+            return ValidationReportPayload.model_validate_json(raw, strict=True)
+        except ValueError as error:
+            raise ProjectStoreError(
+                "INTEGRITY_FAILURE",
+                "committed report payload failed strict reconstruction",
+                False,
+                {"subject": "report_artifact"},
+            ) from error
+
+    def _result_artifact_from_row(self, row: sqlite3.Row) -> Artifact | None:
+        artifact_id = row["result_artifact_id"]
+        if artifact_id is None:
+            return None
+        return Artifact(
+            artifact_id=artifact_id,
+            role="result",
+            media_type=row["artifact_media_type"],
+            byte_size=row["artifact_byte_size"],
+            sha256=row["artifact_sha256"],
+            schema_id=row["artifact_schema_id"],
+            created_at=_datetime(row["artifact_created_at"]),
+        )
+
+    def _report_artifact_from_row(self, row: sqlite3.Row) -> Artifact | None:
+        artifact_id = row["report_artifact_id"]
+        if artifact_id is None:
+            return None
+        return Artifact(
+            artifact_id=artifact_id,
+            role="validation_report",
+            media_type=row["artifact_media_type"],
+            byte_size=row["artifact_byte_size"],
+            sha256=row["artifact_sha256"],
+            schema_id=row["artifact_schema_id"],
+            created_at=_datetime(row["artifact_created_at"]),
         )
 
     @property
@@ -471,18 +657,141 @@ class SQLiteProjectStore:
             ),
         )
 
-    @staticmethod
-    def _attempt_row(connection: sqlite3.Connection, attempt_id: str) -> sqlite3.Row:
-        row = connection.execute(
-            """
-            SELECT a.*, r.result_snapshot_id, r.result_kind,
-                   r.result_schema_version, r.result_hash, r.result_payload_json
-              FROM attempts a
-              LEFT JOIN result_snapshots r ON r.attempt_id = a.attempt_id
-             WHERE a.attempt_id = ?
-            """,
-            (attempt_id,),
-        ).fetchone()
+    def _attempt_from_row_v2(self, row: sqlite3.Row) -> Attempt:
+        result: ResultSnapshot | None = None
+        if row["result_snapshot_id"] is not None:
+            result = ResultSnapshot(
+                result_snapshot_id=row["result_snapshot_id"],
+                attempt_id=row["attempt_id"],
+                result_kind=ResultKind(row["result_kind"]),
+                result_schema_version=row["result_schema_version"],
+                result_hash=row["result_hash"],
+                result_payload=self._result_payload_from_artifact(row),
+            )
+        system_error = (
+            ErrorResponse.model_validate(_document(row["system_error"]), strict=True)
+            if row["system_error"] is not None
+            else None
+        )
+        failure = (
+            NumericalFailureData.model_validate(
+                _document(row["numerical_failure"]), strict=True
+            )
+            if row["numerical_failure"] is not None
+            else None
+        )
+        return Attempt(
+            attempt_id=row["attempt_id"],
+            experiment_id=row["experiment_id"],
+            implementation_id=row["implementation_id"],
+            implementation_version=row["implementation_version"],
+            environment_summary=EnvironmentSummary.model_validate(
+                _document(row["environment_summary"]), strict=True
+            ),
+            randomness=row["randomness"],
+            seed=row["seed"],
+            session_id=row["session_id"],
+            status=AttemptStatus(row["status"]),
+            created_at=_datetime(row["created_at"]),
+            started_at=_datetime(row["started_at"]) if row["started_at"] else None,
+            finished_at=_datetime(row["finished_at"]) if row["finished_at"] else None,
+            warnings=_WARNINGS.validate_python(
+                tuple(_array(row["warnings"])), strict=True
+            ),
+            result=result,
+            system_error=system_error,
+            numerical_failure=failure,
+            terminal_reason=(
+                TerminalReason(row["terminal_reason"])
+                if row["terminal_reason"] is not None
+                else None
+            ),
+        )
+
+    def _validation_from_row_v2(self, row: sqlite3.Row) -> Validation:
+        return Validation(
+            validation_id=row["validation_id"],
+            attempt_id=row["attempt_id"],
+            expected_result_hash=row["expected_result_hash"],
+            result_hash=row["result_hash"],
+            validator_id=row["validator_id"],
+            validator_implementation_id=row["validator_implementation_id"],
+            validator_implementation_version=row["validator_implementation_version"],
+            policy_version=row["policy_version"],
+            policy=_document(row["policy"]),
+            policy_hash=row["policy_hash"],
+            status=ValidationStatus(row["status"]),
+            created_at=_datetime(row["created_at"]),
+            started_at=_datetime(row["started_at"]) if row["started_at"] else None,
+            finished_at=_datetime(row["finished_at"]) if row["finished_at"] else None,
+            outcome=(ValidationOutcome(row["outcome"]) if row["outcome"] else None),
+            metrics=(
+                _validation_metrics(row["metrics"])
+                if row["metrics"] is not None
+                else None
+            ),
+            validation_report_hash=row["validation_report_hash"],
+            report_payload=(
+                self._report_payload_from_artifact(row)
+                if row["report_artifact_id"] is not None
+                else None
+            ),
+            operational_error=(
+                ErrorResponse.model_validate(
+                    _document(row["operational_error"]), strict=True
+                )
+                if row["operational_error"] is not None
+                else None
+            ),
+            terminal_reason=(
+                TerminalReason(row["terminal_reason"])
+                if row["terminal_reason"] is not None
+                else None
+            ),
+        )
+
+    def _map_attempt(self, row: sqlite3.Row) -> Attempt:
+        if self._schema_two:
+            return self._attempt_from_row_v2(row)
+        return self._attempt_from_row(row)
+
+    def _map_validation(self, row: sqlite3.Row) -> Validation:
+        if self._schema_two:
+            return self._validation_from_row_v2(row)
+        return self._validation_from_row(row)
+
+    def _attempt_row(
+        self, connection: sqlite3.Connection, attempt_id: str
+    ) -> sqlite3.Row:
+        if self._schema_two:
+            row = connection.execute(
+                """
+                SELECT a.*, r.result_snapshot_id, r.result_kind,
+                       r.result_schema_version, r.result_hash,
+                       r.result_artifact_id,
+                       art.media_type AS artifact_media_type,
+                       art.byte_size AS artifact_byte_size,
+                       art.sha256 AS artifact_sha256,
+                       art.schema_id AS artifact_schema_id,
+                       art.created_at AS artifact_created_at
+                  FROM attempts a
+                  LEFT JOIN result_snapshots r ON r.attempt_id = a.attempt_id
+                  LEFT JOIN artifacts art ON art.artifact_id = r.result_artifact_id
+                 WHERE a.attempt_id = ?
+                """,
+                (attempt_id,),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """
+                SELECT a.*, r.result_snapshot_id, r.result_kind,
+                       r.result_schema_version, r.result_hash, r.result_payload_json
+                  FROM attempts a
+                  LEFT JOIN result_snapshots r ON r.attempt_id = a.attempt_id
+                 WHERE a.attempt_id = ?
+                """,
+                (attempt_id,),
+            ).fetchone()
         if row is None:
             raise ProjectStoreError(
                 "NOT_FOUND",
@@ -780,33 +1089,67 @@ class SQLiteProjectStore:
                     False,
                     {"resource_type": "experiment", "resource_id": query.experiment_id},
                 )
-            attempt_rows = connection.execute(
-                """
-                SELECT a.*, r.result_snapshot_id, r.result_kind,
-                       r.result_schema_version, r.result_hash, r.result_payload_json
-                  FROM attempts a LEFT JOIN result_snapshots r
-                    ON r.attempt_id=a.attempt_id
-                 WHERE a.experiment_id=? ORDER BY a.created_at, a.attempt_id
-                """,
-                (query.experiment_id,),
-            ).fetchall()
+            if self._schema_two:
+                attempt_rows = connection.execute(
+                    """
+                    SELECT a.*, r.result_snapshot_id, r.result_kind,
+                           r.result_schema_version, r.result_hash,
+                           r.result_artifact_id,
+                           art.media_type AS artifact_media_type,
+                           art.byte_size AS artifact_byte_size,
+                           art.sha256 AS artifact_sha256,
+                           art.schema_id AS artifact_schema_id,
+                           art.created_at AS artifact_created_at
+                      FROM attempts a LEFT JOIN result_snapshots r
+                        ON r.attempt_id=a.attempt_id
+                      LEFT JOIN artifacts art
+                        ON art.artifact_id=r.result_artifact_id
+                     WHERE a.experiment_id=? ORDER BY a.created_at, a.attempt_id
+                    """,
+                    (query.experiment_id,),
+                ).fetchall()
+            else:
+                attempt_rows = connection.execute(
+                    """
+                    SELECT a.*, r.result_snapshot_id, r.result_kind,
+                           r.result_schema_version, r.result_hash, r.result_payload_json
+                      FROM attempts a LEFT JOIN result_snapshots r
+                        ON r.attempt_id=a.attempt_id
+                     WHERE a.experiment_id=? ORDER BY a.created_at, a.attempt_id
+                    """,
+                    (query.experiment_id,),
+                ).fetchall()
             attempt_ids = [row["attempt_id"] for row in attempt_rows]
             validation_rows: list[sqlite3.Row] = []
             if attempt_ids:
                 placeholders = ",".join("?" for _ in attempt_ids)
-                validation_rows = connection.execute(
-                    f"SELECT * FROM validations WHERE attempt_id IN ({placeholders}) "
-                    "ORDER BY created_at, validation_id",
-                    attempt_ids,
-                ).fetchall()
+                if self._schema_two:
+                    validation_rows = connection.execute(
+                        f"""
+                        SELECT v.*, art.media_type AS artifact_media_type,
+                               art.byte_size AS artifact_byte_size,
+                               art.sha256 AS artifact_sha256,
+                               art.schema_id AS artifact_schema_id,
+                               art.created_at AS artifact_created_at
+                          FROM validations v LEFT JOIN artifacts art
+                            ON art.artifact_id=v.report_artifact_id
+                         WHERE v.attempt_id IN ({placeholders})
+                         ORDER BY v.created_at, v.validation_id
+                        """,
+                        attempt_ids,
+                    ).fetchall()
+                else:
+                    validation_rows = connection.execute(
+                        f"SELECT * FROM validations WHERE attempt_id IN ({placeholders}) "
+                        "ORDER BY created_at, validation_id",
+                        attempt_ids,
+                    ).fetchall()
         try:
             return ExperimentTrace(
                 project=self._project_from_row(project_row),
                 experiment=self._experiment_from_row(experiment_row),
-                attempts=tuple(self._attempt_from_row(row) for row in attempt_rows),
-                validations=tuple(
-                    self._validation_from_row(row) for row in validation_rows
-                ),
+                attempts=tuple(self._map_attempt(row) for row in attempt_rows),
+                validations=tuple(self._map_validation(row) for row in validation_rows),
             )
         except ValueError as error:
             self._degraded = True
@@ -835,7 +1178,7 @@ class SQLiteProjectStore:
                 )
         try:
             experiment = self._experiment_from_row(experiment_row)
-            attempt = self._attempt_from_row(attempt_row)
+            attempt = self._map_attempt(attempt_row)
         except (AttributeError, TypeError, ValueError) as error:
             self._degraded = True
             raise ProjectStoreError(
@@ -857,8 +1200,166 @@ class SQLiteProjectStore:
                 },
             ) from error
 
-    @staticmethod
-    def _insert_experiment(connection: sqlite3.Connection, item: Experiment) -> None:
+    def load_verified_result(self, attempt_id: str) -> VerifiedResult:
+        """Reread the committed result after artifact identity and hash checks."""
+        with self._read() as connection:
+            attempt_exists = connection.execute(
+                "SELECT 1 FROM attempts WHERE attempt_id=?", (attempt_id,)
+            ).fetchone()
+            if attempt_exists is None:
+                raise ProjectStoreError(
+                    "NOT_FOUND",
+                    "attempt was not found",
+                    False,
+                    {"resource_type": "attempt", "resource_id": attempt_id},
+                )
+            if self._schema_two:
+                row = connection.execute(
+                    """
+                    SELECT r.result_snapshot_id, r.attempt_id, r.result_kind,
+                           r.result_schema_version, r.result_hash,
+                           r.result_artifact_id,
+                           art.role AS artifact_role,
+                           art.media_type AS artifact_media_type,
+                           art.byte_size AS artifact_byte_size,
+                           art.sha256 AS artifact_sha256,
+                           art.schema_id AS artifact_schema_id,
+                           art.created_at AS artifact_created_at
+                      FROM result_snapshots r
+                      LEFT JOIN artifacts art
+                        ON art.artifact_id = r.result_artifact_id
+                     WHERE r.attempt_id = ?
+                    """,
+                    (attempt_id,),
+                ).fetchone()
+                if row is None or row["result_artifact_id"] is None:
+                    raise ProjectStoreError(
+                        "INTEGRITY_FAILURE",
+                        "committed result is missing its artifact reference",
+                        False,
+                        {"subject": "result_artifact"},
+                    )
+                if row["artifact_role"] != "result":
+                    raise ProjectStoreError(
+                        "INTEGRITY_FAILURE",
+                        "committed result artifact has the wrong role",
+                        False,
+                        {"subject": "result_artifact"},
+                    )
+                payload = self._result_payload_from_artifact(row)
+                artifact = self._result_artifact_from_row(row)
+                result_snapshot = ResultSnapshot(
+                    result_snapshot_id=row["result_snapshot_id"],
+                    attempt_id=row["attempt_id"],
+                    result_kind=ResultKind(row["result_kind"]),
+                    result_schema_version=row["result_schema_version"],
+                    result_hash=row["result_hash"],
+                    result_payload=payload,
+                )
+                return VerifiedResult(
+                    result_snapshot=result_snapshot,
+                    artifact=artifact,
+                    payload_bytes=self._read_result_bytes(row),
+                )
+            row = connection.execute(
+                """
+                SELECT r.result_snapshot_id, r.attempt_id, r.result_kind,
+                       r.result_schema_version, r.result_hash, r.result_payload_json
+                  FROM result_snapshots r
+                 WHERE r.attempt_id = ?
+                """,
+                (attempt_id,),
+            ).fetchone()
+            if row is None:
+                raise ProjectStoreError(
+                    "INTEGRITY_FAILURE",
+                    "committed result is missing",
+                    False,
+                    {"subject": "result_artifact"},
+                )
+            try:
+                result_snapshot = ResultSnapshot(
+                    result_snapshot_id=row["result_snapshot_id"],
+                    attempt_id=row["attempt_id"],
+                    result_kind=ResultKind(row["result_kind"]),
+                    result_schema_version=row["result_schema_version"],
+                    result_hash=row["result_hash"],
+                    result_payload=_RESULT_PAYLOAD.validate_python(
+                        _document(row["result_payload_json"]), strict=True
+                    ),
+                )
+            except (AttributeError, TypeError, ValueError) as error:
+                raise ProjectStoreError(
+                    "INTEGRITY_FAILURE",
+                    "committed result failed strict reconstruction",
+                    False,
+                    {"subject": "result_artifact"},
+                ) from error
+            raw = canonical_json_bytes(
+                cast(
+                    JsonObject,
+                    result_snapshot.result_payload.model_dump(mode="json"),
+                )
+            )
+            if (
+                sha256_json(
+                    cast(
+                        JsonObject,
+                        result_snapshot.result_payload.model_dump(mode="json"),
+                    )
+                )
+                != result_snapshot.result_hash
+            ):
+                raise ProjectStoreError(
+                    "INTEGRITY_FAILURE",
+                    "committed result hash does not match its payload",
+                    False,
+                    {"subject": "result_artifact"},
+                )
+            return VerifiedResult(
+                result_snapshot=result_snapshot,
+                artifact=None,
+                payload_bytes=raw,
+            )
+
+    def _insert_experiment(
+        self, connection: sqlite3.Connection, item: Experiment, input_snapshot_id: str
+    ) -> None:
+        if self._schema_two:
+            connection.execute(
+                """
+                INSERT INTO experiments(
+                    experiment_id, project_id, capability_id, contract_version,
+                    canonical_input_schema_version, canonical_payload,
+                    canonical_payload_hash, canonicalization_version,
+                    model_snapshot_hash, data_snapshot_references,
+                    data_snapshot_set_hash, execution_policy, input_snapshot_id,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item.experiment_id,
+                    item.project_id,
+                    item.capability_id,
+                    item.contract_version,
+                    item.canonical_input_schema_version,
+                    _json(item.canonical_payload.model_dump(mode="json")),
+                    item.canonical_payload_hash,
+                    self._versions.canonicalization_version,
+                    item.model_snapshot_hash,
+                    _json(
+                        [
+                            ref.model_dump(mode="json")
+                            for ref in item.data_snapshot_references
+                        ]
+                    ),
+                    item.data_snapshot_set_hash,
+                    _json(item.execution_policy.model_dump(mode="json")),
+                    input_snapshot_id,
+                    _timestamp(item.created_at),
+                ),
+            )
+            return
         connection.execute(
             """
             INSERT INTO experiments(
@@ -877,7 +1378,7 @@ class SQLiteProjectStore:
                 item.canonical_input_schema_version,
                 _json(item.canonical_payload.model_dump(mode="json")),
                 item.canonical_payload_hash,
-                "canonical-json/0.1.0",
+                self._versions.canonicalization_version,
                 item.model_snapshot_hash,
                 _json(
                     [
@@ -892,7 +1393,94 @@ class SQLiteProjectStore:
         )
 
     @staticmethod
-    def _insert_attempt(connection: sqlite3.Connection, item: Attempt) -> None:
+    def _insert_input_snapshot(
+        connection: sqlite3.Connection, item: InputSnapshot
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO input_snapshots(
+                input_snapshot_id, canonical_input_schema_version,
+                canonical_payload_hash, model_snapshot_hash,
+                data_snapshot_references, data_snapshot_set_hash, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item.input_snapshot_id,
+                item.canonical_input_schema_version,
+                item.canonical_payload_hash,
+                item.model_snapshot_hash,
+                _json(
+                    [
+                        ref.model_dump(mode="json")
+                        for ref in item.data_snapshot_references
+                    ]
+                ),
+                item.data_snapshot_set_hash,
+                _timestamp(item.created_at),
+            ),
+        )
+
+    @staticmethod
+    def _insert_environment_snapshot(
+        connection: sqlite3.Connection, item: EnvironmentSnapshot
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO environment_snapshots(
+                environment_snapshot_id, environment_json, environment_hash,
+                created_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                item.environment_snapshot_id,
+                _json(item.environment_document),
+                item.environment_hash,
+                _timestamp(item.created_at),
+            ),
+        )
+
+    def _insert_attempt(
+        self,
+        connection: sqlite3.Connection,
+        item: Attempt,
+        input_snapshot_id: str,
+        environment_snapshot_id: str | None,
+    ) -> None:
+        if self._schema_two:
+            connection.execute(
+                """
+                INSERT INTO attempts(
+                    attempt_id, experiment_id, implementation_id,
+                    implementation_version, environment_summary, randomness, seed,
+                    session_id, input_snapshot_id, environment_snapshot_id,
+                    status, created_at, started_at, finished_at, warnings,
+                    system_error, numerical_failure, terminal_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item.attempt_id,
+                    item.experiment_id,
+                    item.implementation_id,
+                    item.implementation_version,
+                    _json(item.environment_summary.model_dump(mode="json")),
+                    item.randomness,
+                    item.seed,
+                    item.session_id,
+                    input_snapshot_id,
+                    environment_snapshot_id,
+                    item.status.value,
+                    _timestamp(item.created_at),
+                    None,
+                    None,
+                    _json(
+                        [warning.model_dump(mode="json") for warning in item.warnings]
+                    ),
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            return
         connection.execute(
             """
             INSERT INTO attempts(
@@ -919,6 +1507,26 @@ class SQLiteProjectStore:
                 None,
                 None,
                 None,
+            ),
+        )
+
+    @staticmethod
+    def _insert_artifact_row(connection: sqlite3.Connection, item: Artifact) -> None:
+        connection.execute(
+            """
+            INSERT INTO artifacts(
+                artifact_id, role, media_type, byte_size, sha256, schema_id,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item.artifact_id,
+                item.role,
+                item.media_type,
+                item.byte_size,
+                item.sha256,
+                item.schema_id,
+                _timestamp(item.created_at),
             ),
         )
 
@@ -977,7 +1585,7 @@ class SQLiteProjectStore:
                         False,
                         {"subject": "database_relation"},
                     )
-                attempt = self._attempt_from_row(attempt_row)
+                attempt = self._map_attempt(attempt_row)
                 return BeginRunResult(
                     experiment=self._experiment_from_row(experiment_row),
                     attempt=attempt,
@@ -1011,8 +1619,45 @@ class SQLiteProjectStore:
                     command.operation.canonical_request_hash,
                 ),
             )
-            self._insert_experiment(connection, command.experiment)
-            self._insert_attempt(connection, command.attempt)
+            if self._schema_two:
+                if (
+                    command.input_snapshot is None
+                    or command.environment_snapshot is None
+                ):
+                    raise ProjectStoreError(
+                        "INTEGRITY_FAILURE",
+                        "schema 2 begin-run requires input and environment snapshots",
+                        False,
+                        {"subject": "database_relation"},
+                    )
+                self._insert_input_snapshot(connection, command.input_snapshot)
+                self._insert_environment_snapshot(
+                    connection, command.environment_snapshot
+                )
+                self._insert_experiment(
+                    connection,
+                    command.experiment,
+                    command.input_snapshot.input_snapshot_id,
+                )
+                self._insert_attempt(
+                    connection,
+                    command.attempt,
+                    command.input_snapshot.input_snapshot_id,
+                    command.environment_snapshot.environment_snapshot_id,
+                )
+            else:
+                if (
+                    command.input_snapshot is not None
+                    or command.environment_snapshot is not None
+                ):
+                    raise ProjectStoreError(
+                        "INTEGRITY_FAILURE",
+                        "schema 1 begin-run does not accept snapshots",
+                        False,
+                        {"subject": "database_relation"},
+                    )
+                self._insert_experiment(connection, command.experiment, "")
+                self._insert_attempt(connection, command.attempt, "", None)
             return BeginRunResult(
                 experiment=command.experiment, attempt=command.attempt, replayed=False
             )
@@ -1098,19 +1743,52 @@ class SQLiteProjectStore:
                     {"subject": "database_relation"},
                 )
             if item.result is not None:
-                result_cursor = connection.execute(
-                    """
-                    INSERT INTO result_snapshots VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item.result.result_snapshot_id,
-                        item.attempt_id,
-                        item.result.result_kind.value,
-                        item.result.result_schema_version,
-                        item.result.result_hash,
-                        _json(item.result.result_payload.model_dump(mode="json")),
-                    ),
-                )
+                if self._schema_two:
+                    if command.result_artifact is None:
+                        raise ProjectStoreError(
+                            "INTEGRITY_FAILURE",
+                            "schema 2 result completion requires its artifact",
+                            False,
+                            {"subject": "result_artifact"},
+                        )
+                    self._insert_artifact_row(connection, command.result_artifact)
+                    result_cursor = connection.execute(
+                        """
+                        INSERT INTO result_snapshots(
+                            result_snapshot_id, attempt_id, result_kind,
+                            result_schema_version, result_hash, result_artifact_id
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            item.result.result_snapshot_id,
+                            item.attempt_id,
+                            item.result.result_kind.value,
+                            item.result.result_schema_version,
+                            item.result.result_hash,
+                            command.result_artifact.artifact_id,
+                        ),
+                    )
+                else:
+                    if command.result_artifact is not None:
+                        raise ProjectStoreError(
+                            "INTEGRITY_FAILURE",
+                            "schema 1 result completion does not accept artifacts",
+                            False,
+                            {"subject": "database_relation"},
+                        )
+                    result_cursor = connection.execute(
+                        """
+                        INSERT INTO result_snapshots VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            item.result.result_snapshot_id,
+                            item.attempt_id,
+                            item.result.result_kind.value,
+                            item.result.result_schema_version,
+                            item.result.result_hash,
+                            _json(item.result.result_payload.model_dump(mode="json")),
+                        ),
+                    )
                 if result_cursor.rowcount != 1:
                     raise ProjectStoreError(
                         "INTEGRITY_FAILURE",
@@ -1204,10 +1882,25 @@ class SQLiteProjectStore:
             )
             if replay is not None:
                 validation_id = replay.get("validation_id")
-                stored = connection.execute(
-                    "SELECT * FROM validations WHERE validation_id=?",
-                    (validation_id,),
-                ).fetchone()
+                if self._schema_two:
+                    stored = connection.execute(
+                        """
+                        SELECT v.*, art.media_type AS artifact_media_type,
+                               art.byte_size AS artifact_byte_size,
+                               art.sha256 AS artifact_sha256,
+                               art.schema_id AS artifact_schema_id,
+                               art.created_at AS artifact_created_at
+                          FROM validations v LEFT JOIN artifacts art
+                            ON art.artifact_id=v.report_artifact_id
+                         WHERE v.validation_id=?
+                        """,
+                        (validation_id,),
+                    ).fetchone()
+                else:
+                    stored = connection.execute(
+                        "SELECT * FROM validations WHERE validation_id=?",
+                        (validation_id,),
+                    ).fetchone()
                 if (
                     stored is None
                     or set(replay) != {"validation_id"}
@@ -1221,7 +1914,7 @@ class SQLiteProjectStore:
                         False,
                         {"subject": "database_relation"},
                     )
-                replayed_validation = self._validation_from_row(stored)
+                replayed_validation = self._map_validation(stored)
                 expected = command.validation
                 if (
                     replayed_validation.attempt_id != expected.attempt_id
@@ -1367,31 +2060,77 @@ class SQLiteProjectStore:
                     False,
                     {"subject": "database_relation"},
                 )
-            validation_cursor = connection.execute(
-                """
-                UPDATE validations SET status=?, finished_at=?, outcome=?, metrics=?,
-                       validation_report_hash=?, report_payload_json=?,
-                       operational_error=?, terminal_reason=?
-                 WHERE validation_id=? AND status='RUNNING'
-                """,
-                (
-                    item.status.value,
-                    _timestamp(cast(datetime, item.finished_at)),
-                    item.outcome.value if item.outcome else None,
-                    _json(item.metrics.model_dump(mode="json"))
-                    if item.metrics
-                    else None,
-                    item.validation_report_hash,
-                    _json(item.report_payload.model_dump(mode="json"))
-                    if item.report_payload
-                    else None,
-                    _json(item.operational_error.model_dump(mode="json"))
-                    if item.operational_error
-                    else None,
-                    item.terminal_reason.value if item.terminal_reason else None,
-                    item.validation_id,
-                ),
-            )
+            if self._schema_two:
+                if command.report_artifact is not None:
+                    if (
+                        item.report_payload is None
+                        or item.validation_report_hash is None
+                    ):
+                        raise ProjectStoreError(
+                            "INTEGRITY_FAILURE",
+                            "schema 2 report artifact requires its payload and hash",
+                            False,
+                            {"subject": "report_artifact"},
+                        )
+                    self._insert_artifact_row(connection, command.report_artifact)
+                validation_cursor = connection.execute(
+                    """
+                    UPDATE validations SET status=?, finished_at=?, outcome=?, metrics=?,
+                           validation_report_hash=?, report_artifact_id=?,
+                           operational_error=?, terminal_reason=?
+                     WHERE validation_id=? AND status='RUNNING'
+                    """,
+                    (
+                        item.status.value,
+                        _timestamp(cast(datetime, item.finished_at)),
+                        item.outcome.value if item.outcome else None,
+                        _json(item.metrics.model_dump(mode="json"))
+                        if item.metrics
+                        else None,
+                        item.validation_report_hash,
+                        command.report_artifact.artifact_id
+                        if command.report_artifact is not None
+                        else None,
+                        _json(item.operational_error.model_dump(mode="json"))
+                        if item.operational_error
+                        else None,
+                        item.terminal_reason.value if item.terminal_reason else None,
+                        item.validation_id,
+                    ),
+                )
+            else:
+                if command.report_artifact is not None:
+                    raise ProjectStoreError(
+                        "INTEGRITY_FAILURE",
+                        "schema 1 validation completion does not accept artifacts",
+                        False,
+                        {"subject": "database_relation"},
+                    )
+                validation_cursor = connection.execute(
+                    """
+                    UPDATE validations SET status=?, finished_at=?, outcome=?, metrics=?,
+                           validation_report_hash=?, report_payload_json=?,
+                           operational_error=?, terminal_reason=?
+                     WHERE validation_id=? AND status='RUNNING'
+                    """,
+                    (
+                        item.status.value,
+                        _timestamp(cast(datetime, item.finished_at)),
+                        item.outcome.value if item.outcome else None,
+                        _json(item.metrics.model_dump(mode="json"))
+                        if item.metrics
+                        else None,
+                        item.validation_report_hash,
+                        _json(item.report_payload.model_dump(mode="json"))
+                        if item.report_payload
+                        else None,
+                        _json(item.operational_error.model_dump(mode="json"))
+                        if item.operational_error
+                        else None,
+                        item.terminal_reason.value if item.terminal_reason else None,
+                        item.validation_id,
+                    ),
+                )
             if validation_cursor.rowcount != 1:
                 raise ProjectStoreError(
                     "INTEGRITY_FAILURE",
