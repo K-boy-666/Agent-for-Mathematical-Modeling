@@ -205,8 +205,9 @@ def _run_deep_smoke(*, observed_roots: list[Path] | None = None) -> tuple[str, s
     contender = None
     try:
         try:
-            bootstrap_storage(root, VersionSet.m1a())
-            owner = build_composition(root)
+            versions = VersionSet.m1a()
+            bootstrap_storage(root, versions)
+            owner = build_composition(root, versions=versions)
             owner.start()
             created = owner.application.create_project(
                 CreateProjectRequest(
@@ -280,7 +281,7 @@ def _run_deep_smoke(*, observed_roots: list[Path] | None = None) -> tuple[str, s
             else:
                 root_code = "result_mismatch"
 
-            contender = build_composition(root)
+            contender = build_composition(root, versions=versions)
             try:
                 contender.start()
             except ProjectStoreError as error:
@@ -511,7 +512,9 @@ def run_doctor(
     try:
         try:
             with materialize_diagnostic_snapshot(project_root) as snapshot:
-                composition = build_composition(snapshot.project_root)
+                composition = build_composition(
+                    snapshot.project_root, versions=VersionSet.m1a()
+                )
                 try:
                     report = diagnose_project(
                         composition.application,

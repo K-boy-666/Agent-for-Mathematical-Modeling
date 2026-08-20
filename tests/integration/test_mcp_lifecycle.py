@@ -398,7 +398,7 @@ def test_late_first_create_preserves_genuine_layout_integrity_failures(
     """Catches transient-contention handling masking invalid published storage."""
     composition = build_composition(tmp_path)
     composition.start()
-    bootstrap_storage(tmp_path, VersionSet.m1a())
+    bootstrap_storage(tmp_path, VersionSet.m1b())
     modeling = tmp_path / ".modeling"
     if damage == "missing-lock":
         (modeling / "project.lock").unlink()
@@ -428,12 +428,35 @@ def test_late_first_create_preserves_genuine_layout_integrity_failures(
         ).fetchone() == (0,)
 
 
+def test_stable_application_rejects_preview_storage_with_typed_error(
+    tmp_path: Path,
+) -> None:
+    """Catches infrastructure version details escaping the public error model."""
+    bootstrap_storage(tmp_path, VersionSet.m1a())
+    composition = build_composition(tmp_path)
+
+    try:
+        with pytest.raises(ModelingError) as captured:
+            composition.application.create_project(
+                CreateProjectRequest(
+                    operation_id="00000000-0000-4000-8000-000000000009"
+                )
+            )
+    finally:
+        composition.close()
+
+    assert captured.value.response.code == "UNSUPPORTED_VERSION"
+    assert captured.value.response.details.subject == "database_schema"
+    assert captured.value.response.details.requested_version == "1"
+    assert captured.value.response.details.supported_versions == ("2",)
+
+
 def _leave_uninitialized(_root: Path) -> None:
     return
 
 
 def _make_storage_ready(root: Path) -> None:
-    bootstrap_storage(root, VersionSet.m1a())
+    bootstrap_storage(root, VersionSet.m1b())
 
 
 def _make_ready(root: Path) -> None:
@@ -446,7 +469,7 @@ def _make_ready(root: Path) -> None:
 
 
 def _make_degraded(root: Path) -> None:
-    bootstrap_storage(root, VersionSet.m1a())
+    bootstrap_storage(root, VersionSet.m1b())
     (root / ".modeling" / "project.json").write_bytes(b"not-json")
 
 
@@ -481,7 +504,7 @@ def test_real_mcp_process_serves_read_only_health_for_degraded_storage(
     damage: str,
 ) -> None:
     """Catches production startup exiting instead of serving DEGRADED health."""
-    bootstrap_storage(tmp_path, VersionSet.m1a())
+    bootstrap_storage(tmp_path, VersionSet.m1b())
     modeling = tmp_path / ".modeling"
     if damage == "corrupt-metadata":
         (modeling / "project.json").write_bytes(b"not-json")
@@ -540,7 +563,7 @@ def test_real_mcp_process_serves_read_only_health_for_degraded_storage(
                         mode="new",
                         capability=CapabilitySelection(
                             capability_id="numerical.root_finding",
-                            contract_version="0.1.0",
+                            contract_version="1.0.0",
                         ),
                         payload=RootFindingInput(
                             expression="x*x - 2",
@@ -554,7 +577,7 @@ def test_real_mcp_process_serves_read_only_health_for_degraded_storage(
                         attempt_id="00000000-0000-4000-8000-000000000084",
                         expected_result_hash="sha256:" + ("0" * 64),
                         validator_id="numerical.root_finding.residual",
-                        policy_version="0.1.0",
+                        policy_version="1.0.0",
                         policy={},
                     ).model_dump(mode="json", exclude_none=True),
                 }
@@ -587,7 +610,7 @@ def test_lifespan_releases_held_lease_on_normal_error_and_cancellation_exit(
     exit_error: type[BaseException] | None,
 ) -> None:
     """Catches any lifespan exit path leaking its OS writer lease."""
-    bootstrap_storage(tmp_path, VersionSet.m1a())
+    bootstrap_storage(tmp_path, VersionSet.m1b())
     composition = build_composition(tmp_path)
     contender = ProjectLock(
         tmp_path / ".modeling" / "project.lock",
@@ -815,11 +838,13 @@ def test_two_process_first_create_race_publishes_one_complete_project(
     ]
     modeling = tmp_path / ".modeling"
     assert {path.name for path in modeling.iterdir()} == {
+        "artifacts",
         "project.json",
         "project.lock",
+        "staging",
         "state.sqlite3",
     }
-    metadata = load_storage_metadata(tmp_path, VersionSet.m1a())
+    metadata = load_storage_metadata(tmp_path, VersionSet.m1b())
     with closing(sqlite3.connect(modeling / "state.sqlite3")) as connection:
         project_rows = connection.execute(
             "SELECT project_id, storage_instance_id FROM projects"
@@ -866,7 +891,7 @@ def test_one_held_lease_covers_every_create_run_and_validate_mutation(
                 mode="new",
                 capability=CapabilitySelection(
                     capability_id="numerical.root_finding",
-                    contract_version="0.1.0",
+                    contract_version="1.0.0",
                 ),
                 payload=RootFindingInput(
                     expression="x*x - 2",
@@ -884,7 +909,7 @@ def test_one_held_lease_covers_every_create_run_and_validate_mutation(
                 attempt_id=run.attempt_id,
                 expected_result_hash=run.result_hash,
                 validator_id="numerical.root_finding.residual",
-                policy_version="0.1.0",
+                policy_version="1.0.0",
                 policy={},
             )
         )
@@ -897,7 +922,7 @@ def test_writer_lease_acquisition_failure_opens_no_sqlite_transaction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Catches SQLite becoming the first-line cross-process ownership gate."""
-    bootstrap_storage(tmp_path, VersionSet.m1a())
+    bootstrap_storage(tmp_path, VersionSet.m1b())
     holder = build_composition(tmp_path)
     contender = build_composition(tmp_path)
     holder.start()
@@ -931,7 +956,7 @@ def test_held_lease_classifies_sqlite_runtime_sidecars_as_transient_contention(
     tmp_path: Path,
 ) -> None:
     """Catches SQLite runtime files becoming a sticky degraded server state."""
-    bootstrap_storage(tmp_path, VersionSet.m1a())
+    bootstrap_storage(tmp_path, VersionSet.m1b())
     modeling = tmp_path / ".modeling"
     for name in ("state.sqlite3-wal", "state.sqlite3-shm"):
         (modeling / name).write_bytes(b"")
@@ -980,7 +1005,7 @@ def test_non_integrity_storage_error_releases_lease_and_preserves_taxonomy(
     from modeling_infrastructure.sqlite import store as sqlite_store
     from modeling_infrastructure.storage import StorageError
 
-    bootstrap_storage(tmp_path, VersionSet.m1a())
+    bootstrap_storage(tmp_path, VersionSet.m1b())
     composition = build_composition(tmp_path)
     original_load = sqlite_store.load_storage_metadata
     lock_path = tmp_path / ".modeling" / "project.lock"
@@ -1025,7 +1050,7 @@ def test_process_runner_releases_lease_on_normal_error_and_cancellation(
     """Catches the lazy process hook bypassing composition cleanup."""
     from modeling_mcp import server as mcp_server
 
-    bootstrap_storage(tmp_path, VersionSet.m1a())
+    bootstrap_storage(tmp_path, VersionSet.m1b())
     contender = ProjectLock(
         tmp_path / ".modeling" / "project.lock",
         "00000000-0000-4000-8000-000000000060",

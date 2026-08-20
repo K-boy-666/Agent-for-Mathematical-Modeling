@@ -122,7 +122,7 @@ _STATUSES: Final = frozenset(
 )
 _INITIALIZE_VERSIONS: Final = {
     "mcp_protocol": "2025-11-25",
-    "application": "0.1.0",
+    "application": "0.2.0",
 }
 _TRACE_KEYS: Final = frozenset(
     {
@@ -303,7 +303,7 @@ def _redact_trace(trace: Mapping[str, object]) -> dict[str, object]:
     contract_version = _require_short_text(
         trace["contract_version"], "contract_version"
     )
-    if contract_version != "0.1.0":
+    if contract_version != "1.0.0":
         raise EvidenceValidationError(
             "contract_version is outside the M1a golden contract"
         )

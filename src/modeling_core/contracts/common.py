@@ -38,7 +38,7 @@ Timestamp = Annotated[
 ]
 Version = Annotated[
     str,
-    StringConstraints(pattern=r"^(?:[A-Za-z0-9_.-]+/)?0\.1\.0$"),
+    StringConstraints(pattern=r"^(?:[A-Za-z0-9_.-]+/)?(?:0\.1\.0|1\.0\.0)$"),
 ]
 
 

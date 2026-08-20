@@ -1987,10 +1987,10 @@ def test_doctor_binds_composition_only_to_owned_snapshot_root(
     built_roots: list[Path] = []
     original_build = doctor.build_composition
 
-    def observed_build(root: Path) -> object:
+    def observed_build(root: Path, *, versions: VersionSet | None = None) -> object:
         assert root.resolve() != source_root
         built_roots.append(root.resolve())
-        return original_build(root)
+        return original_build(root, versions=versions)
 
     monkeypatch.setattr(doctor, "build_composition", observed_build)
     stdout = io.StringIO()

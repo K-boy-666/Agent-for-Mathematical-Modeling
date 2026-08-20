@@ -33,11 +33,13 @@ def run_experiment_request_hash(
     contract_version: str,
     canonical_input: CanonicalInputRecord,
     execution: ExecutionOptions,
+    experiment_id: str | None = None,
 ) -> str:
     return _request_hash(
         {
             "project_id": project_id,
             "mode": mode,
+            "experiment_id": experiment_id,
             "capability": {
                 "capability_id": capability_id,
                 "contract_version": contract_version,

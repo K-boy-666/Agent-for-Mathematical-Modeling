@@ -43,9 +43,9 @@ class ContentAddressedArtifactStore:
     .modeling/artifacts/sha256/{first_two_hex}/{full_hex}.json.
     """
 
-    def __init__(self, paths: ProjectPaths) -> None:
+    def __init__(self, paths: ProjectPaths, schema_version: str = "0.1.0") -> None:
         self._paths = paths
-        self._schema_catalog = SchemaCatalog.load_packaged("0.1.0")
+        self._schema_catalog = SchemaCatalog.load_packaged(schema_version)
 
     def _resolve_validator(self, schema_id: str) -> Draft202012Validator:
         """Resolve a common-schema $id or a 'tool.kind' identifier."""

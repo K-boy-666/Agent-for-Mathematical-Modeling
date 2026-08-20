@@ -74,12 +74,12 @@ def test_composition_seals_the_exact_builtin_registry_and_sole_store(
     composition = build_composition(tmp_path)
 
     assert composition.registry.sealed is True
-    capability = composition.registry.resolve("numerical.root_finding", "0.1.0")
+    capability = composition.registry.resolve("numerical.root_finding", "1.0.0")
     validator = composition.registry.resolve_validator(
         "numerical.root_finding.residual",
         "numerical.root_finding",
-        "0.1.0",
-        "0.1.0",
+        "1.0.0",
+        "1.0.0",
     )
     assert type(capability.implementation) is BisectionRootFindingCapability
     assert type(validator.implementation) is ResidualRootFindingValidator

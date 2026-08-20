@@ -293,6 +293,7 @@ class BeginRunCommand:
     attempt: Attempt
     input_snapshot: InputSnapshot | None = None
     environment_snapshot: EnvironmentSnapshot | None = None
+    mode: Literal["new", "rerun"] = "new"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "operation", _validate(self.operation, WriteOperation))
@@ -329,6 +330,9 @@ class BeginRunCommand:
         object.__setattr__(self, "attempt", attempt)
         object.__setattr__(self, "input_snapshot", input_snapshot)
         object.__setattr__(self, "environment_snapshot", environment_snapshot)
+        object.__setattr__(self, "mode", _validate(self.mode, Literal["new", "rerun"]))
+        if self.mode == "rerun" and input_snapshot is not None:
+            raise ValueError("rerun begin-run reuses the stored input snapshot")
 
 
 @dataclass(frozen=True)
@@ -345,7 +349,10 @@ class BeginRunResult:
         artifact = self.artifact
         if artifact is not None:
             artifact = _validate(artifact, Artifact)
-            if attempt.result is None or artifact.artifact_id != attempt.result.result_hash:
+            if (
+                attempt.result is None
+                or artifact.artifact_id != attempt.result.result_hash
+            ):
                 raise ValueError("run artifact must identify the attempt result")
         _validate_attempt_result_owner(attempt)
         if attempt.experiment_id != experiment.experiment_id:
@@ -396,7 +403,10 @@ class StoredRunResult:
         artifact = self.artifact
         if artifact is not None:
             artifact = _validate(artifact, Artifact)
-            if attempt.result is None or artifact.artifact_id != attempt.result.result_hash:
+            if (
+                attempt.result is None
+                or artifact.artifact_id != attempt.result.result_hash
+            ):
                 raise ValueError("run artifact must identify the attempt result")
         object.__setattr__(self, "attempt", attempt)
         object.__setattr__(self, "artifact", artifact)
@@ -527,6 +537,30 @@ class VerifiedResult:
         object.__setattr__(self, "result_snapshot", result_snapshot)
         object.__setattr__(self, "artifact", artifact)
         object.__setattr__(self, "payload_bytes", bytes(self.payload_bytes))
+
+
+@dataclass(frozen=True)
+class RecoveryReport:
+    """Finite startup-recovery outcome safe to expose to composition."""
+
+    recovered_attempt_ids: tuple[EntityId, ...]
+    recovered_validation_ids: tuple[EntityId, ...]
+    integrity_failure_ids: tuple[EntityId, ...]
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "recovered_attempt_ids",
+            "recovered_validation_ids",
+            "integrity_failure_ids",
+        ):
+            values = _validate(getattr(self, field_name), tuple[EntityId, ...])
+            if len(values) > 100:
+                raise ValueError("recovery report relation accepts at most 100 IDs")
+            if len(set(values)) != len(values):
+                raise ValueError("recovery report IDs must be unique")
+            if values != tuple(sorted(values, key=lambda item: item.encode("utf-8"))):
+                raise ValueError("recovery report IDs must use UTF-8 byte order")
+            object.__setattr__(self, field_name, values)
 
 
 @dataclass(frozen=True)
@@ -783,6 +817,10 @@ class ProjectStore(Protocol):
         self, command: CompleteValidationCommand
     ) -> StoredValidationResult: ...
 
+    def recover_previous_session(
+        self, current_session_id: str, recovered_at: datetime
+    ) -> RecoveryReport: ...
+
     def inspect_integrity(self, deep: bool) -> StoreIntegrityReport: ...
 
 
@@ -807,6 +845,7 @@ __all__ = [
     "ProjectStore",
     "ProjectStoreError",
     "ProjectWriteResult",
+    "RecoveryReport",
     "StoreIntegrityReport",
     "StoreIntegrityCheck",
     "StoreIntegrityIssue",

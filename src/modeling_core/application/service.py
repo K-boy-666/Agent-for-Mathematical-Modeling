@@ -376,6 +376,13 @@ class ModelingApplication(ApplicationFacade):
         }
 
     def _raise_store(self, error: ProjectStoreError, correlation_id: str) -> NoReturn:
+        details: object = error.details
+        supported_versions = error.details.get("supported_versions")
+        if error.code == "UNSUPPORTED_VERSION" and isinstance(supported_versions, list):
+            details = {
+                **error.details,
+                "supported_versions": tuple(supported_versions),
+            }
         response = ErrorResponse.model_validate(
             {
                 "error_schema_version": self._versions.error_schema_version,
@@ -383,7 +390,7 @@ class ModelingApplication(ApplicationFacade):
                 "message": error.message,
                 "retryable": error.retryable,
                 "correlation_id": correlation_id,
-                "details": error.details,
+                "details": details,
             }
         )
         raise ModelingError(response) from error
@@ -860,9 +867,7 @@ class ModelingApplication(ApplicationFacade):
             success_schema_hash=descriptor.success_schema.schema_hash,
             failure_schema_hash=descriptor.failure_schema.schema_hash,
             capability_api_version=cast(
-                Literal[
-                    "modeling-capability/0.1.0", "modeling-capability/1.0.0"
-                ],
+                Literal["modeling-capability/0.1.0", "modeling-capability/1.0.0"],
                 descriptor.capability_api_version,
             ),
             implementation_id=descriptor.implementation_id,
@@ -977,12 +982,48 @@ class ModelingApplication(ApplicationFacade):
                             "current_state": "unconfirmed",
                         },
                     )
-            try:
-                capability = self._registry.resolve(
-                    request.capability.capability_id,
-                    request.capability.contract_version,
+            rerun_experiment: Experiment | None = None
+            recorded_attempt: Attempt | None = None
+            if request.mode == "rerun":
+                try:
+                    trace = self._store.get_experiment_trace(
+                        ExperimentTraceQuery(
+                            project_id=request.project_id,
+                            experiment_id=cast(str, request.experiment_id),
+                        )
+                    )
+                except ProjectStoreError as error:
+                    self._raise_store(error, correlation_id)
+                rerun_experiment = trace.experiment
+                if not trace.attempts:
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="INTEGRITY_FAILURE",
+                        message="rerun experiment has no recorded attempt",
+                        details={"subject": "database_relation"},
+                    )
+                recorded_attempt = min(
+                    trace.attempts, key=lambda item: (item.created_at, item.attempt_id)
                 )
+                capability_id = rerun_experiment.capability_id
+                contract_version = rerun_experiment.contract_version
+            else:
+                capability_id = request.capability.capability_id
+                contract_version = request.capability.contract_version
+            try:
+                capability = self._registry.resolve(capability_id, contract_version)
             except RegistryError as error:
+                if request.mode == "rerun":
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="UNSUPPORTED_VERSION",
+                        message="recorded capability contract is unavailable",
+                        details=UnsupportedVersionDetails(
+                            subject="capability_contract",
+                            requested_version=contract_version,
+                            supported_versions=(),
+                        ),
+                    )
                 self._raise_error(
                     correlation_id=correlation_id,
                     code=error.code,
@@ -990,7 +1031,26 @@ class ModelingApplication(ApplicationFacade):
                     details=cast(JsonObject, error.details),
                 )
             descriptor = capability.descriptor
-            execution = request.execution or ExecutionOptions()
+            if recorded_attempt is not None and (
+                descriptor.implementation_id != recorded_attempt.implementation_id
+                or descriptor.implementation_version
+                != recorded_attempt.implementation_version
+            ):
+                self._raise_error(
+                    correlation_id=correlation_id,
+                    code="UNSUPPORTED_VERSION",
+                    message="recorded capability implementation is unavailable",
+                    details=UnsupportedVersionDetails(
+                        subject="capability_implementation",
+                        requested_version=recorded_attempt.implementation_version,
+                        supported_versions=(descriptor.implementation_version,),
+                    ),
+                )
+            execution = (
+                rerun_experiment.execution_policy
+                if rerun_experiment is not None
+                else request.execution or ExecutionOptions()
+            )
             if descriptor.randomness == "not_used" and execution.seed is not None:
                 self._raise_error(
                     correlation_id=correlation_id,
@@ -1012,9 +1072,31 @@ class ModelingApplication(ApplicationFacade):
                     },
                 )
             try:
-                canonical = capability.normalize_and_validate(
-                    cast(JsonObject, request.payload.model_dump(mode="json"))
-                )
+                if rerun_experiment is not None:
+                    canonical = CanonicalInputRecord(
+                        canonical_input_schema_version=(
+                            rerun_experiment.canonical_input_schema_version
+                        ),
+                        canonical_payload=cast(
+                            JsonObject,
+                            rerun_experiment.canonical_payload.model_dump(mode="json"),
+                        ),
+                        canonical_payload_hash=(
+                            rerun_experiment.canonical_payload_hash
+                        ),
+                        model_snapshot_hash=rerun_experiment.model_snapshot_hash,
+                        data_snapshot_references=tuple(
+                            item.model_dump(mode="json")
+                            for item in rerun_experiment.data_snapshot_references
+                        ),
+                        data_snapshot_set_hash=(
+                            rerun_experiment.data_snapshot_set_hash
+                        ),
+                    )
+                else:
+                    canonical = capability.normalize_and_validate(
+                        cast(JsonObject, request.payload.model_dump(mode="json"))
+                    )
             except CapabilityInputRejected as error:
                 self._raise_error(
                     correlation_id=correlation_id,
@@ -1053,26 +1135,28 @@ class ModelingApplication(ApplicationFacade):
                     contract_version=request.capability.contract_version,
                     canonical_input=canonical,
                     execution=execution,
+                    experiment_id=request.experiment_id,
                 ),
             )
             created_at = _millisecond_utc(self._clock.utc_now())
             input_snapshot: InputSnapshot | None = None
             environment_snapshot: EnvironmentSnapshot | None = None
             if self._schema_two:
-                input_snapshot = InputSnapshot(
-                    input_snapshot_id=self._ids.new_uuid4(),
-                    canonical_input_schema_version=(
-                        canonical.canonical_input_schema_version
-                    ),
-                    canonical_payload_hash=canonical.canonical_payload_hash,
-                    model_snapshot_hash=canonical.model_snapshot_hash,
-                    data_snapshot_references=tuple(
-                        DataSnapshotReference.model_validate(item, strict=True)
-                        for item in canonical.data_snapshot_references
-                    ),
-                    data_snapshot_set_hash=canonical.data_snapshot_set_hash,
-                    created_at=created_at,
-                )
+                if request.mode == "new":
+                    input_snapshot = InputSnapshot(
+                        input_snapshot_id=self._ids.new_uuid4(),
+                        canonical_input_schema_version=(
+                            canonical.canonical_input_schema_version
+                        ),
+                        canonical_payload_hash=canonical.canonical_payload_hash,
+                        model_snapshot_hash=canonical.model_snapshot_hash,
+                        data_snapshot_references=tuple(
+                            DataSnapshotReference.model_validate(item, strict=True)
+                            for item in canonical.data_snapshot_references
+                        ),
+                        data_snapshot_set_hash=canonical.data_snapshot_set_hash,
+                        created_at=created_at,
+                    )
                 environment_document = cast(JsonObject, self._environment_document)
                 environment_snapshot = EnvironmentSnapshot(
                     environment_snapshot_id=self._ids.new_uuid4(),
@@ -1080,13 +1164,16 @@ class ModelingApplication(ApplicationFacade):
                     environment_hash=sha256_json(environment_document),
                     created_at=created_at,
                 )
-            experiment = Experiment(
+            experiment = rerun_experiment or Experiment(
                 experiment_id=self._ids.new_uuid4(),
                 project_id=request.project_id,
                 capability_id=descriptor.capability_id,
                 contract_version=descriptor.contract_version,
                 canonical_input_schema_version=cast(
-                    Literal["numerical.root_finding.canonical-input/0.1.0"],
+                    Literal[
+                        "numerical.root_finding.canonical-input/0.1.0",
+                        "numerical.root_finding.canonical-input/1.0.0",
+                    ],
                     canonical.canonical_input_schema_version,
                 ),
                 canonical_payload=CanonicalRootFindingInput.model_validate(
@@ -1122,6 +1209,7 @@ class ModelingApplication(ApplicationFacade):
                         attempt=pending,
                         input_snapshot=input_snapshot,
                         environment_snapshot=environment_snapshot,
+                        mode=request.mode,
                     )
                 )
             except ProjectStoreError as error:

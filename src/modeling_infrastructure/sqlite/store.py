@@ -73,6 +73,7 @@ from modeling_core.ports.project_store import (
     ProjectStateInspection,
     ProjectStoreError,
     ProjectWriteResult,
+    RecoveryReport,
     StoreIntegrityCheck,
     StoreIntegrityIssue,
     StoreIntegrityReport,
@@ -347,6 +348,8 @@ class SQLiteProjectStore:
         except OSError:
             return False
         stable = {"project.json", "project.lock", "state.sqlite3"}
+        if self._versions.database_schema_version == 2:
+            stable.update({"artifacts", "staging"})
         runtime = stable | {"state.sqlite3-shm", "state.sqlite3-wal"}
         return stable <= entries <= runtime
 
@@ -1512,6 +1515,26 @@ class SQLiteProjectStore:
 
     @staticmethod
     def _insert_artifact_row(connection: sqlite3.Connection, item: Artifact) -> None:
+        existing = connection.execute(
+            "SELECT role, media_type, byte_size, sha256, schema_id "
+            "FROM artifacts WHERE artifact_id=?",
+            (item.artifact_id,),
+        ).fetchone()
+        if existing is not None:
+            if tuple(existing) != (
+                item.role,
+                item.media_type,
+                item.byte_size,
+                item.sha256,
+                item.schema_id,
+            ):
+                raise ProjectStoreError(
+                    "INTEGRITY_FAILURE",
+                    "content-addressed artifact metadata is inconsistent",
+                    False,
+                    {"subject": "result_artifact"},
+                )
+            return
         connection.execute(
             """
             INSERT INTO artifacts(
@@ -1569,6 +1592,10 @@ class SQLiteProjectStore:
                     ) from error
                 if (
                     experiment_row is None
+                    or (
+                        command.mode == "rerun"
+                        and experiment_id != command.experiment.experiment_id
+                    )
                     or attempt_row["experiment_id"] != experiment_id
                     or attempt_row["status"]
                     not in {
@@ -1625,32 +1652,65 @@ class SQLiteProjectStore:
                 ),
             )
             if self._schema_two:
-                if (
-                    command.input_snapshot is None
-                    or command.environment_snapshot is None
-                ):
+                if command.environment_snapshot is None:
                     raise ProjectStoreError(
                         "INTEGRITY_FAILURE",
-                        "schema 2 begin-run requires input and environment snapshots",
+                        "schema 2 begin-run requires an environment snapshot",
                         False,
                         {"subject": "database_relation"},
                     )
-                self._insert_input_snapshot(connection, command.input_snapshot)
                 self._insert_environment_snapshot(
                     connection, command.environment_snapshot
                 )
-                self._insert_experiment(
-                    connection,
-                    command.experiment,
-                    command.input_snapshot.input_snapshot_id,
-                )
+                if command.mode == "new":
+                    if command.input_snapshot is None:
+                        raise ProjectStoreError(
+                            "INTEGRITY_FAILURE",
+                            "new run requires an input snapshot",
+                            False,
+                            {"subject": "database_relation"},
+                        )
+                    self._insert_input_snapshot(connection, command.input_snapshot)
+                    self._insert_experiment(
+                        connection,
+                        command.experiment,
+                        command.input_snapshot.input_snapshot_id,
+                    )
+                    input_snapshot_id = command.input_snapshot.input_snapshot_id
+                else:
+                    stored_experiment = connection.execute(
+                        "SELECT * FROM experiments WHERE experiment_id=? AND project_id=?",
+                        (
+                            command.experiment.experiment_id,
+                            command.experiment.project_id,
+                        ),
+                    ).fetchone()
+                    if (
+                        stored_experiment is None
+                        or self._experiment_from_row(stored_experiment)
+                        != command.experiment
+                    ):
+                        raise ProjectStoreError(
+                            "INTEGRITY_FAILURE",
+                            "rerun intent does not match the stored experiment",
+                            False,
+                            {"subject": "database_relation"},
+                        )
+                    input_snapshot_id = stored_experiment["input_snapshot_id"]
                 self._insert_attempt(
                     connection,
                     command.attempt,
-                    command.input_snapshot.input_snapshot_id,
+                    input_snapshot_id,
                     command.environment_snapshot.environment_snapshot_id,
                 )
             else:
+                if command.mode == "rerun":
+                    raise ProjectStoreError(
+                        "UNSUPPORTED_VERSION",
+                        "rerun requires database schema 2",
+                        False,
+                        {"subject": "database_schema"},
+                    )
                 if (
                     command.input_snapshot is not None
                     or command.environment_snapshot is not None
@@ -2174,7 +2234,168 @@ class SQLiteProjectStore:
                     False,
                     {"subject": "database_relation"},
                 )
-            return StoredValidationResult(validation=item)
+            return StoredValidationResult(
+                validation=item,
+                report_artifact=command.report_artifact,
+            )
+
+    def recover_previous_session(
+        self, current_session_id: str, recovered_at: datetime
+    ) -> RecoveryReport:
+        """Atomically converge active rows left by an earlier writer session."""
+        if not self._schema_two:
+            raise ProjectStoreError(
+                "UNSUPPORTED_VERSION",
+                "startup recovery requires database schema 2",
+                False,
+                {"subject": "database_schema"},
+            )
+        recovered_attempts: tuple[str, ...] = ()
+        recovered_validations: tuple[str, ...] = ()
+        integrity_failures: tuple[str, ...] = ()
+        with self._write(degrade_on_failure=True) as connection:
+            active_attempts = connection.execute(
+                """
+                SELECT a.attempt_id, a.experiment_id, e.project_id
+                  FROM attempts a
+                  JOIN experiments e ON e.experiment_id=a.experiment_id
+                 WHERE a.status IN ('PENDING', 'RUNNING')
+                   AND a.session_id<>?
+                 ORDER BY a.attempt_id
+                """,
+                (current_session_id,),
+            ).fetchall()
+            live_attempts = connection.execute(
+                """
+                SELECT attempt_id FROM attempts
+                 WHERE status IN ('PENDING', 'RUNNING') AND session_id=?
+                """,
+                (current_session_id,),
+            ).fetchall()
+            run_operations = connection.execute(
+                """
+                SELECT scope_id, operation_id FROM idempotency_records
+                 WHERE tool_name='run_experiment' AND status='IN_PROGRESS'
+                 ORDER BY operation_id
+                """
+            ).fetchall()
+            if active_attempts or (run_operations and not live_attempts):
+                valid_pair = (
+                    len(active_attempts) == 1
+                    and len(run_operations) == 1
+                    and active_attempts[0]["project_id"]
+                    == run_operations[0]["scope_id"]
+                )
+                if not valid_pair:
+                    integrity_failures = tuple(
+                        sorted(
+                            {
+                                *(row["attempt_id"] for row in active_attempts),
+                                *(row["operation_id"] for row in run_operations),
+                            },
+                            key=lambda item: item.encode("utf-8"),
+                        )
+                    )
+                    self._degraded = True
+                else:
+                    attempt_id = active_attempts[0]["attempt_id"]
+                    operation_id = run_operations[0]["operation_id"]
+                    connection.execute(
+                        """
+                        UPDATE attempts
+                           SET status='ABANDONED', finished_at=?,
+                               terminal_reason='server_recovery'
+                         WHERE attempt_id=? AND status IN ('PENDING', 'RUNNING')
+                        """,
+                        (_timestamp(recovered_at), attempt_id),
+                    )
+                    references: JsonObject = {
+                        "experiment_id": active_attempts[0]["experiment_id"],
+                        "attempt_id": attempt_id,
+                    }
+                    connection.execute(
+                        """
+                        UPDATE idempotency_records
+                           SET status='COMPLETED', result_entity_references=?
+                         WHERE scope_id=? AND tool_name='run_experiment'
+                           AND operation_id=? AND status='IN_PROGRESS'
+                        """,
+                        (
+                            _json(references),
+                            active_attempts[0]["project_id"],
+                            operation_id,
+                        ),
+                    )
+                    recovered_attempts = (attempt_id,)
+            active_validations = connection.execute(
+                """
+                SELECT v.validation_id, e.project_id
+                  FROM validations v
+                  JOIN attempts a ON a.attempt_id=v.attempt_id
+                  JOIN experiments e ON e.experiment_id=a.experiment_id
+                 WHERE v.status IN ('PENDING', 'RUNNING')
+                 ORDER BY v.validation_id
+                """
+            ).fetchall()
+            validation_operations = connection.execute(
+                """
+                SELECT scope_id, operation_id FROM idempotency_records
+                 WHERE tool_name='validate_experiment' AND status='IN_PROGRESS'
+                 ORDER BY operation_id
+                """
+            ).fetchall()
+            if active_validations or validation_operations:
+                valid_pair = (
+                    len(active_validations) == 1
+                    and len(validation_operations) == 1
+                    and active_validations[0]["project_id"]
+                    == validation_operations[0]["scope_id"]
+                )
+                if not valid_pair:
+                    integrity_failures = tuple(
+                        sorted(
+                            {
+                                *integrity_failures,
+                                *(row["validation_id"] for row in active_validations),
+                                *(row["operation_id"] for row in validation_operations),
+                            },
+                            key=lambda item: item.encode("utf-8"),
+                        )
+                    )
+                    self._degraded = True
+                else:
+                    validation_id = active_validations[0]["validation_id"]
+                    operation_id = validation_operations[0]["operation_id"]
+                    connection.execute(
+                        """
+                        UPDATE validations
+                           SET status='ABANDONED', finished_at=?,
+                               terminal_reason='server_recovery'
+                         WHERE validation_id=?
+                           AND status IN ('PENDING', 'RUNNING')
+                        """,
+                        (_timestamp(recovered_at), validation_id),
+                    )
+                    references = {"validation_id": validation_id}
+                    connection.execute(
+                        """
+                        UPDATE idempotency_records
+                           SET status='COMPLETED', result_entity_references=?
+                         WHERE scope_id=? AND tool_name='validate_experiment'
+                           AND operation_id=? AND status='IN_PROGRESS'
+                        """,
+                        (
+                            _json(references),
+                            active_validations[0]["project_id"],
+                            operation_id,
+                        ),
+                    )
+                    recovered_validations = (validation_id,)
+        return RecoveryReport(
+            recovered_attempt_ids=recovered_attempts,
+            recovered_validation_ids=recovered_validations,
+            integrity_failure_ids=integrity_failures,
+        )
 
     def inspect_integrity(self, deep: bool) -> StoreIntegrityReport:
         inspection = self.inspect_project_state()

@@ -241,7 +241,9 @@ def test_doctor_uses_shared_facade_and_store_without_starting_inspected_composit
         events.append("snapshot-exit")
 
     monkeypatch.setattr(doctor, "materialize_diagnostic_snapshot", snapshot)
-    monkeypatch.setattr(doctor, "build_composition", lambda root: Composition())
+    monkeypatch.setattr(
+        doctor, "build_composition", lambda root, **kwargs: Composition()
+    )
     stdout = io.StringIO()
 
     code = doctor.run_doctor(tmp_path, deep=False, json_output=True, stdout=stdout)
@@ -802,7 +804,9 @@ def test_render_occurs_once_only_after_base_and_deep_context_exit(
         events.append("base-exit")
 
     monkeypatch.setattr(doctor, "materialize_diagnostic_snapshot", snapshot)
-    monkeypatch.setattr(doctor, "build_composition", lambda root: Composition())
+    monkeypatch.setattr(
+        doctor, "build_composition", lambda root, **kwargs: Composition()
+    )
     monkeypatch.setattr(
         doctor, "_run_deep_smoke", lambda: events.append("deep-exit") or None
     )
@@ -844,7 +848,9 @@ def test_cleanup_failure_discards_ready_report_without_prior_stdout(
         raise DiagnosticSnapshotError("snapshot_cleanup_failed")
 
     monkeypatch.setattr(doctor, "materialize_diagnostic_snapshot", snapshot)
-    monkeypatch.setattr(doctor, "build_composition", lambda root: Composition())
+    monkeypatch.setattr(
+        doctor, "build_composition", lambda root, **kwargs: Composition()
+    )
     stdout = io.StringIO()
 
     assert doctor.run_doctor(tmp_path, False, True, stdout=stdout) == 2
@@ -885,7 +891,9 @@ def test_composition_close_failure_overrides_pending_result_or_error_as_cleanup_
         yield DiagnosticSnapshot(tmp_path / "owned", "INITIALIZED")
 
     monkeypatch.setattr(doctor, "materialize_diagnostic_snapshot", snapshot)
-    monkeypatch.setattr(doctor, "build_composition", lambda root: Composition())
+    monkeypatch.setattr(
+        doctor, "build_composition", lambda root, **kwargs: Composition()
+    )
     if diagnosis_fails:
         monkeypatch.setattr(
             doctor,
@@ -957,7 +965,9 @@ def test_deep_cleanup_attempts_contender_owner_and_root_independently(
         doctor.tempfile, "TemporaryDirectory", lambda **kwargs: Temporary()
     )
     monkeypatch.setattr(doctor, "bootstrap_storage", lambda *args: None)
-    monkeypatch.setattr(doctor, "build_composition", lambda root: next(compositions))
+    monkeypatch.setattr(
+        doctor, "build_composition", lambda root, **kwargs: next(compositions)
+    )
 
     with pytest.raises(DiagnosticSnapshotError) as captured:
         doctor._run_deep_smoke()
@@ -1042,6 +1052,8 @@ def test_deep_root_smoke_rejects_each_type_correct_wrong_result_field(
 
     compositions = iter((Composition(False), Composition(True)))
     monkeypatch.setattr(doctor, "bootstrap_storage", lambda *args: None)
-    monkeypatch.setattr(doctor, "build_composition", lambda root: next(compositions))
+    monkeypatch.setattr(
+        doctor, "build_composition", lambda root, **kwargs: next(compositions)
+    )
 
     assert doctor._run_deep_smoke()[1] == expected

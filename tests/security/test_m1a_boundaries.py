@@ -154,7 +154,7 @@ def test_actual_structured_response_accepts_256_kib_and_rejects_one_more_byte(
     at_limit = _sized_health_result(template, 262_144)
     over_limit = _sized_health_result(template, 262_145)
     facade = _HealthOnlyFacade(at_limit)
-    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
+    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade), VersionSet.m1b())
 
     accepted = adapter.call_tool("health_check", {})
     facade.result = over_limit
@@ -232,7 +232,7 @@ def test_transport_accepts_fifty_warnings_and_fails_closed_on_a_forged_fifty_fir
         for index in range(51)
     )
     facade = _HealthOnlyFacade(template.model_copy(update={"warnings": warnings[:50]}))
-    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade))
+    adapter = ModelingMcpAdapter(cast(ApplicationFacade, facade), VersionSet.m1b())
 
     accepted = adapter.call_tool("health_check", {})
     facade.result = template.model_copy(update={"warnings": warnings})
@@ -704,7 +704,7 @@ def test_degraded_project_allows_only_health_and_preserves_authoritative_bytes(
     """Catches any non-health tool proceeding after project-integrity failure."""
     from modeling_bootstrap.composition import build_composition
 
-    bootstrap_storage(tmp_path, VersionSet.m1a())
+    bootstrap_storage(tmp_path, VersionSet.m1b())
     project_json = tmp_path / ".modeling" / "project.json"
     database = tmp_path / ".modeling" / "state.sqlite3"
     metadata = json.loads(project_json.read_text(encoding="utf-8"))
@@ -729,7 +729,7 @@ def test_degraded_project_allows_only_health_and_preserves_authoritative_bytes(
             "mode": "new",
             "capability": {
                 "capability_id": "numerical.root_finding",
-                "contract_version": "0.1.0",
+                "contract_version": "1.0.0",
             },
             "payload": {"expression": "x", "lower": -1.0, "upper": 1.0},
         },
@@ -739,7 +739,7 @@ def test_degraded_project_allows_only_health_and_preserves_authoritative_bytes(
             "attempt_id": "00000000-0000-4000-8000-000000000024",
             "expected_result_hash": "sha256:" + "a" * 64,
             "validator_id": "numerical.root_finding.residual",
-            "policy_version": "0.1.0",
+            "policy_version": "1.0.0",
             "policy": {},
         },
     }

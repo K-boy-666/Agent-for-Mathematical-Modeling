@@ -382,10 +382,10 @@ def test_official_client_completes_m1a_golden_chain_records_protocol_purity_and_
                         {
                             "detail": "contract",
                             "capability_id": "numerical.root_finding",
-                            "contract_version": "0.1.0",
+                            "contract_version": "1.0.0",
                         },
                     )
-                    assert contract["capability"]["contract_version"] == "0.1.0"
+                    assert contract["capability"]["contract_version"] == "1.0.0"
                     assert contract["capability"]["validators"][0]["validator_id"] == (
                         "numerical.root_finding.residual"
                     )
@@ -396,7 +396,7 @@ def test_official_client_completes_m1a_golden_chain_records_protocol_purity_and_
                         "mode": "new",
                         "capability": {
                             "capability_id": "numerical.root_finding",
-                            "contract_version": "0.1.0",
+                            "contract_version": "1.0.0",
                         },
                         "payload": {
                             "expression": "x*x-2",
@@ -417,7 +417,7 @@ def test_official_client_completes_m1a_golden_chain_records_protocol_purity_and_
                             "attempt_id": run["attempt_id"],
                             "expected_result_hash": run["result_hash"],
                             "validator_id": "numerical.root_finding.residual",
-                            "policy_version": "0.1.0",
+                            "policy_version": "1.0.0",
                             "policy": {},
                         },
                     )
@@ -655,7 +655,7 @@ def test_official_client_completes_m1a_golden_chain_records_protocol_purity_and_
         "attempt_id": run["attempt_id"],
         "validation_id": validation["validation_id"],
         "capability_id": "numerical.root_finding",
-        "contract_version": "0.1.0",
+        "contract_version": "1.0.0",
         "attempt_status": "SUCCEEDED",
         "validation_status": "SUCCEEDED",
         "validation_outcome": "PASSED",
@@ -742,7 +742,7 @@ def _minimal_trace() -> dict[str, object]:
         "attempt_id": "20000000-0000-4000-8000-000000000003",
         "validation_id": "20000000-0000-4000-8000-000000000004",
         "capability_id": "numerical.root_finding",
-        "contract_version": "0.1.0",
+        "contract_version": "1.0.0",
         "attempt_status": "SUCCEEDED",
         "validation_status": "SUCCEEDED",
         "validation_outcome": "PASSED",

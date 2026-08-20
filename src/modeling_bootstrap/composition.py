@@ -18,10 +18,16 @@ from modeling_capabilities.root_finding.solver import (
 from modeling_capabilities.root_finding.validator import (
     ResidualRootFindingValidator,
 )
+from modeling_core.application.recovery import RecoveryService
 from modeling_core.application.service import ModelingApplication
 from modeling_core.contracts.versions import VersionSet
 from modeling_core.registry import CapabilityRegistry
-from modeling_infrastructure.environment import capture_environment_summary
+from modeling_infrastructure.artifacts.store import ContentAddressedArtifactStore
+from modeling_infrastructure.environment import (
+    capture_environment_snapshot,
+    capture_environment_summary,
+)
+from modeling_infrastructure.project_paths import ProjectPaths
 from modeling_infrastructure.sqlite.store import SQLiteProjectStore
 from modeling_mcp.adapter import ModelingMcpAdapter
 from modeling_mcp import server as mcp_server
@@ -59,6 +65,14 @@ class ModelingComposition:
     def start(self) -> None:
         """Prepare an existing store for serving without bootstrapping a new one."""
         self.store.start_writer_session()
+        if (
+            self.store._project_lock.held
+            and self.store._versions.database_schema_version == 2
+        ):
+            RecoveryService(self.store).recover_previous_session(
+                self.session_id,
+                datetime.now(UTC),
+            )
 
     def close(self) -> None:
         """Release this composition's writer lease, if it acquired one."""
@@ -72,22 +86,36 @@ class ModelingComposition:
         self.close()
 
 
-def build_composition(project_root: Path) -> ModelingComposition:
-    """Assemble and seal one M1a application without starting storage."""
-    versions = VersionSet.m1a()
+def build_composition(
+    project_root: Path, *, versions: VersionSet | None = None
+) -> ModelingComposition:
+    """Assemble and seal one application without starting storage."""
+    versions = VersionSet.m1b() if versions is None else versions
     clock = _SystemClock()
     ids = _Uuid4Generator()
     session_id = ids.new_uuid4()
+    lock_file = Path(__file__).parents[2] / "uv.lock"
+    artifact_store = (
+        ContentAddressedArtifactStore(
+            ProjectPaths.bind(project_root),
+            schema_version=versions.tool_contract_version.rsplit("/", 1)[1],
+        )
+        if versions.database_schema_version == 2
+        else None
+    )
     store = SQLiteProjectStore(
         project_root,
         versions,
         clock,
         ids,
         session_id=session_id,
+        artifact_store=artifact_store,
     )
     registry = CapabilityRegistry(versions)
-    registry.register_capability(BisectionRootFindingCapability())
-    registry.register_validator(ResidualRootFindingValidator())
+    capability = BisectionRootFindingCapability(versions)
+    validator = ResidualRootFindingValidator(versions)
+    registry.register_capability(capability)
+    registry.register_validator(validator)
     registry_summary = registry.seal(frozenset())
     application = ModelingApplication(
         store=store,
@@ -98,12 +126,24 @@ def build_composition(project_root: Path) -> ModelingComposition:
         id_generator=ids,
         session_id=session_id,
         environment_summary=capture_environment_summary(
-            lock_file=Path(__file__).parents[2] / "uv.lock"
+            lock_file=lock_file,
+            application_version=versions.application_release,
         ),
         cancellation=_NeverCancelled(),
         default_display_name="Math modeling project",
+        artifact_store=artifact_store,
+        environment_document=(
+            capture_environment_snapshot(
+                lock_file=lock_file,
+                capability_descriptor=capability.descriptor,
+                validator_descriptor=validator.descriptor,
+                application_version=versions.application_release,
+            )
+            if artifact_store is not None
+            else None
+        ),
     )
-    adapter = ModelingMcpAdapter(application)
+    adapter = ModelingMcpAdapter(application, versions)
     server = Server[object, object](
         name="math-modeling-mcp",
         version=mcp_server.APPLICATION_VERSION,

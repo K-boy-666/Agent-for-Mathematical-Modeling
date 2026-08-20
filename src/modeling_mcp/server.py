@@ -7,9 +7,9 @@ from typing import Any, Protocol, cast
 from mcp.server.lowlevel import NotificationOptions
 from mcp.types import LATEST_PROTOCOL_VERSION, CallToolResult, Tool
 
+from modeling_core.version import APPLICATION_VERSION
 from modeling_mcp.strict_stdio import strict_stdio_server
 
-APPLICATION_VERSION = "0.1.0"
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
 

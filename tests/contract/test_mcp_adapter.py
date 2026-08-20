@@ -943,7 +943,7 @@ def test_low_level_server_negotiates_pinned_protocol_with_tool_capability_only()
     options = server.create_initialization_options(NotificationOptions())
     capabilities = options.capabilities.model_dump(by_alias=True, exclude_none=True)
 
-    assert APPLICATION_VERSION == "0.1.0"
+    assert APPLICATION_VERSION == "0.2.0"
     assert MCP_PROTOCOL_VERSION == LATEST_PROTOCOL_VERSION == "2025-11-25"
     assert options.server_version == APPLICATION_VERSION
     assert set(capabilities) <= {"experimental", "tools"}

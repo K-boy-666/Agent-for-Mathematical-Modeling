@@ -16,7 +16,7 @@ from modeling_core.contracts.common import JsonObject
 from modeling_core.contracts.tools import EnvironmentSummary
 
 _UV_VERSION = "0.11.28"
-_APPLICATION_VERSION = "0.1.0"
+_APPLICATION_VERSIONS = frozenset({"0.1.0", "0.2.0"})
 
 
 def _locale_name() -> str:
@@ -70,12 +70,12 @@ def _numerical_libraries() -> list[dict[str, object]]:
 def capture_environment_summary(
     *, lock_file: Path, application_version: str = "0.1.0"
 ) -> EnvironmentSummary:
-    if application_version != "0.1.0":
-        raise ValueError("application_version must equal 0.1.0 for M1a")
+    if application_version not in _APPLICATION_VERSIONS:
+        raise ValueError("application_version is unsupported")
     raw_lock = lock_file.read_bytes()
     return EnvironmentSummary(
         python_version=platform.python_version(),
-        application_version=cast(Literal["0.1.0"], application_version),
+        application_version=cast(Literal["0.1.0", "0.2.0"], application_version),
         lock_hash="sha256:" + hashlib.sha256(raw_lock).hexdigest(),
     )
 
@@ -85,7 +85,7 @@ def capture_environment_snapshot(
     lock_file: Path,
     capability_descriptor: CapabilityDescriptor,
     validator_descriptor: ValidatorDescriptor,
-    application_version: str = _APPLICATION_VERSION,
+    application_version: str = "0.1.0",
     uv_version: str = _UV_VERSION,
 ) -> JsonObject:
     """Build the section 12.4 allowlisted environment snapshot document.
@@ -93,8 +93,8 @@ def capture_environment_snapshot(
     Records only reproduction-relevant facts. Never records the username,
     hostname, absolute paths, secrets or the full process environment.
     """
-    if application_version != _APPLICATION_VERSION:
-        raise ValueError("application_version must equal 0.1.0 for M1a")
+    if application_version not in _APPLICATION_VERSIONS:
+        raise ValueError("application_version is unsupported")
     raw_lock = lock_file.read_bytes()
     return {
         "python_version": platform.python_version(),

@@ -102,6 +102,7 @@ def test_project_store_exposes_exact_typed_use_case_methods() -> None:
         "mark_validation_running",
         "complete_validation",
         "inspect_integrity",
+        "recover_previous_session",
     }
     assert get_type_hints(methods["inspect_project_state"]) == {
         "return": ProjectStateInspection
