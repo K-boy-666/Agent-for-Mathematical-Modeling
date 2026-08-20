@@ -9,21 +9,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from pydantic import TypeAdapter, ValidationError
 
 from modeling_core.contracts.canonical_json import (
     canonical_json_bytes,
     strict_json_loads,
 )
 from modeling_core.contracts.schema_catalog import SchemaCatalog
+from modeling_core.contracts.common import EntityId
 from modeling_core.ports.artifact_store import (
     ArtifactInspectionReport,
     ArtifactManifest,
     ArtifactRole,
     ArtifactStoreError,
 )
+from modeling_core.ports.faults import FaultInjector, FaultPoint, NoFaults
 from modeling_infrastructure.project_paths import ProjectPaths, is_reparse_point
 
 _MAX_PAYLOAD_BYTES = 64 * 1024 * 1024  # 64 MiB
+_ENTITY_ID = TypeAdapter(EntityId)
 _VALID_ROLES: frozenset[str] = frozenset(
     {
         "result",
@@ -43,9 +47,63 @@ class ContentAddressedArtifactStore:
     .modeling/artifacts/sha256/{first_two_hex}/{full_hex}.json.
     """
 
-    def __init__(self, paths: ProjectPaths, schema_version: str = "0.1.0") -> None:
+    def __init__(
+        self,
+        paths: ProjectPaths,
+        schema_version: str = "0.1.0",
+        *,
+        session_id: str | None = None,
+        fault_injector: FaultInjector | None = None,
+    ) -> None:
+        expected = {
+            "modeling": paths.root / ".modeling",
+            "staging": paths.root / ".modeling" / "staging",
+            "artifacts": paths.root / ".modeling" / "artifacts",
+        }
+        for name, path in expected.items():
+            if getattr(paths, name) != path:
+                raise ArtifactStoreError(
+                    code="PATH_BOUNDARY_VIOLATION",
+                    message=f"Artifact store {name} path is outside the project root",
+                    details={"path": name},
+                )
         self._paths = paths
         self._schema_catalog = SchemaCatalog.load_packaged(schema_version)
+        try:
+            self._session_id = _ENTITY_ID.validate_python(
+                session_id if session_id is not None else str(uuid.uuid4()), strict=True
+            )
+        except ValidationError as error:
+            raise ArtifactStoreError(
+                code="INVALID_SESSION_ID",
+                message="Artifact staging session ID must be a canonical UUID v4",
+            ) from error
+        self._faults = fault_injector or NoFaults()
+
+    def _require_safe_path(self, path: Path, label: str) -> None:
+        try:
+            relative = path.relative_to(self._paths.modeling)
+        except ValueError as exc:
+            raise ArtifactStoreError(
+                code="PATH_BOUNDARY_VIOLATION",
+                message="Artifact path is outside project storage",
+                details={"path": label},
+            ) from exc
+        current = self._paths.modeling
+        for part in relative.parts:
+            if is_reparse_point(current):
+                raise ArtifactStoreError(
+                    code="REPARSE_POINT",
+                    message=f"Artifact {label} path contains a reparse point",
+                    details={"path": label},
+                )
+            current /= part
+        if is_reparse_point(current):
+            raise ArtifactStoreError(
+                code="REPARSE_POINT",
+                message=f"Artifact {label} path contains a reparse point",
+                details={"path": label},
+            )
 
     def _resolve_validator(self, schema_id: str) -> Draft202012Validator:
         """Resolve a common-schema $id or a 'tool.kind' identifier."""
@@ -90,81 +148,76 @@ class ContentAddressedArtifactStore:
                     f"Payload canonical size {len(canonical_bytes)} bytes "
                     f"exceeds {_MAX_PAYLOAD_BYTES} bytes limit"
                 ),
+                details={
+                    "resource": "artifact_bytes",
+                    "limit": _MAX_PAYLOAD_BYTES,
+                    "observed": len(canonical_bytes),
+                },
             )
 
         # 4. Write canonical bytes under staging with unique filename
         staging_dir = self._paths.staging
+        self._require_safe_path(staging_dir, "staging")
         staging_dir.mkdir(parents=True, exist_ok=True)
-        staging_path = staging_dir / f"{uuid.uuid4()}.json"
-        with open(staging_path, "wb") as fh:
+        self._require_safe_path(staging_dir, "staging")
+        staging_path = staging_dir / f"{self._session_id}.{uuid.uuid4()}.json"
+        with open(staging_path, "xb") as fh:
             fh.write(canonical_bytes)
             # 5. Flush and os.fsync before closing
             fh.flush()
             os.fsync(fh.fileno())
-
-        # 6. Calculate SHA-256 of the canonical bytes
-        full_hex = hashlib.sha256(canonical_bytes).hexdigest()
-        artifact_id = f"sha256:{full_hex}"
-
-        # 7. Validate decoded content with SchemaCatalog
+            staged = os.fstat(fh.fileno())
+        staging_identity = (staged.st_dev, staged.st_ino)
         try:
-            _decoded = strict_json_loads(canonical_bytes)
-            _validator = self._resolve_validator(schema_id)
-            _validator.validate(_decoded)
-        except ArtifactStoreError:
-            _cleanup_staging(staging_path)
-            raise
-        except Exception as exc:
-            _cleanup_staging(staging_path)
-            raise ArtifactStoreError(
-                code="SCHEMA_VALIDATION_FAILED",
-                message=f"Schema validation failed for {schema_id}: {exc}",
-            ) from exc
+            self._faults.check(
+                FaultPoint.DURING_ARTIFACT_STAGING,
+                {
+                    "session_id": self._session_id,
+                    "staging_file": staging_path.name,
+                },
+            )
 
-        # 8. Derive the destination
-        first_two = full_hex[:2]
-        destination = self._paths.artifacts / "sha256" / first_two / f"{full_hex}.json"
+            # 6. Calculate SHA-256 of the canonical bytes
+            full_hex = hashlib.sha256(canonical_bytes).hexdigest()
+            artifact_id = f"sha256:{full_hex}"
 
-        # 9. Create first-two-hex directory if it doesn't exist
-        destination.parent.mkdir(parents=True, exist_ok=True)
-
-        # 10. If destination exists, verify and reuse
-        if destination.exists():
-            if is_reparse_point(destination):
-                _cleanup_staging(staging_path)
+            # 7. Validate decoded content with SchemaCatalog
+            try:
+                decoded = strict_json_loads(canonical_bytes)
+                validator = self._resolve_validator(schema_id)
+                validator.validate(decoded)
+            except ArtifactStoreError:
+                raise
+            except Exception as exc:
                 raise ArtifactStoreError(
-                    code="REPARSE_POINT",
-                    message=f"Artifact path is a reparse point: {destination}",
-                )
-            _verify_existing_or_raise(destination, canonical_bytes, full_hex)
-            # 14. Remove staging file after verified reuse
-            _cleanup_staging(staging_path)
-            return self._make_manifest(artifact_id, role, canonical_bytes, schema_id)
+                    code="SCHEMA_VALIDATION_FAILED",
+                    message=f"Schema validation failed for {schema_id}: {exc}",
+                ) from exc
 
-        # 11. Atomic rename staging → destination (NOT os.replace)
-        try:
-            os.rename(staging_path, destination)
-        except FileExistsError:
-            # 12. Platform collision → verify existing target
-            if is_reparse_point(destination):
-                _cleanup_staging(staging_path)
+            # 8. Derive the destination
+            first_two = full_hex[:2]
+            destination = (
+                self._paths.artifacts / "sha256" / first_two / f"{full_hex}.json"
+            )
+
+            # 9. Create and recheck the first-two-hex directory.
+            self._require_safe_path(destination.parent, "artifacts")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            self._require_safe_path(destination.parent, "artifacts")
+
+            # 10. Hard-link publication is atomic and never replaces a collision.
+            try:
+                os.link(staging_path, destination)
+            except FileExistsError:
+                _verify_existing_or_raise(destination, canonical_bytes, full_hex)
+            except OSError as exc:
                 raise ArtifactStoreError(
-                    code="REPARSE_POINT",
-                    message=f"Artifact path is a reparse point: {destination}",
-                )
-            _verify_existing_or_raise(destination, canonical_bytes, full_hex)
-            # 14. Remove staging file after verified reuse
-            _cleanup_staging(staging_path)
+                    code="RENAME_FAILED",
+                    message=f"Failed to publish staging file as artifact: {exc}",
+                ) from exc
             return self._make_manifest(artifact_id, role, canonical_bytes, schema_id)
-        except OSError as exc:
-            # 13. Any other rename failure
-            _cleanup_staging(staging_path)
-            raise ArtifactStoreError(
-                code="RENAME_FAILED",
-                message=f"Failed to rename staging file to artifact: {exc}",
-            ) from exc
-
-        return self._make_manifest(artifact_id, role, canonical_bytes, schema_id)
+        finally:
+            _cleanup_staging(staging_path, staging_identity)
 
     # ------------------------------------------------------------------
     # read_verified
@@ -181,12 +234,22 @@ class ContentAddressedArtifactStore:
             raise ArtifactStoreError(
                 code="INVALID_ARTIFACT_ID",
                 message=f"Artifact ID must start with 'sha256:': {artifact_id!r}",
+                details={"artifact_id": artifact_id},
             )
         full_hex = artifact_id[len("sha256:") :]
+        if len(full_hex) != 64 or any(
+            character not in "0123456789abcdef" for character in full_hex
+        ):
+            raise ArtifactStoreError(
+                code="INVALID_ARTIFACT_ID",
+                message="Artifact ID must contain exactly 64 lowercase hex digits",
+                details={"artifact_id": artifact_id},
+            )
 
         # 2. Derive the path
         first_two = full_hex[:2]
         file_path = self._paths.artifacts / "sha256" / first_two / f"{full_hex}.json"
+        self._require_safe_path(file_path.parent, "artifacts")
 
         # 3. Verify file exists and is a regular file (not symlink/reparse)
         if not file_path.exists():
@@ -227,6 +290,18 @@ class ContentAddressedArtifactStore:
                 message=f"SHA-256 mismatch for {artifact_id}",
             )
 
+        try:
+            decoded = strict_json_loads(data)
+            is_canonical = canonical_json_bytes(decoded) == data
+        except Exception:
+            is_canonical = False
+        if not is_canonical:
+            raise ArtifactStoreError(
+                code="INTEGRITY_FAILURE",
+                message="Artifact bytes are not canonical JSON",
+                details={"reason": "noncanonical_json"},
+            )
+
         # 7. Return the bytes
         return data
 
@@ -238,6 +313,8 @@ class ContentAddressedArtifactStore:
         self,
         referenced_artifact_ids: frozenset[str],
     ) -> ArtifactInspectionReport:
+        self._require_safe_path(self._paths.artifacts, "artifacts")
+        self._require_safe_path(self._paths.staging, "staging")
         sha256_dir = self._paths.artifacts / "sha256"
         referenced = set(referenced_artifact_ids)
 
@@ -353,9 +430,19 @@ class ContentAddressedArtifactStore:
 # ------------------------------------------------------------------
 
 
-def _cleanup_staging(path: Path) -> None:
+def _cleanup_staging(path: Path, expected_identity: tuple[int, int]) -> None:
     """Best-effort removal of a staging file."""
     try:
+        observed = path.lstat()
+        if (
+            is_reparse_point(path)
+            or (
+                observed.st_dev,
+                observed.st_ino,
+            )
+            != expected_identity
+        ):
+            return
         os.unlink(path)
     except OSError:
         pass
@@ -367,15 +454,23 @@ def _verify_existing_or_raise(
     full_hex: str,
 ) -> None:
     """Verify an existing artifact file matches expected content."""
+    if is_reparse_point(destination) or not destination.is_file():
+        raise ArtifactStoreError(
+            code="REPARSE_POINT",
+            message="Existing artifact is not an owned regular file",
+            details={"path": "artifacts"},
+        )
     existing_bytes = destination.read_bytes()
     if len(existing_bytes) != len(canonical_bytes):
         raise ArtifactStoreError(
             code="INTEGRITY_FAILURE",
             message="Existing artifact size does not match canonical bytes",
+            details={"reason": "existing_artifact_mismatch"},
         )
     existing_hex = hashlib.sha256(existing_bytes).hexdigest()
     if existing_hex != full_hex:
         raise ArtifactStoreError(
             code="INTEGRITY_FAILURE",
             message="Existing artifact SHA-256 does not match canonical bytes",
+            details={"reason": "existing_artifact_mismatch"},
         )

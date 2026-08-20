@@ -21,6 +21,7 @@ from modeling_capabilities.root_finding.validator import (
 from modeling_core.application.recovery import RecoveryService
 from modeling_core.application.service import ModelingApplication
 from modeling_core.contracts.versions import VersionSet
+from modeling_core.ports.faults import FaultInjector, NoFaults
 from modeling_core.registry import CapabilityRegistry
 from modeling_infrastructure.artifacts.store import ContentAddressedArtifactStore
 from modeling_infrastructure.environment import (
@@ -69,10 +70,14 @@ class ModelingComposition:
             self.store._project_lock.held
             and self.store._versions.database_schema_version == 2
         ):
-            RecoveryService(self.store).recover_previous_session(
+            report = RecoveryService(self.store).recover_previous_session(
                 self.session_id,
                 datetime.now(UTC),
             )
+            if not report.integrity_failure_ids:
+                self.store._degraded = False
+                if self.store.inspect_integrity(deep=False).issues:
+                    self.store._degraded = True
 
     def close(self) -> None:
         """Release this composition's writer lease, if it acquired one."""
@@ -87,18 +92,24 @@ class ModelingComposition:
 
 
 def build_composition(
-    project_root: Path, *, versions: VersionSet | None = None
+    project_root: Path,
+    *,
+    versions: VersionSet | None = None,
+    fault_injector: FaultInjector | None = None,
 ) -> ModelingComposition:
     """Assemble and seal one application without starting storage."""
     versions = VersionSet.m1b() if versions is None else versions
     clock = _SystemClock()
     ids = _Uuid4Generator()
     session_id = ids.new_uuid4()
+    faults = fault_injector or NoFaults()
     lock_file = Path(__file__).parents[2] / "uv.lock"
     artifact_store = (
         ContentAddressedArtifactStore(
             ProjectPaths.bind(project_root),
             schema_version=versions.tool_contract_version.rsplit("/", 1)[1],
+            session_id=session_id,
+            fault_injector=faults,
         )
         if versions.database_schema_version == 2
         else None
@@ -142,6 +153,7 @@ def build_composition(
             if artifact_store is not None
             else None
         ),
+        fault_injector=faults,
     )
     adapter = ModelingMcpAdapter(application, versions)
     server = Server[object, object](

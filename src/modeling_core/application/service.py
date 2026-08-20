@@ -128,6 +128,7 @@ from modeling_core.ports.artifact_store import (
     AttemptArtifactSink,
 )
 from modeling_core.ports.clock import Clock
+from modeling_core.ports.faults import FaultInjector, FaultPoint, NoFaults
 from modeling_core.ports.ids import IdGenerator
 from modeling_core.ports.project_store import (
     BeginRunCommand,
@@ -315,6 +316,7 @@ class ModelingApplication(ApplicationFacade):
         default_display_name: str,
         artifact_store: ArtifactStore | None = None,
         environment_document: JsonObject | None = None,
+        fault_injector: FaultInjector | None = None,
     ) -> None:
         self._store = store
         self._registry = registry
@@ -339,6 +341,7 @@ class ModelingApplication(ApplicationFacade):
             )
         self._artifact_store = artifact_store
         self._environment_document = environment_document
+        self._faults = fault_injector or NoFaults()
         schema_version = versions.result_schema_version.rsplit("/", 1)[1]
         self._result_schema_id = (
             "https://schemas.math-modeling-mcp.local/common/"
@@ -1224,6 +1227,11 @@ class ModelingApplication(ApplicationFacade):
                     artifact=begun.artifact,
                 )
 
+            self._faults.check(
+                FaultPoint.AFTER_ATTEMPT_CREATED,
+                {"attempt_id": pending.attempt_id, "session_id": self._session_id},
+            )
+
             started_at = _millisecond_utc(self._clock.utc_now())
             try:
                 self._store.mark_attempt_running(
@@ -1231,6 +1239,10 @@ class ModelingApplication(ApplicationFacade):
                 )
             except ProjectStoreError as error:
                 self._raise_store(error, correlation_id)
+            self._faults.check(
+                FaultPoint.AFTER_ATTEMPT_RUNNING,
+                {"attempt_id": pending.attempt_id, "session_id": self._session_id},
+            )
             deadline = self._clock.monotonic() + (
                 min(
                     execution.timeout_ms,
@@ -1358,6 +1370,13 @@ class ModelingApplication(ApplicationFacade):
                             details={"event_id": self._ids.new_uuid4()},
                         )
                 else:
+                    self._faults.check(
+                        FaultPoint.AFTER_ARTIFACT_PUBLISHED,
+                        {
+                            "attempt_id": pending.attempt_id,
+                            "artifact_id": manifest.artifact_id,
+                        },
+                    )
                     if self._clock.monotonic() > deadline:
                         result_snapshot = None
                         numerical_failure = None
@@ -1394,6 +1413,10 @@ class ModelingApplication(ApplicationFacade):
                 )
             except ProjectStoreError as error:
                 self._raise_store(error, correlation_id)
+            self._faults.check(
+                FaultPoint.AFTER_DATABASE_COMMIT,
+                {"attempt_id": pending.attempt_id},
+            )
             return self._run_result(
                 common=common,
                 operation_id=request.operation_id,
