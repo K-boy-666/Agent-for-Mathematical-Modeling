@@ -57,9 +57,7 @@ def _validate_timestamp(value: object) -> datetime:
 class Project:
     project_id: EntityId
     storage_instance_id: EntityId
-    project_format_version: Literal[
-        "modeling-project/0.1.0", "modeling-project/1.0.0"
-    ]
+    project_format_version: Literal["modeling-project/0.1.0", "modeling-project/1.0.0"]
     display_name: DisplayName
     created_at: datetime
 

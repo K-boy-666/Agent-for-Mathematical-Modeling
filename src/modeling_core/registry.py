@@ -495,9 +495,9 @@ class CapabilityRegistry:
     def seal(self, required_capabilities: frozenset[CapabilityKey]) -> RegistrySummary:
         if self._sealed:
             return self._summary()
-        contract_version = self._versions.root_finding_contract_version.rsplit(
-            "/", 1
-        )[1]
+        contract_version = self._versions.root_finding_contract_version.rsplit("/", 1)[
+            1
+        ]
         required = required_capabilities | frozenset(
             {("numerical.root_finding", contract_version)}
         )
@@ -516,8 +516,7 @@ class CapabilityRegistry:
             schema_version = self._versions.tool_contract_version.rsplit("/", 1)[1]
             catalog = SchemaCatalog.load_packaged(schema_version)
             common_prefix = (
-                "https://schemas.math-modeling-mcp.local/common/"
-                f"{schema_version}/"
+                f"https://schemas.math-modeling-mcp.local/common/{schema_version}/"
             )
             capability_schema = catalog.common_schemas[
                 f"{common_prefix}modeling-capability.schema.json"

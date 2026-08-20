@@ -169,7 +169,9 @@ def test_explicit_stable_capability_executes_with_one_version_set() -> None:
         ),
     )
 
-    assert capability.descriptor.capability_api_version == versions.capability_api_version
+    assert (
+        capability.descriptor.capability_api_version == versions.capability_api_version
+    )
     assert capability.descriptor.contract_version == "1.0.0"
     assert capability.descriptor.validators[0].report_schema_version == (
         versions.validation_report_schema_version
@@ -177,7 +179,9 @@ def test_explicit_stable_capability_executes_with_one_version_set() -> None:
     assert canonical_input.canonical_input_schema_version == (
         versions.root_finding_canonical_input_version
     )
-    assert outcome.result_payload.result_schema_version == versions.result_schema_version
+    assert (
+        outcome.result_payload.result_schema_version == versions.result_schema_version
+    )
     assert outcome.result_payload.contract_version == "1.0.0"
 
     registry = CapabilityRegistry(versions)
@@ -185,12 +189,15 @@ def test_explicit_stable_capability_executes_with_one_version_set() -> None:
     registry.register_validator(ResidualRootFindingValidator(versions))
     summary = registry.seal(frozenset({("numerical.root_finding", "1.0.0")}))
     assert summary.capability_count == 1
-    assert registry.resolve_validator(
-        "numerical.root_finding.residual",
-        "numerical.root_finding",
-        "1.0.0",
-        "1.0.0",
-    ).descriptor.policy_version == "1.0.0"
+    assert (
+        registry.resolve_validator(
+            "numerical.root_finding.residual",
+            "numerical.root_finding",
+            "1.0.0",
+            "1.0.0",
+        ).descriptor.policy_version
+        == "1.0.0"
+    )
 
 
 def test_tool_names_unchanged_from_0_1() -> None:
@@ -385,7 +392,9 @@ def test_artifact_manifest_in_stable_result() -> None:
     }
     validator = catalog.validator("run_experiment", "result")
     assert list(validator.iter_errors(run_result)) == []
-    assert list(validator.iter_errors({k: v for k, v in run_result.items() if k != "artifacts"}))
+    assert list(
+        validator.iter_errors({k: v for k, v in run_result.items() if k != "artifacts"})
+    )
 
     report_artifact = {
         **artifact,

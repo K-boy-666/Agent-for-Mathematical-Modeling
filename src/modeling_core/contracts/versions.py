@@ -9,17 +9,13 @@ class VersionSet(StrictModel):
     application_release: Literal["0.1.0", "0.2.0"]
     mcp_protocol_version: Literal["2025-11-25"]
     tool_contract_version: Literal["modeling-tools/0.1.0", "modeling-tools/1.0.0"]
-    project_format_version: Literal[
-        "modeling-project/0.1.0", "modeling-project/1.0.0"
-    ]
+    project_format_version: Literal["modeling-project/0.1.0", "modeling-project/1.0.0"]
     database_schema_version: Literal[1, 2]
     capability_api_version: Literal[
         "modeling-capability/0.1.0", "modeling-capability/1.0.0"
     ]
     error_schema_version: Literal["modeling-error/0.1.0", "modeling-error/1.0.0"]
-    result_schema_version: Literal[
-        "modeling-result/0.1.0", "modeling-result/1.0.0"
-    ]
+    result_schema_version: Literal["modeling-result/0.1.0", "modeling-result/1.0.0"]
     validation_report_schema_version: Literal[
         "modeling-validation-report/0.1.0",
         "modeling-validation-report/1.0.0",
@@ -47,11 +43,7 @@ class VersionSet(StrictModel):
 
     @property
     def residual_policy_core(self) -> Literal["0.1.0", "1.0.0"]:
-        return (
-            "1.0.0"
-            if self.residual_policy_version.endswith("/1.0.0")
-            else "0.1.0"
-        )
+        return "1.0.0" if self.residual_policy_version.endswith("/1.0.0") else "0.1.0"
 
     @classmethod
     def m1a(cls) -> Self:
