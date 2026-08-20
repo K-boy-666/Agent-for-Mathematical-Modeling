@@ -10,4 +10,5 @@ dist/
 *.whl
 *.egg-info/
 .modeling/
+.worktrees/
 .superpowers/
