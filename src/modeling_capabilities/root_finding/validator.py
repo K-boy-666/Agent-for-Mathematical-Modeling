@@ -8,7 +8,6 @@ from typing import Literal, TypeAlias, cast
 from pydantic import ValidationError
 
 from modeling_capabilities.root_finding.contracts import (
-    CANONICAL_INPUT_SCHEMA_VERSION,
     EvaluationBudget,
     EvaluationCancelled,
     EvaluationDeadlineExceeded,
@@ -38,13 +37,12 @@ from modeling_core.contracts.tools import (
     ValidationMetrics,
     ValidationReportPayload,
 )
+from modeling_core.contracts.versions import VersionSet
 
 EMPTY_POLICY_HASH = (
     "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
 )
 _CAPABILITY_ID: Literal["numerical.root_finding"] = "numerical.root_finding"
-_CONTRACT_VERSION: Literal["0.1.0"] = "0.1.0"
-_RESULT_SCHEMA_VERSION = "modeling-result/0.1.0"
 _FailedCheck: TypeAlias = Literal[
     "root_out_of_interval",
     "expression_undefined",
@@ -77,16 +75,17 @@ def _require_identity(actual: object, expected: str, field_path: str) -> None:
 
 def _validated_input(
     canonical_input: CanonicalInputRecord,
+    versions: VersionSet,
 ) -> CanonicalRootFindingInput:
     _require_identity(
         canonical_input.canonical_input_schema_version,
-        CANONICAL_INPUT_SCHEMA_VERSION,
+        versions.root_finding_canonical_input_version,
         "canonical_input_schema_version",
     )
     payload = canonical_input.canonical_payload
     _require_identity(
         payload.get("canonical_input_schema_version"),
-        CANONICAL_INPUT_SCHEMA_VERSION,
+        versions.root_finding_canonical_input_version,
         "canonical_payload.canonical_input_schema_version",
     )
     try:
@@ -99,7 +98,9 @@ def _validated_input(
 
 def _validated_success_result(
     result_snapshot: ResultSnapshotView,
+    versions: VersionSet,
 ) -> SuccessResultPayload:
+    contract_version = versions.root_finding_contract_version.rsplit("/", 1)[1]
     _require_identity(
         result_snapshot.capability_id,
         _CAPABILITY_ID,
@@ -107,18 +108,18 @@ def _validated_success_result(
     )
     _require_identity(
         result_snapshot.contract_version,
-        _CONTRACT_VERSION,
+        contract_version,
         "result_snapshot.contract_version",
     )
     _require_identity(
         result_snapshot.result_schema_version,
-        _RESULT_SCHEMA_VERSION,
+        versions.result_schema_version,
         "result_snapshot.result_schema_version",
     )
     payload = result_snapshot.result_payload
     _require_identity(
         payload.result_schema_version,
-        _RESULT_SCHEMA_VERSION,
+        versions.result_schema_version,
         "result_payload.result_schema_version",
     )
     _require_identity(
@@ -128,7 +129,7 @@ def _validated_success_result(
     )
     _require_identity(
         payload.contract_version,
-        _CONTRACT_VERSION,
+        contract_version,
         "result_payload.contract_version",
     )
     _require_identity(
@@ -147,9 +148,13 @@ def _validated_success_result(
 class ResidualRootFindingValidator:
     """Recompute a root result without solver search or termination code."""
 
+    def __init__(self, versions: VersionSet | None = None) -> None:
+        self._versions = versions or VersionSet.m1a()
+        self._descriptor = build_residual_validator_descriptor(self._versions)
+
     @property
     def descriptor(self) -> ValidatorDescriptor:
-        return build_residual_validator_descriptor()
+        return self._descriptor
 
     def validate(
         self,
@@ -161,8 +166,8 @@ class ResidualRootFindingValidator:
         _check_control(context)
         if type(policy) is not dict or policy:
             raise ValidationInputError("policy", "must be exactly an empty object")
-        typed_input = _validated_input(canonical_input)
-        result_payload = _validated_success_result(result_snapshot)
+        typed_input = _validated_input(canonical_input, self._versions)
+        result_payload = _validated_success_result(result_snapshot, self._versions)
         ast = ast_from_canonical_json(
             cast(
                 JsonObject,
@@ -222,15 +227,15 @@ class ResidualRootFindingValidator:
             failed_checks=tuple(failed_checks),
         )
         return ValidationReportPayload(
-            report_schema_version="modeling-validation-report/0.1.0",
+            report_schema_version=self._versions.validation_report_schema_version,
             validator_id="numerical.root_finding.residual",
             validator_implementation_id=("builtin.numerical.root_finding.residual"),
             validator_implementation_version="0.1.0",
-            policy_version="0.1.0",
+            policy_version=self._versions.residual_policy_core,
             policy={},
             policy_hash=EMPTY_POLICY_HASH,
             capability_id=_CAPABILITY_ID,
-            contract_version=_CONTRACT_VERSION,
+            contract_version=self._versions.root_finding_contract_core,
             canonical_payload_hash=canonical_input.canonical_payload_hash,
             model_snapshot_hash=canonical_input.model_snapshot_hash,
             data_snapshot_set_hash=canonical_input.data_snapshot_set_hash,

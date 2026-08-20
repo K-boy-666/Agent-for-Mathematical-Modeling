@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import math
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from modeling_capabilities.root_finding.contracts import (
-    CANONICAL_INPUT_SCHEMA_VERSION,
     EvaluationBudget,
     EvaluationCancelled,
     EvaluationDeadlineExceeded,
@@ -38,6 +37,7 @@ from modeling_core.contracts.tools import (
     ResultSuccessData,
     SuccessResultPayload,
 )
+from modeling_core.contracts.versions import VersionSet
 
 
 def _check_control(context: ExecutionContext) -> None:
@@ -49,6 +49,7 @@ def _check_control(context: ExecutionContext) -> None:
 
 def _success(
     context: ExecutionContext,
+    versions: VersionSet,
     *,
     root: float,
     function_value: float,
@@ -60,9 +61,9 @@ def _success(
 ) -> ExecutionOutcome:
     _check_control(context)
     payload = SuccessResultPayload(
-        result_schema_version="modeling-result/0.1.0",
+        result_schema_version=versions.result_schema_version,
         capability_id="numerical.root_finding",
-        contract_version="0.1.0",
+        contract_version=versions.root_finding_contract_core,
         result_kind="success",
         data=ResultSuccessData(
             root=root,
@@ -77,6 +78,7 @@ def _success(
 
 def _failure(
     context: ExecutionContext,
+    versions: VersionSet,
     *,
     failure_code: Literal[
         "no_sign_change",
@@ -89,9 +91,9 @@ def _failure(
 ) -> ExecutionOutcome:
     _check_control(context)
     payload = FailureResultPayload(
-        result_schema_version="modeling-result/0.1.0",
+        result_schema_version=versions.result_schema_version,
         capability_id="numerical.root_finding",
-        contract_version="0.1.0",
+        contract_version=versions.root_finding_contract_core,
         result_kind="numerical_failure",
         data=NumericalFailureData(
             failure_code=failure_code,
@@ -116,16 +118,26 @@ def _midpoint_and_half_width(lower: float, upper: float) -> tuple[float, float]:
 class BisectionRootFindingCapability:
     """Find a bracketed scalar root with deterministic binary64 bisection."""
 
-    def __init__(self) -> None:
-        self._descriptor = build_root_finding_descriptor()
+    def __init__(self, versions: VersionSet | None = None) -> None:
+        self._versions = versions or VersionSet.m1a()
+        self._descriptor = build_root_finding_descriptor(self._versions)
         self._evaluator = SolverEvaluator()
+
+    def _success(self, context: ExecutionContext, **kwargs: Any) -> ExecutionOutcome:
+        return _success(context, self._versions, **kwargs)
+
+    def _failure(self, context: ExecutionContext, **kwargs: Any) -> ExecutionOutcome:
+        return _failure(context, self._versions, **kwargs)
 
     @property
     def descriptor(self) -> CapabilityDescriptor:
         return self._descriptor
 
     def normalize_and_validate(self, raw_payload: JsonObject) -> CanonicalInputRecord:
-        return normalize_root_finding_input(raw_payload)
+        return normalize_root_finding_input(
+            raw_payload,
+            self._versions.root_finding_canonical_input_version,
+        )
 
     def execute(
         self,
@@ -134,12 +146,12 @@ class BisectionRootFindingCapability:
     ) -> ExecutionOutcome:
         if (
             canonical_input.canonical_input_schema_version
-            != CANONICAL_INPUT_SCHEMA_VERSION
+            != self._versions.root_finding_canonical_input_version
         ):
             raise InputValidationError(
                 "/canonical_input_schema_version",
                 "capability_payload_violation",
-                f"must equal {CANONICAL_INPUT_SCHEMA_VERSION}",
+                f"must equal {self._versions.root_finding_canonical_input_version}",
             )
         typed = CanonicalRootFindingInput.model_validate(
             canonical_input.canonical_payload
@@ -160,21 +172,21 @@ class BisectionRootFindingCapability:
         try:
             lower_value = self._evaluator.evaluate(ast, lower, budget)
         except EvaluationDomainError:
-            return _failure(
+            return self._failure(
                 context,
                 failure_code="domain_error",
                 iterations=iterations,
                 evaluations=budget.evaluations_used,
             )
         except EvaluationNonFiniteError:
-            return _failure(
+            return self._failure(
                 context,
                 failure_code="non_finite_evaluation",
                 iterations=iterations,
                 evaluations=budget.evaluations_used,
             )
         if abs(lower_value) <= typed.function_tolerance:
-            return _success(
+            return self._success(
                 context,
                 root=lower,
                 function_value=lower_value,
@@ -187,21 +199,21 @@ class BisectionRootFindingCapability:
         try:
             upper_value = self._evaluator.evaluate(ast, upper, budget)
         except EvaluationDomainError:
-            return _failure(
+            return self._failure(
                 context,
                 failure_code="domain_error",
                 iterations=iterations,
                 evaluations=budget.evaluations_used,
             )
         except EvaluationNonFiniteError:
-            return _failure(
+            return self._failure(
                 context,
                 failure_code="non_finite_evaluation",
                 iterations=iterations,
                 evaluations=budget.evaluations_used,
             )
         if abs(upper_value) <= typed.function_tolerance:
-            return _success(
+            return self._success(
                 context,
                 root=upper,
                 function_value=upper_value,
@@ -210,7 +222,7 @@ class BisectionRootFindingCapability:
                 termination_reason="endpoint_root",
             )
         if not _different_signs(lower_value, upper_value):
-            return _failure(
+            return self._failure(
                 context,
                 failure_code="no_sign_change",
                 iterations=iterations,
@@ -227,14 +239,14 @@ class BisectionRootFindingCapability:
             try:
                 midpoint_value = self._evaluator.evaluate(ast, midpoint, budget)
             except EvaluationDomainError:
-                return _failure(
+                return self._failure(
                     context,
                     failure_code="domain_error",
                     iterations=iterations,
                     evaluations=budget.evaluations_used,
                 )
             except EvaluationNonFiniteError:
-                return _failure(
+                return self._failure(
                     context,
                     failure_code="non_finite_evaluation",
                     iterations=iterations,
@@ -242,7 +254,7 @@ class BisectionRootFindingCapability:
                 )
 
             if abs(midpoint_value) <= typed.function_tolerance:
-                return _success(
+                return self._success(
                     context,
                     root=midpoint,
                     function_value=midpoint_value,
@@ -262,7 +274,7 @@ class BisectionRootFindingCapability:
                 typed.relative_tolerance * abs(midpoint)
             )
             if half_width <= tolerance:
-                return _success(
+                return self._success(
                     context,
                     root=midpoint,
                     function_value=midpoint_value,
@@ -271,14 +283,14 @@ class BisectionRootFindingCapability:
                     termination_reason="interval_tolerance",
                 )
             if collapsed:
-                return _failure(
+                return self._failure(
                     context,
                     failure_code="non_convergence",
                     iterations=iterations,
                     evaluations=budget.evaluations_used,
                 )
 
-        return _failure(
+        return self._failure(
             context,
             failure_code="non_convergence",
             iterations=iterations,

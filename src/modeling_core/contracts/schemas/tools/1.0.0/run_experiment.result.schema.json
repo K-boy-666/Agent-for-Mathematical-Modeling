@@ -14,6 +14,16 @@
     "hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "timestamp": {"type": "string", "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"},
     "warning": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"type": "string"}, "message": {"type": "string", "minLength": 1, "maxLength": 1024}}},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_id", "role", "sha256", "media_type", "size_bytes", "project_relative_path"],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/hash"}, "role": {"const": "result"},
+        "sha256": {"$ref": "#/$defs/hash"}, "media_type": {"const": "application/json"},
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "project_relative_path": {"type": "string", "pattern": "^\\.modeling/artifacts/sha256/[0-9a-f]{2}/[0-9a-f]{64}\\.json$"}
+      }
+    },
     "baseProperties": {
       "tool_contract_version": {"const": "modeling-tools/1.0.0"},
       "correlation_id": {"$ref": "#/$defs/entityId"},
@@ -40,16 +50,16 @@
     },
     "succeeded": {
       "type": "object", "additionalProperties": false,
-      "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "experiment_id", "attempt_id", "attempt_status", "capability_id", "contract_version", "implementation_id", "implementation_version", "randomness", "seed", "warnings", "result_kind", "result_hash", "result_summary"],
+      "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "experiment_id", "attempt_id", "attempt_status", "capability_id", "contract_version", "implementation_id", "implementation_version", "randomness", "seed", "warnings", "result_kind", "result_hash", "result_summary", "artifacts"],
       "properties": {
-        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "SUCCEEDED"}, "capability_id": {"const": "numerical.root_finding"}, "contract_version": {"const": "1.0.0"}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "result_kind": {"const": "success"}, "result_hash": {"$ref": "#/$defs/hash"}, "result_summary": {"$ref": "#/$defs/successData"}
+        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "SUCCEEDED"}, "capability_id": {"const": "numerical.root_finding"}, "contract_version": {"const": "1.0.0"}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "result_kind": {"const": "success"}, "result_hash": {"$ref": "#/$defs/hash"}, "result_summary": {"$ref": "#/$defs/successData"}, "artifacts": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/artifact"}}
       }
     },
     "numericalFailure": {
       "type": "object", "additionalProperties": false,
-      "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "experiment_id", "attempt_id", "attempt_status", "capability_id", "contract_version", "implementation_id", "implementation_version", "randomness", "seed", "warnings", "result_kind", "result_hash", "result_summary"],
+      "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "experiment_id", "attempt_id", "attempt_status", "capability_id", "contract_version", "implementation_id", "implementation_version", "randomness", "seed", "warnings", "result_kind", "result_hash", "result_summary", "artifacts"],
       "properties": {
-        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "NUMERICAL_FAILURE"}, "capability_id": {"const": "numerical.root_finding"}, "contract_version": {"const": "1.0.0"}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "result_kind": {"const": "numerical_failure"}, "result_hash": {"$ref": "#/$defs/hash"}, "result_summary": {"$ref": "#/$defs/failureData"}
+        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "NUMERICAL_FAILURE"}, "capability_id": {"const": "numerical.root_finding"}, "contract_version": {"const": "1.0.0"}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "result_kind": {"const": "numerical_failure"}, "result_hash": {"$ref": "#/$defs/hash"}, "result_summary": {"$ref": "#/$defs/failureData"}, "artifacts": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/artifact"}}
       }
     },
     "errored": {

@@ -336,11 +336,17 @@ class BeginRunResult:
     experiment: Experiment
     attempt: Attempt
     replayed: bool
+    artifact: Artifact | None = None
 
     def __post_init__(self) -> None:
         experiment = _validate(self.experiment, Experiment)
         attempt = _validate(self.attempt, Attempt)
         replayed = _BOOL.validate_python(self.replayed, strict=True)
+        artifact = self.artifact
+        if artifact is not None:
+            artifact = _validate(artifact, Artifact)
+            if attempt.result is None or artifact.artifact_id != attempt.result.result_hash:
+                raise ValueError("run artifact must identify the attempt result")
         _validate_attempt_result_owner(attempt)
         if attempt.experiment_id != experiment.experiment_id:
             raise ValueError("attempt must belong to experiment")
@@ -351,6 +357,7 @@ class BeginRunResult:
         object.__setattr__(self, "experiment", experiment)
         object.__setattr__(self, "attempt", attempt)
         object.__setattr__(self, "replayed", replayed)
+        object.__setattr__(self, "artifact", artifact)
 
 
 @dataclass(frozen=True)
@@ -381,11 +388,18 @@ class CompleteAttemptCommand:
 @dataclass(frozen=True)
 class StoredRunResult:
     attempt: Attempt
+    artifact: Artifact | None = None
 
     def __post_init__(self) -> None:
         attempt = _validate(self.attempt, Attempt)
         _require_terminal_attempt(attempt)
+        artifact = self.artifact
+        if artifact is not None:
+            artifact = _validate(artifact, Artifact)
+            if attempt.result is None or artifact.artifact_id != attempt.result.result_hash:
+                raise ValueError("run artifact must identify the attempt result")
         object.__setattr__(self, "attempt", attempt)
+        object.__setattr__(self, "artifact", artifact)
 
 
 @dataclass(frozen=True)
@@ -426,16 +440,23 @@ class BeginValidationCommand:
 class BeginValidationResult:
     validation: Validation
     replayed: bool
+    report_artifact: Artifact | None = None
 
     def __post_init__(self) -> None:
         validation = _validate(self.validation, Validation)
         replayed = _BOOL.validate_python(self.replayed, strict=True)
+        report_artifact = self.report_artifact
+        if report_artifact is not None:
+            report_artifact = _validate(report_artifact, Artifact)
+            if report_artifact.artifact_id != validation.validation_report_hash:
+                raise ValueError("report artifact must identify the validation report")
         if replayed and validation.status not in _TERMINAL_VALIDATIONS:
             raise ValueError("replayed begin-validation result must be terminal")
         if not replayed and validation.status is not ValidationStatus.PENDING:
             raise ValueError("new begin-validation result must be PENDING")
         object.__setattr__(self, "validation", validation)
         object.__setattr__(self, "replayed", replayed)
+        object.__setattr__(self, "report_artifact", report_artifact)
 
 
 @dataclass(frozen=True)
@@ -468,11 +489,18 @@ class CompleteValidationCommand:
 @dataclass(frozen=True)
 class StoredValidationResult:
     validation: Validation
+    report_artifact: Artifact | None = None
 
     def __post_init__(self) -> None:
         validation = _validate(self.validation, Validation)
         _require_terminal_validation(validation)
+        report_artifact = self.report_artifact
+        if report_artifact is not None:
+            report_artifact = _validate(report_artifact, Artifact)
+            if report_artifact.artifact_id != validation.validation_report_hash:
+                raise ValueError("report artifact must identify the validation report")
         object.__setattr__(self, "validation", validation)
+        object.__setattr__(self, "report_artifact", report_artifact)
 
 
 @dataclass(frozen=True)

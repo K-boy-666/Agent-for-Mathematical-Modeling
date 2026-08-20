@@ -35,15 +35,6 @@ from modeling_core.contracts.tools import CapabilitySummary, ValidatorSummary
 from modeling_core.contracts.versions import VersionSet
 
 _DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
-_REQUIRED_M1A = frozenset({("numerical.root_finding", "0.1.0")})
-_CAPABILITY_DESCRIPTOR_SCHEMA = (
-    "https://schemas.math-modeling-mcp.local/common/0.1.0/"
-    "modeling-capability.schema.json"
-)
-_VALIDATOR_DESCRIPTOR_SCHEMA = (
-    "https://schemas.math-modeling-mcp.local/common/0.1.0/"
-    "modeling-validator.schema.json"
-)
 
 
 class RegistryError(RuntimeError):
@@ -504,7 +495,12 @@ class CapabilityRegistry:
     def seal(self, required_capabilities: frozenset[CapabilityKey]) -> RegistrySummary:
         if self._sealed:
             return self._summary()
-        required = required_capabilities | _REQUIRED_M1A
+        contract_version = self._versions.root_finding_contract_version.rsplit(
+            "/", 1
+        )[1]
+        required = required_capabilities | frozenset(
+            {("numerical.root_finding", contract_version)}
+        )
         missing = sorted(required - self._capabilities.keys())
         if missing:
             raise RegistryError(
@@ -517,9 +513,18 @@ class CapabilityRegistry:
                 },
             )
         try:
-            catalog = SchemaCatalog.load_packaged("0.1.0")
-            capability_schema = catalog.common_schemas[_CAPABILITY_DESCRIPTOR_SCHEMA]
-            validator_schema = catalog.common_schemas[_VALIDATOR_DESCRIPTOR_SCHEMA]
+            schema_version = self._versions.tool_contract_version.rsplit("/", 1)[1]
+            catalog = SchemaCatalog.load_packaged(schema_version)
+            common_prefix = (
+                "https://schemas.math-modeling-mcp.local/common/"
+                f"{schema_version}/"
+            )
+            capability_schema = catalog.common_schemas[
+                f"{common_prefix}modeling-capability.schema.json"
+            ]
+            validator_schema = catalog.common_schemas[
+                f"{common_prefix}modeling-validator.schema.json"
+            ]
         except (KeyError, OSError, ValueError) as error:
             raise RegistryError(
                 "INTEGRITY_FAILURE",

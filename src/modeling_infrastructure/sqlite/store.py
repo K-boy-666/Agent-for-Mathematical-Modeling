@@ -1590,6 +1590,11 @@ class SQLiteProjectStore:
                     experiment=self._experiment_from_row(experiment_row),
                     attempt=attempt,
                     replayed=True,
+                    artifact=(
+                        self._result_artifact_from_row(attempt_row)
+                        if self._schema_two
+                        else None
+                    ),
                 )
             if (
                 connection.execute(
@@ -1850,7 +1855,10 @@ class SQLiteProjectStore:
                     False,
                     {"subject": "database_relation"},
                 )
-            return StoredRunResult(attempt=item)
+            return StoredRunResult(
+                attempt=item,
+                artifact=command.result_artifact,
+            )
 
     def begin_validation(
         self, command: BeginValidationCommand
@@ -1937,7 +1945,13 @@ class SQLiteProjectStore:
                         {"subject": "database_relation"},
                     )
                 return BeginValidationResult(
-                    validation=replayed_validation, replayed=True
+                    validation=replayed_validation,
+                    replayed=True,
+                    report_artifact=(
+                        self._report_artifact_from_row(stored)
+                        if self._schema_two
+                        else None
+                    ),
                 )
             connection.execute(
                 """

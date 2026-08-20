@@ -16,6 +16,7 @@ from modeling_core.contracts.common import (
     Warning,
 )
 from modeling_core.contracts.errors import ErrorResponse
+from modeling_core.contracts.versions import VersionSet
 
 TOOL_NAMES = (
     "health_check",
@@ -119,10 +120,19 @@ class ExecutionOptions(StrictModel):
 class RunExperimentRequest(StrictModel):
     operation_id: EntityId
     project_id: EntityId
-    mode: Literal["new"]
+    mode: Literal["new", "rerun"]
+    experiment_id: EntityId | None = None
     capability: CapabilitySelection
     payload: RootFindingInput
     execution: ExecutionOptions | None = None
+
+    @model_validator(mode="after")
+    def validate_mode_identity(self) -> RunExperimentRequest:
+        if self.mode == "new" and self.experiment_id is not None:
+            raise ValueError("new mode forbids experiment_id")
+        if self.mode == "rerun" and self.experiment_id is None:
+            raise ValueError("rerun mode requires experiment_id")
+        return self
 
 
 class ValidateExperimentRequest(StrictModel):
@@ -131,13 +141,13 @@ class ValidateExperimentRequest(StrictModel):
     attempt_id: EntityId
     expected_result_hash: Hash
     validator_id: Literal["numerical.root_finding.residual"]
-    policy_version: Literal["0.1.0"]
+    policy_version: Literal["0.1.0", "1.0.0"]
     policy: JsonObject
     timeout_ms: Annotated[int, Field(ge=1, le=60000)] = 10000
 
 
 class CommonResult(StrictModel):
-    tool_contract_version: Literal["modeling-tools/0.1.0"]
+    tool_contract_version: Literal["modeling-tools/0.1.0", "modeling-tools/1.0.0"]
     correlation_id: EntityId
     server_time: Timestamp
 
@@ -148,21 +158,36 @@ class CommonWriteResult(CommonResult):
 
 
 class HealthVersions(StrictModel):
-    application_version: Literal["0.1.0"]
+    application_version: Literal["0.1.0", "0.2.0"]
     mcp_protocol_version: Literal["2025-11-25"]
-    tool_contract_version: Literal["modeling-tools/0.1.0"]
-    project_format_version: Literal["modeling-project/0.1.0"]
-    database_schema_version: Literal[1]
-    capability_api_version: Literal["modeling-capability/0.1.0"]
-    error_schema_version: Literal["modeling-error/0.1.0"]
-    result_schema_version: Literal["modeling-result/0.1.0"]
-    validation_report_schema_version: Literal["modeling-validation-report/0.1.0"]
-    canonicalization_version: Literal["canonical-json/0.1.0"]
-    root_finding_contract_version: Literal["numerical.root_finding/0.1.0"]
-    root_finding_canonical_input_version: Literal[
-        "numerical.root_finding.canonical-input/0.1.0"
+    tool_contract_version: Literal["modeling-tools/0.1.0", "modeling-tools/1.0.0"]
+    project_format_version: Literal[
+        "modeling-project/0.1.0", "modeling-project/1.0.0"
     ]
-    residual_policy_version: Literal["numerical.root_finding.residual/0.1.0"]
+    database_schema_version: Literal[1, 2]
+    capability_api_version: Literal[
+        "modeling-capability/0.1.0", "modeling-capability/1.0.0"
+    ]
+    error_schema_version: Literal["modeling-error/0.1.0", "modeling-error/1.0.0"]
+    result_schema_version: Literal[
+        "modeling-result/0.1.0", "modeling-result/1.0.0"
+    ]
+    validation_report_schema_version: Literal[
+        "modeling-validation-report/0.1.0",
+        "modeling-validation-report/1.0.0",
+    ]
+    canonicalization_version: Literal["canonical-json/0.1.0", "canonical-json/1.0.0"]
+    root_finding_contract_version: Literal[
+        "numerical.root_finding/0.1.0", "numerical.root_finding/1.0.0"
+    ]
+    root_finding_canonical_input_version: Literal[
+        "numerical.root_finding.canonical-input/0.1.0",
+        "numerical.root_finding.canonical-input/1.0.0",
+    ]
+    residual_policy_version: Literal[
+        "numerical.root_finding.residual/0.1.0",
+        "numerical.root_finding.residual/1.0.0",
+    ]
 
     @classmethod
     def m1a(cls) -> HealthVersions:
@@ -182,6 +207,28 @@ class HealthVersions(StrictModel):
                 "numerical.root_finding.canonical-input/0.1.0"
             ),
             residual_policy_version="numerical.root_finding.residual/0.1.0",
+        )
+
+    @classmethod
+    def from_version_set(cls, versions: VersionSet) -> HealthVersions:
+        return cls(
+            application_version=versions.application_release,
+            mcp_protocol_version=versions.mcp_protocol_version,
+            tool_contract_version=versions.tool_contract_version,
+            project_format_version=versions.project_format_version,
+            database_schema_version=versions.database_schema_version,
+            capability_api_version=versions.capability_api_version,
+            error_schema_version=versions.error_schema_version,
+            result_schema_version=versions.result_schema_version,
+            validation_report_schema_version=(
+                versions.validation_report_schema_version
+            ),
+            canonicalization_version=versions.canonicalization_version,
+            root_finding_contract_version=versions.root_finding_contract_version,
+            root_finding_canonical_input_version=(
+                versions.root_finding_canonical_input_version
+            ),
+            residual_policy_version=versions.residual_policy_version,
         )
 
 
@@ -204,7 +251,9 @@ class HealthCheckResult(CommonResult):
 class CreateProjectResult(CommonWriteResult):
     project_id: EntityId
     display_name: Annotated[str, Field(min_length=1, max_length=128)]
-    project_format_version: Literal["modeling-project/0.1.0"]
+    project_format_version: Literal[
+        "modeling-project/0.1.0", "modeling-project/1.0.0"
+    ]
     project_state: Literal["READY"]
     created: bool
     created_at: Timestamp
@@ -307,7 +356,8 @@ ExpressionNode: TypeAlias = Annotated[
 
 class CanonicalRootFindingInput(StrictModel):
     canonical_input_schema_version: Literal[
-        "numerical.root_finding.canonical-input/0.1.0"
+        "numerical.root_finding.canonical-input/0.1.0",
+        "numerical.root_finding.canonical-input/1.0.0",
     ]
     expression_ast: ExpressionNode
     lower: float
@@ -331,7 +381,7 @@ class ExperimentRecord(StrictModel):
     canonical_input_schema_version: str
     canonical_payload: CanonicalRootFindingInput
     canonical_payload_hash: Hash
-    canonicalization_version: Literal["canonical-json/0.1.0"]
+    canonicalization_version: Literal["canonical-json/0.1.0", "canonical-json/1.0.0"]
     model_snapshot_hash: Hash
     data_snapshot_references: tuple[DataSnapshotReference, ...]
     data_snapshot_set_hash: Hash
@@ -361,17 +411,17 @@ class NumericalFailureData(StrictModel):
 
 
 class SuccessResultPayload(StrictModel):
-    result_schema_version: Literal["modeling-result/0.1.0"]
+    result_schema_version: Literal["modeling-result/0.1.0", "modeling-result/1.0.0"]
     capability_id: Literal["numerical.root_finding"]
-    contract_version: Literal["0.1.0"]
+    contract_version: Literal["0.1.0", "1.0.0"]
     result_kind: Literal["success"]
     data: ResultSuccessData
 
 
 class FailureResultPayload(StrictModel):
-    result_schema_version: Literal["modeling-result/0.1.0"]
+    result_schema_version: Literal["modeling-result/0.1.0", "modeling-result/1.0.0"]
     capability_id: Literal["numerical.root_finding"]
-    contract_version: Literal["0.1.0"]
+    contract_version: Literal["0.1.0", "1.0.0"]
     result_kind: Literal["numerical_failure"]
     data: NumericalFailureData
 
@@ -384,7 +434,7 @@ ResultPayload: TypeAlias = Annotated[
 class ResultTrace(StrictModel):
     result_snapshot_id: EntityId
     result_kind: Literal["success", "numerical_failure"]
-    result_schema_version: Literal["modeling-result/0.1.0"]
+    result_schema_version: Literal["modeling-result/0.1.0", "modeling-result/1.0.0"]
     result_hash: Hash
     result_payload: ResultPayload
 
@@ -397,7 +447,7 @@ class ResultTrace(StrictModel):
 
 class EnvironmentSummary(StrictModel):
     python_version: str
-    application_version: Literal["0.1.0"]
+    application_version: Literal["0.1.0", "0.2.0"]
     lock_hash: Hash
 
 
@@ -534,15 +584,18 @@ class ValidationMetrics(StrictModel):
 
 
 class ValidationReportPayload(StrictModel):
-    report_schema_version: Literal["modeling-validation-report/0.1.0"]
+    report_schema_version: Literal[
+        "modeling-validation-report/0.1.0",
+        "modeling-validation-report/1.0.0",
+    ]
     validator_id: Literal["numerical.root_finding.residual"]
     validator_implementation_id: str
     validator_implementation_version: str
-    policy_version: Literal["0.1.0"]
+    policy_version: Literal["0.1.0", "1.0.0"]
     policy: JsonObject
     policy_hash: Hash
     capability_id: Literal["numerical.root_finding"]
-    contract_version: Literal["0.1.0"]
+    contract_version: Literal["0.1.0", "1.0.0"]
     canonical_payload_hash: Hash
     model_snapshot_hash: Hash
     data_snapshot_set_hash: Hash
@@ -566,7 +619,7 @@ class ValidationTrace(StrictModel):
     validator_id: Literal["numerical.root_finding.residual"]
     validator_implementation_id: str
     validator_implementation_version: str
-    policy_version: Literal["0.1.0"]
+    policy_version: Literal["0.1.0", "1.0.0"]
     policy: JsonObject
     policy_hash: Hash
     status: Literal[
@@ -724,8 +777,29 @@ class CapabilityLimits(StrictModel):
     max_evaluations: Annotated[int, Field(ge=0)]
 
 
+class ArtifactManifest(StrictModel):
+    artifact_id: Hash
+    role: Literal["result", "validation_report"]
+    sha256: Hash
+    media_type: Literal["application/json"]
+    size_bytes: Annotated[int, Field(ge=0)]
+    project_relative_path: Annotated[str, Field(min_length=1)]
+
+    @model_validator(mode="after")
+    def validate_identity_and_path(self) -> ArtifactManifest:
+        if self.artifact_id != self.sha256:
+            raise ValueError("artifact_id must equal sha256")
+        digest = self.sha256.removeprefix("sha256:")
+        expected = f".modeling/artifacts/sha256/{digest[:2]}/{digest}.json"
+        if self.project_relative_path != expected:
+            raise ValueError("project_relative_path must match the content hash")
+        return self
+
+
 class CapabilityContract(CapabilitySummary):
-    capability_api_version: Literal["modeling-capability/0.1.0"]
+    capability_api_version: Literal[
+        "modeling-capability/0.1.0", "modeling-capability/1.0.0"
+    ]
     implementation_id: str
     implementation_version: str
     input_schema: JsonObject
@@ -774,6 +848,20 @@ class RunExperimentSucceededResult(RunResultBase):
     result_kind: Literal["success"]
     result_hash: Hash
     result_summary: ResultSuccessData
+    artifacts: tuple[ArtifactManifest, ...] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1,
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def require_stable_result_artifact(self) -> RunExperimentSucceededResult:
+        if self.tool_contract_version == "modeling-tools/1.0.0" and (
+            self.artifacts is None or self.artifacts[0].role != "result"
+        ):
+            raise ValueError("stable result requires one result artifact")
+        return self
 
 
 class RunExperimentNumericalFailureResult(RunResultBase):
@@ -781,6 +869,22 @@ class RunExperimentNumericalFailureResult(RunResultBase):
     result_kind: Literal["numerical_failure"]
     result_hash: Hash
     result_summary: NumericalFailureData
+    artifacts: tuple[ArtifactManifest, ...] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1,
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def require_stable_result_artifact(
+        self,
+    ) -> RunExperimentNumericalFailureResult:
+        if self.tool_contract_version == "modeling-tools/1.0.0" and (
+            self.artifacts is None or self.artifacts[0].role != "result"
+        ):
+            raise ValueError("stable result requires one result artifact")
+        return self
 
 
 class RunExperimentErroredResult(RunResultBase):
@@ -808,7 +912,7 @@ class ValidationResultBase(CommonWriteResult):
     validator_id: Literal["numerical.root_finding.residual"]
     validator_implementation_id: str
     validator_implementation_version: str
-    policy_version: Literal["0.1.0"]
+    policy_version: Literal["0.1.0", "1.0.0"]
     policy_hash: Hash
 
 
@@ -817,6 +921,19 @@ class ValidateExperimentSucceededResult(ValidationResultBase):
     outcome: Literal["PASSED", "FAILED", "INCONCLUSIVE"]
     metrics: ValidationMetrics
     validation_report_hash: Hash
+    report_artifact: ArtifactManifest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def require_stable_report_artifact(self) -> ValidateExperimentSucceededResult:
+        if self.tool_contract_version == "modeling-tools/1.0.0" and (
+            self.report_artifact is None
+            or self.report_artifact.role != "validation_report"
+        ):
+            raise ValueError("stable validation requires one report artifact")
+        return self
 
 
 class ValidateExperimentErroredResult(ValidationResultBase):

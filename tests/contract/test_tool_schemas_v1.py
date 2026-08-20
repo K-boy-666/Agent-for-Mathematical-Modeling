@@ -4,14 +4,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 from jsonschema import Draft202012Validator
 
 from modeling_core.contracts.errors import TOOL_ERROR_CODES
+from modeling_core.contracts.capability import CancellationSignal, ExecutionContext
 from modeling_core.contracts.schema_catalog import SchemaCatalog
 from modeling_core.contracts.versions import VersionSet
+from modeling_core.ports.clock import Clock
 from modeling_core.version import M1B_APPLICATION_VERSION
+from modeling_capabilities.root_finding.solver import BisectionRootFindingCapability
+from modeling_capabilities.root_finding.validator import ResidualRootFindingValidator
+from modeling_mcp.adapter import ModelingMcpAdapter
+from modeling_core.application.facade import ApplicationFacade
+from modeling_core.registry import CapabilityRegistry
 
 ALL_TOOLS = (
     "health_check",
@@ -55,6 +63,19 @@ _ROOT_FINDING_SCHEMA_IDS = {
 }
 
 ALL_STABLE_IDS = _COMMON_SCHEMA_IDS | _TOOL_SCHEMA_IDS | _ROOT_FINDING_SCHEMA_IDS
+
+
+class _Clock:
+    def monotonic(self) -> float:
+        return 0.0
+
+    def utc_now(self) -> object:
+        raise AssertionError("solver must not read wall-clock time")
+
+
+class _Cancellation:
+    def is_cancelled(self) -> bool:
+        return False
 
 
 def test_catalog_loads_30_stable_tool_schemas() -> None:
@@ -115,6 +136,61 @@ def test_version_set_m1b_has_1_0_0_axes() -> None:
         "numerical.root_finding.canonical-input/1.0.0"
     )
     assert vs.residual_policy_version == "numerical.root_finding.residual/1.0.0"
+
+
+def test_explicit_stable_adapter_advertises_only_1_0() -> None:
+    adapter = ModelingMcpAdapter(
+        cast(ApplicationFacade, object()),
+        versions=VersionSet.m1b(),
+    )
+
+    advertised = json.dumps(
+        [tool.model_dump(mode="json") for tool in adapter.list_tools()]
+    )
+    assert "/1.0.0/" in advertised
+    assert "/0.1.0/" not in advertised
+
+
+def test_explicit_stable_capability_executes_with_one_version_set() -> None:
+    versions = VersionSet.m1b()
+    capability = BisectionRootFindingCapability(versions=versions)
+    canonical_input = capability.normalize_and_validate(
+        {"expression": "x - 1", "lower": 0, "upper": 2}
+    )
+    outcome = capability.execute(
+        canonical_input,
+        ExecutionContext(
+            attempt_id="00000000-0000-4000-8000-000000000001",
+            randomness="not_used",
+            seed=None,
+            deadline=1.0,
+            clock=cast(Clock, _Clock()),
+            cancellation=cast(CancellationSignal, _Cancellation()),
+        ),
+    )
+
+    assert capability.descriptor.capability_api_version == versions.capability_api_version
+    assert capability.descriptor.contract_version == "1.0.0"
+    assert capability.descriptor.validators[0].report_schema_version == (
+        versions.validation_report_schema_version
+    )
+    assert canonical_input.canonical_input_schema_version == (
+        versions.root_finding_canonical_input_version
+    )
+    assert outcome.result_payload.result_schema_version == versions.result_schema_version
+    assert outcome.result_payload.contract_version == "1.0.0"
+
+    registry = CapabilityRegistry(versions)
+    registry.register_capability(capability)
+    registry.register_validator(ResidualRootFindingValidator(versions))
+    summary = registry.seal(frozenset({("numerical.root_finding", "1.0.0")}))
+    assert summary.capability_count == 1
+    assert registry.resolve_validator(
+        "numerical.root_finding.residual",
+        "numerical.root_finding",
+        "1.0.0",
+        "1.0.0",
+    ).descriptor.policy_version == "1.0.0"
 
 
 def test_tool_names_unchanged_from_0_1() -> None:
@@ -268,6 +344,88 @@ def test_artifact_manifest_in_stable_result() -> None:
         # Must reference 1.0.0 common schemas, not 0.1.0
         assert "common/1.0.0" in schema_json
         assert "common/0.1.0" not in schema_json
+
+    digest = "a" * 64
+    artifact = {
+        "artifact_id": f"sha256:{digest}",
+        "role": "result",
+        "sha256": f"sha256:{digest}",
+        "media_type": "application/json",
+        "size_bytes": 12,
+        "project_relative_path": (
+            f".modeling/artifacts/sha256/{digest[:2]}/{digest}.json"
+        ),
+    }
+    run_result = {
+        "tool_contract_version": "modeling-tools/1.0.0",
+        "correlation_id": "123e4567-e89b-42d3-a456-426614174000",
+        "server_time": "2026-07-23T12:34:56.789Z",
+        "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+        "replayed": False,
+        "experiment_id": "223e4567-e89b-42d3-a456-426614174000",
+        "attempt_id": "323e4567-e89b-42d3-a456-426614174000",
+        "attempt_status": "SUCCEEDED",
+        "capability_id": "numerical.root_finding",
+        "contract_version": "1.0.0",
+        "implementation_id": "builtin.numerical.root_finding.bisection",
+        "implementation_version": "0.1.0",
+        "randomness": "not_used",
+        "seed": None,
+        "warnings": [],
+        "result_kind": "success",
+        "result_hash": f"sha256:{digest}",
+        "result_summary": {
+            "root": 1.0,
+            "function_value": 0.0,
+            "iterations": 1,
+            "evaluations": 3,
+            "termination_reason": "residual_tolerance",
+        },
+        "artifacts": [artifact],
+    }
+    validator = catalog.validator("run_experiment", "result")
+    assert list(validator.iter_errors(run_result)) == []
+    assert list(validator.iter_errors({k: v for k, v in run_result.items() if k != "artifacts"}))
+
+    report_artifact = {
+        **artifact,
+        "role": "validation_report",
+    }
+    validation_result = {
+        "tool_contract_version": "modeling-tools/1.0.0",
+        "correlation_id": "123e4567-e89b-42d3-a456-426614174000",
+        "server_time": "2026-07-23T12:34:56.789Z",
+        "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+        "replayed": False,
+        "validation_id": "223e4567-e89b-42d3-a456-426614174000",
+        "attempt_id": "323e4567-e89b-42d3-a456-426614174000",
+        "result_hash": f"sha256:{digest}",
+        "validator_id": "numerical.root_finding.residual",
+        "validator_implementation_id": "builtin.numerical.root_finding.residual",
+        "validator_implementation_version": "0.1.0",
+        "policy_version": "1.0.0",
+        "policy_hash": f"sha256:{digest}",
+        "validation_status": "SUCCEEDED",
+        "outcome": "PASSED",
+        "metrics": {
+            "root_within_interval": True,
+            "reported_function_value": 0.0,
+            "recomputed_function_value": 0.0,
+            "absolute_reported_delta": 0.0,
+            "absolute_residual": 0.0,
+            "function_tolerance": 1e-10,
+            "failed_checks": [],
+        },
+        "validation_report_hash": f"sha256:{digest}",
+        "report_artifact": report_artifact,
+    }
+    validator = catalog.validator("validate_experiment", "result")
+    assert list(validator.iter_errors(validation_result)) == []
+    assert list(
+        validator.iter_errors(
+            {k: v for k, v in validation_result.items() if k != "report_artifact"}
+        )
+    )
 
 
 def test_baseline_manifests_exist_and_are_valid() -> None:

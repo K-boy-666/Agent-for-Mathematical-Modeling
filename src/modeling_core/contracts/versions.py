@@ -1,24 +1,57 @@
 from __future__ import annotations
 
-from typing import Self
+from typing import Literal, Self
 
 from modeling_core.contracts.common import StrictModel
 
 
 class VersionSet(StrictModel):
-    application_release: str
-    mcp_protocol_version: str
-    tool_contract_version: str
-    project_format_version: str
-    database_schema_version: int
-    capability_api_version: str
-    error_schema_version: str
-    result_schema_version: str
-    validation_report_schema_version: str
-    canonicalization_version: str
-    root_finding_contract_version: str
-    root_finding_canonical_input_version: str
-    residual_policy_version: str
+    application_release: Literal["0.1.0", "0.2.0"]
+    mcp_protocol_version: Literal["2025-11-25"]
+    tool_contract_version: Literal["modeling-tools/0.1.0", "modeling-tools/1.0.0"]
+    project_format_version: Literal[
+        "modeling-project/0.1.0", "modeling-project/1.0.0"
+    ]
+    database_schema_version: Literal[1, 2]
+    capability_api_version: Literal[
+        "modeling-capability/0.1.0", "modeling-capability/1.0.0"
+    ]
+    error_schema_version: Literal["modeling-error/0.1.0", "modeling-error/1.0.0"]
+    result_schema_version: Literal[
+        "modeling-result/0.1.0", "modeling-result/1.0.0"
+    ]
+    validation_report_schema_version: Literal[
+        "modeling-validation-report/0.1.0",
+        "modeling-validation-report/1.0.0",
+    ]
+    canonicalization_version: Literal["canonical-json/0.1.0", "canonical-json/1.0.0"]
+    root_finding_contract_version: Literal[
+        "numerical.root_finding/0.1.0", "numerical.root_finding/1.0.0"
+    ]
+    root_finding_canonical_input_version: Literal[
+        "numerical.root_finding.canonical-input/0.1.0",
+        "numerical.root_finding.canonical-input/1.0.0",
+    ]
+    residual_policy_version: Literal[
+        "numerical.root_finding.residual/0.1.0",
+        "numerical.root_finding.residual/1.0.0",
+    ]
+
+    @property
+    def root_finding_contract_core(self) -> Literal["0.1.0", "1.0.0"]:
+        return (
+            "1.0.0"
+            if self.root_finding_contract_version.endswith("/1.0.0")
+            else "0.1.0"
+        )
+
+    @property
+    def residual_policy_core(self) -> Literal["0.1.0", "1.0.0"]:
+        return (
+            "1.0.0"
+            if self.residual_policy_version.endswith("/1.0.0")
+            else "0.1.0"
+        )
 
     @classmethod
     def m1a(cls) -> Self:

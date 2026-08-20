@@ -19,13 +19,17 @@ from modeling_core.contracts.tools import (
     PolicyContract,
     ValidatorSummary,
 )
+from modeling_core.contracts.versions import VersionSet
 
 _VALIDATOR_SUMMARY = "Independently recompute the reported root residual."
 
 
-def _packaged_schema(name: str, schema_version: str) -> SchemaReference:
+def _packaged_schema(
+    name: str, schema_version: str, versions: VersionSet
+) -> SchemaReference:
+    contract_version = versions.root_finding_contract_version.rsplit("/", 1)[1]
     asset = files("modeling_capabilities.root_finding").joinpath(
-        "schemas", "0.1.0", name
+        "schemas", contract_version, name
     )
     schema = cast(JsonObject, json.loads(asset.read_text(encoding="utf-8")))
     return SchemaReference(
@@ -35,14 +39,18 @@ def _packaged_schema(name: str, schema_version: str) -> SchemaReference:
     )
 
 
-def build_root_finding_descriptor() -> CapabilityDescriptor:
+def build_root_finding_descriptor(
+    versions: VersionSet | None = None,
+) -> CapabilityDescriptor:
     """Build the immutable descriptor from the packaged Schema assets."""
 
+    versions = versions or VersionSet.m1a()
+    contract_version = versions.root_finding_contract_version.rsplit("/", 1)[1]
     return CapabilityDescriptor(
         kind="built_in",
-        capability_api_version="modeling-capability/0.1.0",
+        capability_api_version=versions.capability_api_version,
         capability_id="numerical.root_finding",
-        contract_version="0.1.0",
+        contract_version=contract_version,
         implementation_id="builtin.numerical.root_finding.bisection",
         implementation_version="0.1.0",
         title="Bisection root finding",
@@ -53,19 +61,23 @@ def build_root_finding_descriptor() -> CapabilityDescriptor:
         randomness="not_used",
         input_schema=_packaged_schema(
             "input.schema.json",
-            "numerical.root_finding.input/0.1.0",
+            f"numerical.root_finding.input/{contract_version}",
+            versions,
         ),
         canonical_input_schema=_packaged_schema(
             "canonical-input.schema.json",
-            "numerical.root_finding.canonical-input/0.1.0",
+            versions.root_finding_canonical_input_version,
+            versions,
         ),
         success_schema=_packaged_schema(
             "success-data.schema.json",
-            "numerical.root_finding.success-data/0.1.0",
+            f"numerical.root_finding.success-data/{contract_version}",
+            versions,
         ),
         failure_schema=_packaged_schema(
             "failure-data.schema.json",
-            "numerical.root_finding.failure-data/0.1.0",
+            f"numerical.root_finding.failure-data/{contract_version}",
+            versions,
         ),
         default_limits=CapabilityLimits(
             timeout_ms=10_000,
@@ -80,44 +92,53 @@ def build_root_finding_descriptor() -> CapabilityDescriptor:
         artifact_roles=(),
         validators=cast(
             tuple[bytes, ...],
-            (build_residual_validator_summary(),),
+            (build_residual_validator_summary(versions),),
         ),
         context_ref="modeling://capabilities/numerical.root_finding/context",
     )
 
 
-def build_residual_validator_descriptor() -> ValidatorDescriptor:
+def build_residual_validator_descriptor(
+    versions: VersionSet | None = None,
+) -> ValidatorDescriptor:
     """Build the independent residual validator's immutable descriptor."""
 
+    versions = versions or VersionSet.m1a()
+    contract_version = versions.root_finding_contract_version.rsplit("/", 1)[1]
+    policy_version = versions.residual_policy_version.rsplit("/", 1)[1]
     return ValidatorDescriptor(
         kind="built_in",
         validator_id="numerical.root_finding.residual",
         supported_capabilities=(
             SupportedCapabilityRange(
                 capability_id="numerical.root_finding",
-                minimum_contract_version="0.1.0",
-                maximum_contract_version="0.1.0",
+                minimum_contract_version=contract_version,
+                maximum_contract_version=contract_version,
             ),
         ),
         implementation_id="builtin.numerical.root_finding.residual",
         implementation_version="0.1.0",
-        policy_version="0.1.0",
+        policy_version=policy_version,
         policy_schema=_packaged_schema(
             "policy.schema.json",
-            "0.1.0",
+            policy_version,
+            versions,
         ),
         report_schema=_packaged_schema(
             "report.schema.json",
-            "modeling-validation-report/0.1.0",
+            versions.validation_report_schema_version,
+            versions,
         ),
         summary=_VALIDATOR_SUMMARY,
     )
 
 
-def build_residual_validator_summary() -> ValidatorSummary:
+def build_residual_validator_summary(
+    versions: VersionSet | None = None,
+) -> ValidatorSummary:
     """Project the descriptor contract advertised by the capability."""
 
-    descriptor = build_residual_validator_descriptor()
+    descriptor = build_residual_validator_descriptor(versions)
     return ValidatorSummary(
         validator_id=descriptor.validator_id,
         policies=(

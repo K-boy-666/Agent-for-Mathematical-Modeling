@@ -450,9 +450,10 @@ class CanonicalInputRecord(StrictModel):
 
     def _decode_canonical_payload(self, value: bytes) -> JsonObject:
         decoded = cast(JsonObject, strict_json_loads(value))
-        if self.canonical_input_schema_version != (
-            "numerical.root_finding.canonical-input/0.1.0"
-        ):
+        if self.canonical_input_schema_version not in {
+            "numerical.root_finding.canonical-input/0.1.0",
+            "numerical.root_finding.canonical-input/1.0.0",
+        }:
             return decoded
         try:
             typed = CanonicalRootFindingInput.model_validate(decoded)

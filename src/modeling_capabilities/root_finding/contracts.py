@@ -219,6 +219,7 @@ def _validate_tolerance(field_name: str, value: float) -> None:
 
 def normalize_root_finding_input(
     raw_payload: JsonObject,
+    canonical_input_schema_version: str = CANONICAL_INPUT_SCHEMA_VERSION,
 ) -> CanonicalInputRecord:
     """Validate raw input and replace its expression text with canonical AST."""
 
@@ -276,7 +277,7 @@ def normalize_root_finding_input(
         )
 
     canonical_payload: JsonObject = {
-        "canonical_input_schema_version": CANONICAL_INPUT_SCHEMA_VERSION,
+        "canonical_input_schema_version": canonical_input_schema_version,
         "expression_ast": ast_to_canonical_json(expression_ast),
         "lower": numbers["lower"],
         "upper": numbers["upper"],
@@ -290,7 +291,7 @@ def normalize_root_finding_input(
         "ast": canonical_payload["expression_ast"],
     }
     return CanonicalInputRecord(
-        canonical_input_schema_version=CANONICAL_INPUT_SCHEMA_VERSION,
+        canonical_input_schema_version=canonical_input_schema_version,
         canonical_payload=canonical_payload,
         canonical_payload_hash=sha256_json(canonical_payload),
         model_snapshot_hash=sha256_json(model_snapshot),

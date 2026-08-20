@@ -49,6 +49,7 @@ from modeling_core.contracts.errors import (
     UnsupportedVersionDetails,
 )
 from modeling_core.contracts.tools import (
+    ArtifactManifest as PublicArtifactManifest,
     AssetSnapshotEntry,
     AttemptTrace,
     CapabilityContract,
@@ -143,18 +144,11 @@ from modeling_core.ports.project_store import (
 from modeling_core.registry import CapabilityRegistry, RegistryError
 
 _ENTITY_ID = TypeAdapter(EntityId)
-_RESULT_SCHEMA_ID = (
-    "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-result.schema.json"
-)
-_REPORT_SCHEMA_ID = (
-    "https://schemas.math-modeling-mcp.local/common/0.1.0/"
-    "modeling-validation-report.schema.json"
-)
 _MAX_RESPONSE_BYTES = 262144
 
 
 class _CommonFields(TypedDict):
-    tool_contract_version: Literal["modeling-tools/0.1.0"]
+    tool_contract_version: Literal["modeling-tools/0.1.0", "modeling-tools/1.0.0"]
     correlation_id: str
     server_time: str
 
@@ -182,7 +176,7 @@ class _ValidationResultFields(_CommonFields):
     validator_id: Literal["numerical.root_finding.residual"]
     validator_implementation_id: str
     validator_implementation_version: str
-    policy_version: Literal["0.1.0"]
+    policy_version: Literal["0.1.0", "1.0.0"]
     policy_hash: str
 
 
@@ -205,7 +199,23 @@ def _project_summary(project: Project) -> ProjectSummary:
     )
 
 
-def _experiment_record(experiment: Experiment) -> ExperimentRecord:
+def _public_artifact(artifact: Artifact) -> PublicArtifactManifest:
+    digest = artifact.sha256.removeprefix("sha256:")
+    return PublicArtifactManifest(
+        artifact_id=artifact.artifact_id,
+        role=cast(Literal["result", "validation_report"], artifact.role),
+        sha256=artifact.sha256,
+        media_type=cast(Literal["application/json"], artifact.media_type),
+        size_bytes=artifact.byte_size,
+        project_relative_path=(
+            f".modeling/artifacts/sha256/{digest[:2]}/{digest}.json"
+        ),
+    )
+
+
+def _experiment_record(
+    experiment: Experiment, versions: VersionSet
+) -> ExperimentRecord:
     return ExperimentRecord(
         experiment_id=experiment.experiment_id,
         project_id=experiment.project_id,
@@ -214,7 +224,7 @@ def _experiment_record(experiment: Experiment) -> ExperimentRecord:
         canonical_input_schema_version=experiment.canonical_input_schema_version,
         canonical_payload=experiment.canonical_payload,
         canonical_payload_hash=experiment.canonical_payload_hash,
-        canonicalization_version="canonical-json/0.1.0",
+        canonicalization_version=versions.canonicalization_version,
         model_snapshot_hash=experiment.model_snapshot_hash,
         data_snapshot_references=experiment.data_snapshot_references,
         data_snapshot_set_hash=experiment.data_snapshot_set_hash,
@@ -329,6 +339,15 @@ class ModelingApplication(ApplicationFacade):
             )
         self._artifact_store = artifact_store
         self._environment_document = environment_document
+        schema_version = versions.result_schema_version.rsplit("/", 1)[1]
+        self._result_schema_id = (
+            "https://schemas.math-modeling-mcp.local/common/"
+            f"{schema_version}/modeling-result.schema.json"
+        )
+        self._report_schema_id = (
+            "https://schemas.math-modeling-mcp.local/common/"
+            f"{schema_version}/modeling-validation-report.schema.json"
+        )
         if not 1 <= len(default_display_name) <= 128:
             raise ValueError("default_display_name must contain 1 to 128 characters")
         if unicodedata.normalize("NFC", default_display_name) != default_display_name:
@@ -351,19 +370,15 @@ class ModelingApplication(ApplicationFacade):
 
     def _common(self) -> _CommonFields:
         return {
-            "tool_contract_version": cast(
-                Literal["modeling-tools/0.1.0"],
-                self._versions.tool_contract_version,
-            ),
+            "tool_contract_version": self._versions.tool_contract_version,
             "correlation_id": self._ids.new_uuid4(),
             "server_time": _timestamp(self._clock.utc_now()),
         }
 
-    @staticmethod
-    def _raise_store(error: ProjectStoreError, correlation_id: str) -> NoReturn:
+    def _raise_store(self, error: ProjectStoreError, correlation_id: str) -> NoReturn:
         response = ErrorResponse.model_validate(
             {
-                "error_schema_version": "modeling-error/0.1.0",
+                "error_schema_version": self._versions.error_schema_version,
                 "code": error.code,
                 "message": error.message,
                 "retryable": error.retryable,
@@ -392,8 +407,8 @@ class ModelingApplication(ApplicationFacade):
             )
         )
 
-    @staticmethod
     def _error_response(
+        self,
         *,
         correlation_id: str,
         code: str,
@@ -403,7 +418,7 @@ class ModelingApplication(ApplicationFacade):
     ) -> ErrorResponse:
         return ErrorResponse.model_validate(
             {
-                "error_schema_version": "modeling-error/0.1.0",
+                "error_schema_version": self._versions.error_schema_version,
                 "code": code,
                 "message": message,
                 "retryable": retryable,
@@ -494,7 +509,7 @@ class ModelingApplication(ApplicationFacade):
             ready_for_project_creation=inspection.state
             in {ProjectState.UNINITIALIZED, ProjectState.STORAGE_READY}
             and not degraded,
-            versions=HealthVersions.m1a(),
+            versions=HealthVersions.from_version_set(self._versions),
             registry=self._registry_summary,
             checks=checks,
             warnings=(),
@@ -713,7 +728,7 @@ class ModelingApplication(ApplicationFacade):
             ]
 
         project = _project_summary(trace.project)
-        experiment = _experiment_record(trace.experiment)
+        experiment = _experiment_record(trace.experiment, self._versions)
 
         def response_bytes(page: list[AttemptTrace | ValidationTrace]) -> int:
             candidate = GetProjectStatusExperimentResult(
@@ -845,7 +860,9 @@ class ModelingApplication(ApplicationFacade):
             success_schema_hash=descriptor.success_schema.schema_hash,
             failure_schema_hash=descriptor.failure_schema.schema_hash,
             capability_api_version=cast(
-                Literal["modeling-capability/0.1.0"],
+                Literal[
+                    "modeling-capability/0.1.0", "modeling-capability/1.0.0"
+                ],
                 descriptor.capability_api_version,
             ),
             implementation_id=descriptor.implementation_id,
@@ -875,6 +892,7 @@ class ModelingApplication(ApplicationFacade):
         replayed: bool,
         experiment: Experiment,
         attempt: Attempt,
+        artifact: Artifact | None,
     ) -> RunExperimentResult:
         base: _RunResultFields = {
             **common,
@@ -901,6 +919,7 @@ class ModelingApplication(ApplicationFacade):
                 result_kind="success",
                 result_hash=attempt.result.result_hash,
                 result_summary=attempt.result.result_payload.data,
+                artifacts=(_public_artifact(artifact),) if artifact else None,
             )
         if attempt.status is AttemptStatus.NUMERICAL_FAILURE:
             if attempt.result is None or not isinstance(
@@ -915,6 +934,7 @@ class ModelingApplication(ApplicationFacade):
                 result_kind="numerical_failure",
                 result_hash=attempt.result.result_hash,
                 result_summary=attempt.result.result_payload.data,
+                artifacts=(_public_artifact(artifact),) if artifact else None,
             )
         if attempt.status is AttemptStatus.ERRORED:
             if attempt.system_error is None:
@@ -1113,6 +1133,7 @@ class ModelingApplication(ApplicationFacade):
                     replayed=True,
                     experiment=begun.experiment,
                     attempt=begun.attempt,
+                    artifact=begun.artifact,
                 )
 
             started_at = _millisecond_utc(self._clock.utc_now())
@@ -1172,10 +1193,7 @@ class ModelingApplication(ApplicationFacade):
                     result_snapshot_id=self._ids.new_uuid4(),
                     attempt_id=pending.attempt_id,
                     result_kind=ResultKind(outcome.result_kind),
-                    result_schema_version=cast(
-                        Literal["modeling-result/0.1.0"],
-                        self._versions.result_schema_version,
-                    ),
+                    result_schema_version=self._versions.result_schema_version,
                     result_hash=result_hash,
                     result_payload=strict_result_payload,
                 )
@@ -1224,7 +1242,7 @@ class ModelingApplication(ApplicationFacade):
                     manifest = artifact_sink.publish_json(
                         "result",
                         result_snapshot.result_payload.model_dump(mode="json"),
-                        _RESULT_SCHEMA_ID,
+                        self._result_schema_id,
                     )
                     if manifest.artifact_id != result_snapshot.result_hash:
                         raise ArtifactStoreError(
@@ -1294,6 +1312,7 @@ class ModelingApplication(ApplicationFacade):
                 replayed=False,
                 experiment=experiment,
                 attempt=stored.attempt,
+                artifact=stored.artifact,
             )
         finally:
             self._release_write()
@@ -1305,6 +1324,7 @@ class ModelingApplication(ApplicationFacade):
         operation_id: str,
         replayed: bool,
         validation: Validation,
+        report_artifact: Artifact | None,
     ) -> ValidateExperimentResult:
         base: _ValidationResultFields = {
             **common,
@@ -1334,6 +1354,9 @@ class ModelingApplication(ApplicationFacade):
                 outcome=validation.outcome.value,
                 metrics=validation.metrics,
                 validation_report_hash=validation.validation_report_hash,
+                report_artifact=(
+                    _public_artifact(report_artifact) if report_artifact else None
+                ),
             )
         if validation.status is ValidationStatus.ERRORED:
             if validation.operational_error is None:
@@ -1560,6 +1583,7 @@ class ModelingApplication(ApplicationFacade):
                     operation_id=request.operation_id,
                     replayed=True,
                     validation=begun.validation,
+                    report_artifact=begun.report_artifact,
                 )
 
             started_at = _millisecond_utc(self._clock.utc_now())
@@ -1655,7 +1679,7 @@ class ModelingApplication(ApplicationFacade):
                     report_manifest = self._artifact_store.publish_json(
                         "validation_report",
                         report_payload.model_dump(mode="json"),
-                        _REPORT_SCHEMA_ID,
+                        self._report_schema_id,
                     )
                     if report_manifest.artifact_id != report_hash:
                         raise ArtifactStoreError(
@@ -1726,6 +1750,7 @@ class ModelingApplication(ApplicationFacade):
                 operation_id=request.operation_id,
                 replayed=False,
                 validation=stored.validation,
+                report_artifact=stored.report_artifact,
             )
         finally:
             self._release_write()
@@ -1857,9 +1882,7 @@ class ModelingApplication(ApplicationFacade):
                 )
 
             return RegisterProblemAssetsResult(
-                tool_contract_version="modeling-tools/0.1.0",
-                correlation_id=correlation_id,
-                server_time=common["server_time"],
+                **common,
                 operation_id=request.operation_id,
                 replayed=False,
                 project_id=request.project_id,
@@ -1902,9 +1925,7 @@ class ModelingApplication(ApplicationFacade):
             self._mmir_revisions[request.subproblem_id] = mmir_revision
 
             return PutSubproblemMmirResult(
-                tool_contract_version="modeling-tools/0.1.0",
-                correlation_id=correlation_id,
-                server_time=common["server_time"],
+                **common,
                 operation_id=request.operation_id,
                 replayed=False,
                 project_id=request.project_id,
@@ -1971,9 +1992,7 @@ class ModelingApplication(ApplicationFacade):
             self._confirmed_mmir[request.subproblem_id] = request.mmir_revision
 
             return ConfirmSubproblemMmirResult(
-                tool_contract_version="modeling-tools/0.1.0",
-                correlation_id=correlation_id,
-                server_time=common["server_time"],
+                **common,
                 operation_id=request.operation_id,
                 replayed=False,
                 project_id=request.project_id,
@@ -2025,9 +2044,7 @@ class ModelingApplication(ApplicationFacade):
                 )
 
             return ExportSubproblemResult(
-                tool_contract_version="modeling-tools/0.1.0",
-                correlation_id=correlation_id,
-                server_time=common["server_time"],
+                **common,
                 operation_id=request.operation_id,
                 replayed=False,
                 project_id=request.project_id,

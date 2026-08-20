@@ -39,6 +39,7 @@ from modeling_core.contracts.tools import (
     RunExperimentRequest,
     ValidateExperimentRequest,
 )
+from modeling_core.contracts.versions import VersionSet
 
 ToolArguments = dict[str, Any]
 ToolInvoker = Callable[[ApplicationFacade, ToolArguments], BaseModel]
@@ -371,9 +372,15 @@ _DISPATCH: dict[str, ToolInvoker] = {
 class ModelingMcpAdapter:
     """Translate the six public application operations to MCP tools."""
 
-    def __init__(self, facade: ApplicationFacade) -> None:
+    def __init__(
+        self,
+        facade: ApplicationFacade,
+        versions: VersionSet | None = None,
+    ) -> None:
         self._facade = facade
-        self._catalog = SchemaCatalog.load_packaged("0.1.0")
+        self._versions = versions or VersionSet.m1a()
+        contract_version = self._versions.tool_contract_version.rsplit("/", 1)[1]
+        self._catalog = SchemaCatalog.load_packaged(contract_version)
         self._tools = tuple(
             Tool(
                 name=name,
@@ -413,7 +420,7 @@ class ModelingMcpAdapter:
         reason: InvalidRequestReason,
     ) -> CallToolResult:
         response = ErrorResponse(
-            error_schema_version="modeling-error/0.1.0",
+            error_schema_version=self._versions.error_schema_version,
             code="INVALID_REQUEST",
             message="request does not match the tool schema",
             retryable=False,
@@ -427,7 +434,7 @@ class ModelingMcpAdapter:
 
     def _internal_error(self, name: str, correlation_id: str) -> CallToolResult:
         response = ErrorResponse(
-            error_schema_version="modeling-error/0.1.0",
+            error_schema_version=self._versions.error_schema_version,
             code="INTERNAL_ERROR",
             message="tool request failed unexpectedly",
             retryable=False,
@@ -484,7 +491,7 @@ class ModelingMcpAdapter:
             return self._internal_error(name, correlation_id)
         if observed > INLINE_RESPONSE_MAX_BYTES:
             response = ErrorResponse(
-                error_schema_version="modeling-error/0.1.0",
+                error_schema_version=self._versions.error_schema_version,
                 code="RESOURCE_LIMIT_EXCEEDED",
                 message="inline response exceeds the byte limit",
                 retryable=False,

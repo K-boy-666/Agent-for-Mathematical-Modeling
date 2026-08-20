@@ -57,7 +57,9 @@ def _validate_timestamp(value: object) -> datetime:
 class Project:
     project_id: EntityId
     storage_instance_id: EntityId
-    project_format_version: Literal["modeling-project/0.1.0"]
+    project_format_version: Literal[
+        "modeling-project/0.1.0", "modeling-project/1.0.0"
+    ]
     display_name: DisplayName
     created_at: datetime
 
@@ -69,7 +71,10 @@ class Project:
         object.__setattr__(
             self,
             "project_format_version",
-            _validate(self.project_format_version, Literal["modeling-project/0.1.0"]),
+            _validate(
+                self.project_format_version,
+                Literal["modeling-project/0.1.0", "modeling-project/1.0.0"],
+            ),
         )
         object.__setattr__(
             self, "display_name", _validate(self.display_name, DisplayName)
@@ -84,7 +89,8 @@ class Experiment:
     capability_id: str
     contract_version: Version
     canonical_input_schema_version: Literal[
-        "numerical.root_finding.canonical-input/0.1.0"
+        "numerical.root_finding.canonical-input/0.1.0",
+        "numerical.root_finding.canonical-input/1.0.0",
     ]
     canonical_payload: CanonicalRootFindingInput
     canonical_payload_hash: Hash
@@ -108,7 +114,10 @@ class Experiment:
             "canonical_input_schema_version",
             _validate(
                 self.canonical_input_schema_version,
-                Literal["numerical.root_finding.canonical-input/0.1.0"],
+                Literal[
+                    "numerical.root_finding.canonical-input/0.1.0",
+                    "numerical.root_finding.canonical-input/1.0.0",
+                ],
             ),
         )
         object.__setattr__(
@@ -141,7 +150,7 @@ class ResultSnapshot:
     result_snapshot_id: EntityId
     attempt_id: EntityId
     result_kind: ResultKind
-    result_schema_version: Literal["modeling-result/0.1.0"]
+    result_schema_version: Literal["modeling-result/0.1.0", "modeling-result/1.0.0"]
     result_hash: Hash
     result_payload: ResultPayload
 
@@ -154,7 +163,10 @@ class ResultSnapshot:
         object.__setattr__(
             self,
             "result_schema_version",
-            _validate(self.result_schema_version, Literal["modeling-result/0.1.0"]),
+            _validate(
+                self.result_schema_version,
+                Literal["modeling-result/0.1.0", "modeling-result/1.0.0"],
+            ),
         )
         object.__setattr__(self, "result_hash", _validate(self.result_hash, Hash))
         object.__setattr__(
@@ -322,7 +334,7 @@ class Validation:
     validator_id: Literal["numerical.root_finding.residual"]
     validator_implementation_id: str
     validator_implementation_version: Version
-    policy_version: Literal["0.1.0"]
+    policy_version: Literal["0.1.0", "1.0.0"]
     policy: JsonObject
     policy_hash: Hash
     status: ValidationStatus
@@ -361,7 +373,9 @@ class Validation:
             _validate(self.validator_implementation_version, Version),
         )
         object.__setattr__(
-            self, "policy_version", _validate(self.policy_version, Literal["0.1.0"])
+            self,
+            "policy_version",
+            _validate(self.policy_version, Literal["0.1.0", "1.0.0"]),
         )
         object.__setattr__(self, "policy", _validate(self.policy, JsonObject))
         object.__setattr__(self, "policy_hash", _validate(self.policy_hash, Hash))

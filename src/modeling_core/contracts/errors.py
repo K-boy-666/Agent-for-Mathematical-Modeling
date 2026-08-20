@@ -172,7 +172,7 @@ _DETAIL_BY_CODE: dict[str, type[StrictModel]] = {
 
 
 class ErrorResponse(StrictModel):
-    error_schema_version: Literal["modeling-error/0.1.0"]
+    error_schema_version: Literal["modeling-error/0.1.0", "modeling-error/1.0.0"]
     code: ErrorCode
     message: Annotated[str, Field(min_length=1, max_length=1024)]
     retryable: bool
