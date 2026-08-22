@@ -5,6 +5,11 @@ import subprocess
 import sys
 import tomllib
 
+import pytest
+
+from modeling_cli.main import main
+from modeling_harness import verify as verification
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -30,6 +35,22 @@ def test_verify_help_requires_a_milestone_for_evidence() -> None:
     completed = run_module("modeling_cli", "verify", "--help")
     assert completed.returncode == 0
     assert "--milestone {m1a,c1,m1b}" in completed.stdout
+
+
+def test_focused_capability_verification_does_not_require_a_milestone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches the documented focused command being rejected by argparse."""
+    observed: list[tuple[Path, str]] = []
+
+    def focused(repository_root: Path, capability_id: str) -> int:
+        observed.append((repository_root, capability_id))
+        return 0
+
+    monkeypatch.setattr(verification, "_run_capability_focused", focused)
+
+    assert main(["verify", "--capability", "numerical.root_finding"]) == 0
+    assert observed == [(Path.cwd().resolve(), "numerical.root_finding")]
 
 
 def test_editable_install_is_safe_in_checkout_locale() -> None:

@@ -1885,9 +1885,14 @@ def _run_schema_compatibility(repository_root: Path) -> bool:
 
 
 def _execute(arguments: argparse.Namespace) -> int:
-    milestone = cast(Milestone, arguments.milestone)
+    milestone = cast(Milestone | None, arguments.milestone)
     only = cast(list[str] | None, getattr(arguments, "only", None))
     capability = cast(str | None, getattr(arguments, "capability", None))
+    if milestone is None:
+        if capability is not None and only is None:
+            return _run_capability_focused(Path.cwd().resolve(), capability)
+        print("--milestone is required for completion evidence", file=sys.stderr)
+        return 2
     return run_verification(milestone, only=only, capability=capability)
 
 
@@ -1933,7 +1938,7 @@ def add_verify_parser(
         "--milestone",
         type=Milestone,
         choices=tuple(Milestone),
-        required=True,
+        required=False,
     )
     parser.add_argument(
         "--only",
