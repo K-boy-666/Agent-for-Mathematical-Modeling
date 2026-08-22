@@ -18,6 +18,7 @@ from urllib.request import url2pathname
 import pytest
 
 from modeling_core.contracts.versions import VersionSet
+from modeling_core.ports.artifact_store import ArtifactStore
 from modeling_infrastructure import diagnostic_snapshot as snapshot_impl
 from modeling_infrastructure.diagnostic_snapshot import (
     DiagnosticSnapshotError,
@@ -1987,10 +1988,15 @@ def test_doctor_binds_composition_only_to_owned_snapshot_root(
     built_roots: list[Path] = []
     original_build = doctor.build_composition
 
-    def observed_build(root: Path, *, versions: VersionSet | None = None) -> object:
+    def observed_build(
+        root: Path,
+        *,
+        versions: VersionSet | None = None,
+        artifact_store: ArtifactStore | None = None,
+    ) -> object:
         assert root.resolve() != source_root
         built_roots.append(root.resolve())
-        return original_build(root, versions=versions)
+        return original_build(root, versions=versions, artifact_store=artifact_store)
 
     monkeypatch.setattr(doctor, "build_composition", observed_build)
     stdout = io.StringIO()

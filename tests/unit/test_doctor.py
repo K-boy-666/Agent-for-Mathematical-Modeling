@@ -4,6 +4,7 @@ import io
 import json
 import math
 import shutil
+import sqlite3
 from contextlib import contextmanager
 from importlib.resources import files
 from pathlib import Path
@@ -18,6 +19,10 @@ from modeling_core.contracts.tools import (
     ValidateExperimentSucceededResult,
 )
 from modeling_core.domain.states import ProjectState
+from modeling_core.ports.artifact_store import (
+    ArtifactInspectionReport,
+    ArtifactManifest,
+)
 from modeling_core.ports.project_store import (
     LegacyAttempt,
     LegacyIdempotencyRecord,
@@ -209,6 +214,52 @@ def test_degraded_legacy_and_integrity_failures_are_unsafe() -> None:
     assert checks["legacy-operations"] == ("FAIL", "stale_operation")
 
 
+def test_m1b_findings_distinguish_unsafe_references_from_safe_orphans() -> None:
+    """Catches doctor hiding artifact drift or treating safe debris as corruption."""
+    artifact = ArtifactManifest(
+        artifact_id="sha256:" + "1" * 64,
+        role="result",
+        media_type="application/json",
+        byte_size=2,
+        sha256="sha256:" + "1" * 64,
+        schema_id="modeling-result/1.0.0",
+        created_at="2026-08-22T00:00:00.000Z",
+    )
+    application = _Application("READY", "DEGRADED")
+    store = _Store(
+        StoreIntegrityReport(
+            state=ProjectState.DEGRADED,
+            issues=("artifact_reference", "input_drift"),
+            check=StoreIntegrityCheck("integrity", "PASS"),
+            artifact_inspection=ArtifactInspectionReport(
+                referenced_artifact_ids=(artifact.artifact_id,),
+                present_artifacts=(),
+                missing_artifacts=(artifact.artifact_id,),
+                orphan_artifacts=(artifact,),
+                staging_files=("previous-session.json",),
+            ),
+            input_drift_ids=(_uuid(20),),
+            recovered_entity_ids=(_uuid(21),),
+            reproducibility_metadata_issue_ids=(),
+        )
+    )
+
+    from modeling_cli.doctor import diagnose_project
+
+    report = diagnose_project(application, store, "INITIALIZED", True)
+    checks = _checks(report)
+
+    assert (report["status"], report["exit_code"]) == ("UNSAFE", 2)
+    assert checks["artifact_references"] == ("FAIL", "missing_or_tampered")
+    assert checks["input_drift"] == ("FAIL", "detected")
+    assert checks["recovery_state"] == ("PASS", "recovered")
+    assert checks["orphan_artifacts"] == ("WARN", "present")
+    assert checks["staging_files"] == ("WARN", "present")
+    assert checks["reproducibility_metadata"] == ("PASS", "complete")
+    assert report["warnings"] == ["orphan_artifacts", "staging_files"]
+    assert report["unsafe_findings"] == ["artifact_references", "input_drift"]
+
+
 def test_doctor_uses_shared_facade_and_store_without_starting_inspected_composition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -294,6 +345,15 @@ def test_all_snapshot_failure_codes_map_to_empty_redacted_pre_store_payload(
         "legacy_attempts": [],
         "legacy_validations": [],
         "legacy_idempotency_records": [],
+        "m1b": {
+            "referenced_artifact_ids": [],
+            "missing_artifact_ids": [],
+            "orphan_artifact_ids": [],
+            "staging_files": [],
+            "input_drift_ids": [],
+            "recovered_entity_ids": [],
+            "reproducibility_metadata_issue_ids": [],
+        },
     }
     assert secret not in stdout.getvalue()
 
@@ -1057,3 +1117,96 @@ def test_deep_root_smoke_rejects_each_type_correct_wrong_result_field(
     )
 
     assert doctor._run_deep_smoke()[1] == expected
+
+
+def test_doctor_inspects_a_real_schema_two_artifact_graph_read_only(
+    tmp_path: Path,
+) -> None:
+    """Catches doctor binding a stable project with preview versions and hiding artifacts."""
+    from modeling_bootstrap.composition import build_composition
+    from modeling_cli.doctor import run_doctor
+    from modeling_core.contracts.tools import (
+        CapabilitySelection,
+        CreateProjectRequest,
+        RootFindingInput,
+        RunExperimentRequest,
+        ValidateExperimentRequest,
+    )
+
+    composition = build_composition(tmp_path)
+    with composition:
+        project = composition.application.create_project(
+            CreateProjectRequest(operation_id=_uuid(100))
+        )
+        run = composition.application.run_experiment(
+            RunExperimentRequest(
+                operation_id=_uuid(101),
+                project_id=project.project_id,
+                mode="new",
+                capability=CapabilitySelection(
+                    capability_id="numerical.root_finding",
+                    contract_version="1.0.0",
+                ),
+                payload=RootFindingInput(expression="x*x-2", lower=0.0, upper=2.0),
+            )
+        )
+        composition.application.validate_experiment(
+            ValidateExperimentRequest(
+                operation_id=_uuid(102),
+                project_id=project.project_id,
+                attempt_id=run.attempt_id,
+                expected_result_hash=run.result_hash,
+                validator_id="numerical.root_finding.residual",
+                policy_version="1.0.0",
+                policy={},
+            )
+        )
+    before = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    stdout = io.StringIO()
+
+    exit_code = run_doctor(tmp_path, True, True, stdout=stdout)
+    assert exit_code == 0, stdout.getvalue()
+
+    report = json.loads(stdout.getvalue())
+    assert _checks(report)["artifact_references"] == ("PASS", "verified")
+    assert _checks(report)["input_drift"] == ("PASS", "clean")
+    assert _checks(report)["reproducibility_metadata"] == ("PASS", "complete")
+    after = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+    def assert_artifact_unsafe() -> None:
+        unsafe_stdout = io.StringIO()
+        assert run_doctor(tmp_path, True, True, stdout=unsafe_stdout) == 2
+        assert _checks(json.loads(unsafe_stdout.getvalue()))["artifact_references"] == (
+            "FAIL",
+            "missing_or_tampered",
+        )
+
+    with sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3") as database:
+        result_row = database.execute(
+            "SELECT * FROM result_snapshots WHERE attempt_id=?", (run.attempt_id,)
+        ).fetchone()
+        assert result_row is not None
+        database.execute(
+            "DELETE FROM result_snapshots WHERE attempt_id=?", (run.attempt_id,)
+        )
+        database.commit()
+    assert_artifact_unsafe()
+
+    with sqlite3.connect(tmp_path / ".modeling" / "state.sqlite3") as database:
+        database.execute(
+            "INSERT INTO result_snapshots VALUES (?, ?, ?, ?, ?, ?)", result_row
+        )
+        database.execute(
+            "UPDATE validations SET report_artifact_id=NULL WHERE status='SUCCEEDED'"
+        )
+        database.commit()
+    assert_artifact_unsafe()

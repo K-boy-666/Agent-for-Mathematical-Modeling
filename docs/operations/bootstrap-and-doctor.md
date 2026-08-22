@@ -19,8 +19,11 @@ uv run --locked --no-sync modeling doctor --project-root PATH --deep --json
 ```
 
 doctor 从受控只读快照诊断，不修复、不迁移、不写权威状态。
-普通模式检查状态、Schema、注册表和 SQLite 完整性；deep 增加独立锁与真实求根烟测。
-退出码：0 就绪，1 警告，2 不安全或退化。JSON 输出版本化、脱敏且不含绝对路径。
+普通模式检查状态、Schema、注册表和 SQLite 完整性；deep 增加独立锁、真实求根烟测，
+以及 M1b 的制品引用、输入漂移、恢复状态、孤立制品、暂存文件和可复现元数据检查。
+孤立制品或暂存文件产生警告；引用损坏、输入漂移或元数据不完整属于不安全。
+退出码：0 就绪，1 警告，2 不安全或退化。JSON 输出版本化、脱敏且不含绝对路径，
+并分别列出 `warnings` 与 `unsafe_findings`。
 
 ## Codex 项目配置
 

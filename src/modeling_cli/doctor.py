@@ -16,6 +16,7 @@ from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from modeling_bootstrap.composition import build_composition
 from modeling_core.application.facade import ApplicationFacade
 from modeling_core.contracts.schema_catalog import SchemaCatalog
+from modeling_core.contracts.canonical_json import strict_json_loads
 from modeling_core.contracts.tools import (
     CapabilitySelection,
     CreateProjectRequest,
@@ -34,6 +35,8 @@ from modeling_core.ports.project_store import (
     ProjectStoreError,
     StoreIntegrityReport,
 )
+from modeling_infrastructure.artifacts.store import ContentAddressedArtifactStore
+from modeling_infrastructure.project_paths import ProjectPaths
 from modeling_infrastructure.diagnostic_snapshot import (
     DiagnosticSnapshotError,
     SourceStateHint,
@@ -119,12 +122,22 @@ def _storage_payload(report: StoreIntegrityReport | None) -> dict[str, object]:
             "legacy_attempts": [],
             "legacy_validations": [],
             "legacy_idempotency_records": [],
+            "m1b": {
+                "referenced_artifact_ids": [],
+                "missing_artifact_ids": [],
+                "orphan_artifact_ids": [],
+                "staging_files": [],
+                "input_drift_ids": [],
+                "recovered_entity_ids": [],
+                "reproducibility_metadata_issue_ids": [],
+            },
         }
     check = (
         None
         if report.check is None
         else {"mode": report.check.mode, "outcome": report.check.outcome}
     )
+    artifact_report = report.artifact_inspection
     return {
         "check": check,
         "issues": list(report.issues),
@@ -145,7 +158,96 @@ def _storage_payload(report: StoreIntegrityReport | None) -> dict[str, object]:
             }
             for item in report.legacy_idempotency_records
         ],
+        "m1b": {
+            "referenced_artifact_ids": (
+                list(artifact_report.referenced_artifact_ids[:100])
+                if artifact_report
+                else []
+            ),
+            "missing_artifact_ids": (
+                list(artifact_report.missing_artifacts[:100]) if artifact_report else []
+            ),
+            "orphan_artifact_ids": (
+                sorted(item.artifact_id for item in artifact_report.orphan_artifacts)[
+                    :100
+                ]
+                if artifact_report
+                else []
+            ),
+            "staging_files": (
+                list(artifact_report.staging_files[:100]) if artifact_report else []
+            ),
+            "input_drift_ids": list(report.input_drift_ids),
+            "recovered_entity_ids": list(report.recovered_entity_ids),
+            "reproducibility_metadata_issue_ids": list(
+                report.reproducibility_metadata_issue_ids
+            ),
+        },
     }
+
+
+def _m1b_checks(report: StoreIntegrityReport | None) -> list[dict[str, str]]:
+    if report is None:
+        return [
+            _check("artifact_references", "FAIL", "unavailable"),
+            _check("input_drift", "FAIL", "unavailable"),
+            _check("recovery_state", "FAIL", "unavailable"),
+            _check("orphan_artifacts", "FAIL", "unavailable"),
+            _check("staging_files", "FAIL", "unavailable"),
+            _check("reproducibility_metadata", "FAIL", "unavailable"),
+        ]
+    inspection = report.artifact_inspection
+    is_m1b = inspection is not None or bool(
+        {"artifact_reference", "input_drift", "reproducibility_metadata"}
+        & set(report.issues)
+    )
+    if not is_m1b:
+        return [
+            _check(name, "PASS", "not_applicable")
+            for name in (
+                "artifact_references",
+                "input_drift",
+                "recovery_state",
+                "orphan_artifacts",
+                "staging_files",
+                "reproducibility_metadata",
+            )
+        ]
+    artifact_failed = "artifact_reference" in report.issues
+    return [
+        _check(
+            "artifact_references",
+            "FAIL" if artifact_failed else "PASS",
+            "missing_or_tampered"
+            if inspection is not None and artifact_failed
+            else ("unavailable" if artifact_failed else "verified"),
+        ),
+        _check(
+            "input_drift",
+            "FAIL" if report.input_drift_ids else "PASS",
+            "detected" if report.input_drift_ids else "clean",
+        ),
+        _check(
+            "recovery_state",
+            "PASS",
+            "recovered" if report.recovered_entity_ids else "none",
+        ),
+        _check(
+            "orphan_artifacts",
+            "WARN" if inspection and inspection.orphan_artifacts else "PASS",
+            "present" if inspection and inspection.orphan_artifacts else "none",
+        ),
+        _check(
+            "staging_files",
+            "WARN" if inspection and inspection.staging_files else "PASS",
+            "present" if inspection and inspection.staging_files else "none",
+        ),
+        _check(
+            "reproducibility_metadata",
+            "FAIL" if report.reproducibility_metadata_issue_ids else "PASS",
+            "incomplete" if report.reproducibility_metadata_issue_ids else "complete",
+        ),
+    ]
 
 
 def _failure_report(code: str, deep: bool) -> DoctorReport:
@@ -175,6 +277,7 @@ def _failure_report(code: str, deep: bool) -> DoctorReport:
             config_code,
         ),
     ]
+    checks.extend(_m1b_checks(None))
     if deep:
         checks.extend(
             (
@@ -191,6 +294,8 @@ def _failure_report(code: str, deep: bool) -> DoctorReport:
         "deep": deep,
         "checks": checks,
         "storage": _storage_payload(None),
+        "warnings": [],
+        "unsafe_findings": [item["name"] for item in _m1b_checks(None)],
     }
 
 
@@ -429,6 +534,8 @@ def diagnose_project(
             config_code,
         ),
     ]
+    m1b_checks = _m1b_checks(integrity)
+    checks.extend(m1b_checks)
     if deep:
         smoke = _run_deep_smoke()
         if smoke is None:  # deterministic unit-test seam
@@ -463,6 +570,10 @@ def diagnose_project(
         "deep": deep,
         "checks": checks,
         "storage": _storage_payload(integrity),
+        "warnings": [item["name"] for item in m1b_checks if item["status"] == "WARN"],
+        "unsafe_findings": [
+            item["name"] for item in m1b_checks if item["status"] == "FAIL"
+        ],
     }
 
 
@@ -482,6 +593,44 @@ def _validate_report(report: DoctorReport) -> None:
     schema = _load_report_schema()
     Draft202012Validator.check_schema(schema)
     Draft202012Validator(schema).validate(report)
+
+
+def _snapshot_versions(project_root: Path) -> VersionSet:
+    project_file = project_root / ".modeling" / "project.json"
+    if not project_file.exists():
+        return VersionSet.m1a()
+    raw = project_file.read_bytes()
+    if len(raw) > 64 * 1024:
+        raise ValueError("project metadata exceeds the diagnostic bound")
+    document = strict_json_loads(raw)
+    if not isinstance(document, dict):
+        raise ValueError("project metadata must be an object")
+    if (
+        document.get("project_format_version")
+        == VersionSet.m1b().project_format_version
+    ):
+        return VersionSet.m1b()
+    return VersionSet.m1a()
+
+
+def _prepare_stable_snapshot_layout(
+    project_root: Path, versions: VersionSet
+) -> tuple[Path, ...]:
+    if versions.database_schema_version != 2:
+        return ()
+    modeling = project_root / ".modeling"
+    staging = modeling / "staging"
+    artifacts = modeling / "artifacts"
+    sha256 = artifacts / "sha256"
+    staging.mkdir()
+    artifacts.mkdir()
+    sha256.mkdir()
+    return sha256, artifacts, staging
+
+
+def _remove_empty_snapshot_layout(paths: tuple[Path, ...]) -> None:
+    for path in paths:
+        path.rmdir()
 
 
 def _render_report(report: DoctorReport, json_output: bool, stdout: IO[str]) -> None:
@@ -512,8 +661,21 @@ def run_doctor(
     try:
         try:
             with materialize_diagnostic_snapshot(project_root) as snapshot:
+                versions = _snapshot_versions(snapshot.project_root)
+                temporary_layout = _prepare_stable_snapshot_layout(
+                    snapshot.project_root, versions
+                )
+                source_artifact_store = (
+                    ContentAddressedArtifactStore(
+                        ProjectPaths.bind(project_root), schema_version="1.0.0"
+                    )
+                    if versions.database_schema_version == 2
+                    else None
+                )
                 composition = build_composition(
-                    snapshot.project_root, versions=VersionSet.m1a()
+                    snapshot.project_root,
+                    versions=versions,
+                    artifact_store=source_artifact_store,
                 )
                 try:
                     report = diagnose_project(
@@ -525,6 +687,7 @@ def run_doctor(
                 finally:
                     try:
                         composition.close()
+                        _remove_empty_snapshot_layout(temporary_layout)
                     except BaseException:
                         raise DiagnosticSnapshotError(
                             "snapshot_cleanup_failed"

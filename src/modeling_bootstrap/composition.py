@@ -22,6 +22,7 @@ from modeling_core.application.recovery import RecoveryService
 from modeling_core.application.service import ModelingApplication
 from modeling_core.contracts.versions import VersionSet
 from modeling_core.ports.faults import FaultInjector, NoFaults
+from modeling_core.ports.artifact_store import ArtifactStore
 from modeling_core.registry import CapabilityRegistry
 from modeling_infrastructure.artifacts.store import ContentAddressedArtifactStore
 from modeling_infrastructure.environment import (
@@ -96,6 +97,7 @@ def build_composition(
     *,
     versions: VersionSet | None = None,
     fault_injector: FaultInjector | None = None,
+    artifact_store: ArtifactStore | None = None,
 ) -> ModelingComposition:
     """Assemble and seal one application without starting storage."""
     versions = VersionSet.m1b() if versions is None else versions
@@ -104,16 +106,15 @@ def build_composition(
     session_id = ids.new_uuid4()
     faults = fault_injector or NoFaults()
     lock_file = Path(__file__).parents[2] / "uv.lock"
-    artifact_store = (
-        ContentAddressedArtifactStore(
+    if versions.database_schema_version == 2 and artifact_store is None:
+        artifact_store = ContentAddressedArtifactStore(
             ProjectPaths.bind(project_root),
             schema_version=versions.tool_contract_version.rsplit("/", 1)[1],
             session_id=session_id,
             fault_injector=faults,
         )
-        if versions.database_schema_version == 2
-        else None
-    )
+    if versions.database_schema_version != 2 and artifact_store is not None:
+        raise ValueError("schema 1 composition does not accept an artifact store")
     store = SQLiteProjectStore(
         project_root,
         versions,

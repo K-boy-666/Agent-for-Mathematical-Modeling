@@ -2411,6 +2411,11 @@ class SQLiteProjectStore:
         legacy_attempts: tuple[LegacyAttempt, ...] = ()
         legacy_validations: tuple[LegacyValidation, ...] = ()
         legacy_operations: tuple[LegacyIdempotencyRecord, ...] = ()
+        referenced_artifact_ids: tuple[str, ...] = ()
+        input_drift_ids: tuple[str, ...] = ()
+        recovered_entity_ids: tuple[str, ...] = ()
+        reproducibility_metadata_issue_ids: tuple[str, ...] = ()
+        artifact_inspection = None
         try:
             with self._read() as connection:
                 try:
@@ -2554,12 +2559,163 @@ class SQLiteProjectStore:
                 else:
                     if legacy_operations:
                         issues.append("stale_operation")
+                if self._versions.database_schema_version == 2 and deep:
+                    try:
+                        referenced_artifact_ids = tuple(
+                            row[0]
+                            for row in connection.execute(
+                                """
+                                SELECT result_artifact_id FROM result_snapshots
+                                UNION
+                                SELECT report_artifact_id FROM validations
+                                 WHERE report_artifact_id IS NOT NULL
+                                ORDER BY 1 COLLATE BINARY
+                                """
+                            ).fetchall()
+                        )
+                        artifact_schema_version = (
+                            self._versions.result_schema_version.rsplit("/", 1)[1]
+                        )
+                        result_schema_id = (
+                            "https://schemas.math-modeling-mcp.local/common/"
+                            f"{artifact_schema_version}/modeling-result.schema.json"
+                        )
+                        report_schema_id = (
+                            "https://schemas.math-modeling-mcp.local/common/"
+                            f"{artifact_schema_version}/"
+                            "modeling-validation-report.schema.json"
+                        )
+                        invalid_artifact_relation = connection.execute(
+                            """
+                            SELECT 1
+                              FROM attempts AS a
+                         LEFT JOIN result_snapshots AS r
+                                ON r.attempt_id=a.attempt_id
+                         LEFT JOIN artifacts AS art
+                                ON art.artifact_id=r.result_artifact_id
+                             WHERE (a.status IN ('SUCCEEDED','NUMERICAL_FAILURE')
+                                    AND r.result_snapshot_id IS NULL)
+                                OR (a.status NOT IN ('SUCCEEDED','NUMERICAL_FAILURE')
+                                    AND r.result_snapshot_id IS NOT NULL)
+                                OR (r.result_snapshot_id IS NOT NULL AND (
+                                       r.result_hash<>r.result_artifact_id
+                                       OR art.artifact_id IS NULL
+                                       OR art.sha256<>r.result_artifact_id
+                                       OR art.role<>'result'
+                                       OR art.media_type<>'application/json'
+                                       OR art.schema_id<>?
+                                   ))
+                            UNION ALL
+                            SELECT 1
+                              FROM validations AS v
+                         LEFT JOIN result_snapshots AS r
+                                ON r.attempt_id=v.attempt_id
+                         LEFT JOIN artifacts AS art
+                                ON art.artifact_id=v.report_artifact_id
+                             WHERE r.result_hash IS NULL
+                                OR v.expected_result_hash<>v.result_hash
+                                OR v.result_hash<>r.result_hash
+                                OR (v.status='SUCCEEDED' AND (
+                                       v.validation_report_hash IS NULL
+                                       OR v.report_artifact_id IS NULL
+                                   ))
+                                OR ((v.validation_report_hash IS NULL)
+                                    <> (v.report_artifact_id IS NULL))
+                                OR (v.report_artifact_id IS NOT NULL AND (
+                                       v.validation_report_hash<>v.report_artifact_id
+                                       OR art.artifact_id IS NULL
+                                       OR art.sha256<>v.report_artifact_id
+                                       OR art.role<>'validation_report'
+                                       OR art.media_type<>'application/json'
+                                       OR art.schema_id<>?
+                                   ))
+                             LIMIT 1
+                            """,
+                            (result_schema_id, report_schema_id),
+                        ).fetchone()
+                        input_drift_ids = tuple(
+                            row[0]
+                            for row in connection.execute(
+                                """
+                                SELECT e.experiment_id
+                                  FROM experiments AS e
+                                  JOIN input_snapshots AS i
+                                    ON i.input_snapshot_id=e.input_snapshot_id
+                                 WHERE e.canonical_input_schema_version<>i.canonical_input_schema_version
+                                    OR e.canonical_payload_hash<>i.canonical_payload_hash
+                                    OR e.model_snapshot_hash<>i.model_snapshot_hash
+                                    OR e.data_snapshot_references<>i.data_snapshot_references
+                                    OR e.data_snapshot_set_hash<>i.data_snapshot_set_hash
+                                 ORDER BY e.experiment_id COLLATE BINARY
+                                 LIMIT 100
+                                """
+                            ).fetchall()
+                        )
+                        recovered_entity_ids = tuple(
+                            row[0]
+                            for row in connection.execute(
+                                """
+                                SELECT attempt_id FROM attempts
+                                 WHERE status='ABANDONED' AND terminal_reason='server_recovery'
+                                UNION
+                                SELECT validation_id FROM validations
+                                 WHERE status='ABANDONED' AND terminal_reason='server_recovery'
+                                ORDER BY 1 COLLATE BINARY
+                                LIMIT 100
+                                """
+                            ).fetchall()
+                        )
+                        reproducibility_metadata_issue_ids = tuple(
+                            row[0]
+                            for row in connection.execute(
+                                """
+                                SELECT a.attempt_id
+                                  FROM attempts AS a
+                                  JOIN experiments AS e
+                                    ON e.experiment_id=a.experiment_id
+                                 WHERE e.capability_id='numerical.root_finding'
+                                   AND (a.randomness<>'not_used' OR a.seed IS NOT NULL
+                                        OR a.implementation_id=''
+                                        OR a.implementation_version='')
+                                 ORDER BY a.attempt_id COLLATE BINARY
+                                 LIMIT 100
+                                """
+                            ).fetchall()
+                        )
+                    except (sqlite3.DatabaseError, IndexError, TypeError, ValueError):
+                        issues.append("database_relation")
+                    else:
+                        if invalid_artifact_relation is not None:
+                            issues.append("artifact_reference")
+                        if input_drift_ids:
+                            issues.append("input_drift")
+                        if reproducibility_metadata_issue_ids:
+                            issues.append("reproducibility_metadata")
+            if (
+                self._versions.database_schema_version == 2
+                and deep
+                and self._artifact_store
+            ):
+                try:
+                    artifact_inspection = self._artifact_store.inspect(
+                        frozenset(referenced_artifact_ids)
+                    )
+                except Exception:
+                    issues.append("artifact_reference")
+                else:
+                    if artifact_inspection.missing_artifacts:
+                        issues.append("artifact_reference")
         except (ProjectStoreError, OSError, sqlite3.DatabaseError, ValueError):
             check = StoreIntegrityCheck(mode=mode, outcome="ERROR")
             issues = ["database_relation"]
             legacy_attempts = ()
             legacy_validations = ()
             legacy_operations = ()
+            referenced_artifact_ids = ()
+            input_drift_ids = ()
+            recovered_entity_ids = ()
+            reproducibility_metadata_issue_ids = ()
+            artifact_inspection = None
         return StoreIntegrityReport(
             state=ProjectState.DEGRADED if issues else inspection.state,
             issues=tuple(sorted(set(issues), key=lambda item: item.encode("utf-8"))),
@@ -2567,6 +2723,10 @@ class SQLiteProjectStore:
             legacy_attempts=legacy_attempts,
             legacy_validations=legacy_validations,
             legacy_idempotency_records=legacy_operations,
+            artifact_inspection=artifact_inspection,
+            input_drift_ids=input_drift_ids,
+            recovered_entity_ids=recovered_entity_ids,
+            reproducibility_metadata_issue_ids=reproducibility_metadata_issue_ids,
         )
 
 

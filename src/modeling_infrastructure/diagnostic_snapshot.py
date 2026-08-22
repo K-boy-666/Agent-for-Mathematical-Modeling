@@ -36,7 +36,8 @@ _MESSAGES: dict[SnapshotFailureCode, str] = {
 }
 _REQUIRED_NAMES = frozenset({"project.json", "state.sqlite3", "project.lock"})
 _OPTIONAL_NAMES = frozenset({"state.sqlite3-wal", "state.sqlite3-shm"})
-_ALLOWED_NAMES = _REQUIRED_NAMES | _OPTIONAL_NAMES
+_DIRECTORY_NAMES = frozenset({"artifacts", "staging"})
+_ALLOWED_NAMES = _REQUIRED_NAMES | _OPTIONAL_NAMES | _DIRECTORY_NAMES
 _PERSISTENT_NAMES = ("project.json", "state.sqlite3", "state.sqlite3-wal")
 _SOURCE_PROJECT_JSON_LIMIT = 64 * 1024
 _SOURCE_DATABASE_LIMIT = 64 * 1024 * 1024
@@ -109,6 +110,7 @@ class _Manifest:
     persistent: tuple[tuple[str, _StableFile], ...]
     lock: _LockMetadata
     shm_identity: tuple[int, int] | None
+    directories: tuple[tuple[str, tuple[int, int]], ...]
 
     def member(self, name: str) -> _StableFile:
         for member_name, details in self.persistent:
@@ -388,7 +390,10 @@ class _DirectoryGuard:
                         break
                     _check_deadline(started_at)
                     entries.append(entry.name)
-                    if len(entries) > len(_ALLOWED_NAMES):
+                    if (
+                        len(entries) > len(_ALLOWED_NAMES)
+                        or entry.name not in _ALLOWED_NAMES
+                    ):
                         _raise("snapshot_unstable" if changed else "snapshot_invalid")
                     _check_deadline(started_at)
             _check_deadline(started_at)
@@ -636,6 +641,14 @@ def _capture_manifest(
         if _is_reparse(shm_details) or not stat.S_ISREG(shm_details.st_mode):
             _raise("snapshot_invalid")
         shm_identity = _identity(shm_details)
+    directories: list[tuple[str, tuple[int, int]]] = []
+    for name in sorted(_DIRECTORY_NAMES, key=lambda item: item.encode("utf-8")):
+        if name not in names:
+            continue
+        details = guard.stat_member(name, changed=changed)
+        if _is_reparse(details) or not stat.S_ISDIR(details.st_mode):
+            _raise("snapshot_invalid")
+        directories.append((name, _identity(details)))
     _check_deadline(started_at)
     return _Manifest(
         directory_identity=_identity(directory),
@@ -647,6 +660,7 @@ def _capture_manifest(
             mtime_ns=lock_details.st_mtime_ns,
         ),
         shm_identity=shm_identity,
+        directories=tuple(directories),
     )
 
 

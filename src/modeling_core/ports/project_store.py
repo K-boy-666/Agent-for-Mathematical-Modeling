@@ -37,6 +37,7 @@ from modeling_core.domain.states import (
     ResultKind,
     ValidationStatus,
 )
+from modeling_core.ports.artifact_store import ArtifactInspectionReport
 
 _DISPLAY_NAME = Annotated[str, Field(min_length=1, max_length=128)]
 _ENTITY_ID = TypeAdapter(EntityId)
@@ -76,6 +77,9 @@ StoreIntegrityIssue = Literal[
     "stale_operation",
     "database_relation",
     "project_state",
+    "artifact_reference",
+    "input_drift",
+    "reproducibility_metadata",
 ]
 LegacyOperationTool = Literal["run_experiment", "validate_experiment"]
 
@@ -706,6 +710,10 @@ class StoreIntegrityReport:
     legacy_attempts: tuple[LegacyAttempt, ...] = ()
     legacy_validations: tuple[LegacyValidation, ...] = ()
     legacy_idempotency_records: tuple[LegacyIdempotencyRecord, ...] = ()
+    artifact_inspection: ArtifactInspectionReport | None = None
+    input_drift_ids: tuple[EntityId, ...] = ()
+    recovered_entity_ids: tuple[EntityId, ...] = ()
+    reproducibility_metadata_issue_ids: tuple[EntityId, ...] = ()
 
     def __post_init__(self) -> None:
         state = _validate(self.state, ProjectState)
@@ -725,6 +733,24 @@ class StoreIntegrityReport:
         _require_sorted_unique_attempts(attempts)
         _require_sorted_unique_validations(validations)
         _require_sorted_unique_operations(operations)
+        if (
+            self.artifact_inspection is not None
+            and type(self.artifact_inspection) is not ArtifactInspectionReport
+        ):
+            raise TypeError(
+                "artifact_inspection must be ArtifactInspectionReport or None"
+            )
+        for field_name in (
+            "input_drift_ids",
+            "recovered_entity_ids",
+            "reproducibility_metadata_issue_ids",
+        ):
+            values = _validate(getattr(self, field_name), tuple[EntityId, ...])
+            if len(values) > 100 or len(set(values)) != len(values):
+                raise ValueError(f"{field_name} must contain at most 100 unique IDs")
+            if values != tuple(sorted(values, key=lambda item: item.encode("utf-8"))):
+                raise ValueError(f"{field_name} must use UTF-8 byte order")
+            object.__setattr__(self, field_name, values)
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "issues", issues)
         object.__setattr__(self, "legacy_attempts", attempts)

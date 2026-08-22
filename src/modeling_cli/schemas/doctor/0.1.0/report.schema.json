@@ -12,7 +12,9 @@
     "ready_for_project_creation",
     "deep",
     "checks",
-    "storage"
+    "storage",
+    "warnings",
+    "unsafe_findings"
   ],
   "properties": {
     "schema_version": {"const": "modeling-doctor-report/0.1.0"},
@@ -37,12 +39,30 @@
         {"$ref": "#/$defs/legacy-operations"},
         {"$ref": "#/$defs/schema-assets"},
         {"$ref": "#/$defs/codex-config"},
+        {"$ref": "#/$defs/artifact-references"},
+        {"$ref": "#/$defs/input-drift"},
+        {"$ref": "#/$defs/recovery-state"},
+        {"$ref": "#/$defs/orphan-artifacts"},
+        {"$ref": "#/$defs/staging-files"},
+        {"$ref": "#/$defs/reproducibility-metadata"},
         {"$ref": "#/$defs/deep-lock-smoke"},
         {"$ref": "#/$defs/deep-root-smoke"}
       ],
       "items": false
     },
-    "storage": {"$ref": "#/$defs/storage"}
+    "storage": {"$ref": "#/$defs/storage"},
+    "warnings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["orphan_artifacts", "staging_files"]}
+    },
+    "unsafe_findings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": ["artifact_references", "input_drift", "recovery_state", "orphan_artifacts", "staging_files", "reproducibility_metadata"]
+      }
+    }
   },
   "allOf": [
     {
@@ -69,8 +89,8 @@
     },
     {
       "if": {"properties": {"deep": {"const": true}}},
-      "then": {"properties": {"checks": {"minItems": 13, "maxItems": 13}}},
-      "else": {"properties": {"checks": {"minItems": 11, "maxItems": 11}}}
+      "then": {"properties": {"checks": {"minItems": 19, "maxItems": 19}}},
+      "else": {"properties": {"checks": {"minItems": 17, "maxItems": 17}}}
     },
     {
       "if": {"properties": {"status": {"const": "READY"}}},
@@ -108,10 +128,7 @@
       "if": {"properties": {"status": {"const": "WARNING"}}},
       "then": {
         "properties": {
-          "project_state": {"const": "UNINITIALIZED"},
-          "ready_for_project_creation": {"const": true},
           "checks": {
-            "$ref": "#/$defs/uninitialized-store-checks",
             "contains": {
               "properties": {"status": {"const": "WARN"}},
               "required": ["status"]
@@ -124,9 +141,13 @@
                 "required": ["status"]
               }
             }
-          },
-          "storage": {"$ref": "#/$defs/empty-storage"}
-        }
+          }
+        },
+        "oneOf": [
+          {"properties": {"project_state": {"const": "UNINITIALIZED"}, "ready_for_project_creation": {"const": true}, "storage": {"$ref": "#/$defs/empty-storage"}}},
+          {"properties": {"project_state": {"const": "STORAGE_READY"}, "ready_for_project_creation": {"const": true}}},
+          {"properties": {"project_state": {"const": "READY"}, "ready_for_project_creation": {"const": false}}}
+        ]
       }
     },
     {
@@ -139,13 +160,7 @@
               "properties": {"status": {"const": "FAIL"}},
               "required": ["status"]
             },
-            "minContains": 1,
-            "not": {
-              "contains": {
-                "properties": {"status": {"const": "WARN"}},
-                "required": ["status"]
-              }
-            }
+            "minContains": 1
           }
         }
       }
@@ -155,11 +170,15 @@
       "then": {
         "properties": {
           "checks": {
-            "prefixItems": [
-              {},
-              {"properties": {"status": {"const": "WARN"}, "code": {"const": "uninitialized"}}}
+            "allOf": [
+              {"$ref": "#/$defs/uninitialized-store-checks"},
+              {"prefixItems": [
+                {},
+                {"properties": {"status": {"const": "WARN"}, "code": {"const": "uninitialized"}}}
+              ]}
             ]
-          }
+          },
+          "storage": {"$ref": "#/$defs/empty-storage"}
         }
       }
     },
@@ -954,6 +973,68 @@
         }
       ]
     },
+    "artifact-references": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {"properties": {"name": {"const": "artifact_references"}, "code": {"enum": ["not_applicable", "verified", "missing_or_tampered", "unavailable"]}},
+         "oneOf": [
+           {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_applicable", "verified"]}}},
+           {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["missing_or_tampered", "unavailable"]}}}
+         ]}
+      ]
+    },
+    "input-drift": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {"properties": {"name": {"const": "input_drift"}, "code": {"enum": ["not_applicable", "clean", "detected", "unavailable"]}},
+         "oneOf": [
+           {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_applicable", "clean"]}}},
+           {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["detected", "unavailable"]}}}
+         ]}
+      ]
+    },
+    "recovery-state": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {"properties": {"name": {"const": "recovery_state"}, "code": {"enum": ["not_applicable", "none", "recovered", "unavailable"]}},
+         "oneOf": [
+           {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_applicable", "none", "recovered"]}}},
+           {"properties": {"status": {"const": "FAIL"}, "code": {"const": "unavailable"}}}
+         ]}
+      ]
+    },
+    "orphan-artifacts": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {"properties": {"name": {"const": "orphan_artifacts"}, "code": {"enum": ["not_applicable", "none", "present", "unavailable"]}},
+         "oneOf": [
+           {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_applicable", "none"]}}},
+           {"properties": {"status": {"const": "WARN"}, "code": {"const": "present"}}},
+           {"properties": {"status": {"const": "FAIL"}, "code": {"const": "unavailable"}}}
+         ]}
+      ]
+    },
+    "staging-files": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {"properties": {"name": {"const": "staging_files"}, "code": {"enum": ["not_applicable", "none", "present", "unavailable"]}},
+         "oneOf": [
+           {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_applicable", "none"]}}},
+           {"properties": {"status": {"const": "WARN"}, "code": {"const": "present"}}},
+           {"properties": {"status": {"const": "FAIL"}, "code": {"const": "unavailable"}}}
+         ]}
+      ]
+    },
+    "reproducibility-metadata": {
+      "allOf": [
+        {"$ref": "#/$defs/check-base"},
+        {"properties": {"name": {"const": "reproducibility_metadata"}, "code": {"enum": ["not_applicable", "complete", "incomplete", "unavailable"]}},
+         "oneOf": [
+           {"properties": {"status": {"const": "PASS"}, "code": {"enum": ["not_applicable", "complete"]}}},
+           {"properties": {"status": {"const": "FAIL"}, "code": {"enum": ["incomplete", "unavailable"]}}}
+         ]}
+      ]
+    },
     "deep-lock-smoke": {
       "allOf": [
         {"$ref": "#/$defs/check-base"},
@@ -1122,7 +1203,8 @@
         "issues",
         "legacy_attempts",
         "legacy_validations",
-        "legacy_idempotency_records"
+        "legacy_idempotency_records",
+        "m1b"
       ],
       "properties": {
         "check": {
@@ -1131,7 +1213,7 @@
         "issues": {
           "type": "array",
           "uniqueItems": true,
-          "maxItems": 8,
+          "maxItems": 11,
           "items": {
             "enum": [
               "sqlite_quick_check",
@@ -1141,7 +1223,10 @@
               "stale_validation",
               "stale_operation",
               "database_relation",
-              "project_state"
+              "project_state",
+              "artifact_reference",
+              "input_drift",
+              "reproducibility_metadata"
             ]
           }
         },
@@ -1162,7 +1247,22 @@
           "uniqueItems": true,
           "maxItems": 100,
           "items": {"$ref": "#/$defs/legacy-operation"}
-        }
+        },
+        "m1b": {"$ref": "#/$defs/m1b-storage"}
+      }
+    },
+    "m1b-storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["referenced_artifact_ids", "missing_artifact_ids", "orphan_artifact_ids", "staging_files", "input_drift_ids", "recovered_entity_ids", "reproducibility_metadata_issue_ids"],
+      "properties": {
+        "referenced_artifact_ids": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+        "missing_artifact_ids": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+        "orphan_artifact_ids": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+        "staging_files": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"type": "string", "maxLength": 128}},
+        "input_drift_ids": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"$ref": "#/$defs/uuid"}},
+        "recovered_entity_ids": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"$ref": "#/$defs/uuid"}},
+        "reproducibility_metadata_issue_ids": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"$ref": "#/$defs/uuid"}}
       }
     }
   }
