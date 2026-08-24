@@ -26,7 +26,7 @@ jobs:
           enable-cache: false
       - run: uv sync --locked --group dev
       - name: Diagnose first integration failure
-        run: uv run --locked --no-sync pytest tests/integration -x -vv --tb=short
+        run: uv run --locked --no-sync pytest tests/integration/test_mcp_lifecycle.py::test_two_process_first_create_race_publishes_one_complete_project -vv --tb=short --showlocals
         env:
           UV: ${{ steps.setup-uv.outputs.uv-path }}
       - uses: actions/upload-artifact@v7
