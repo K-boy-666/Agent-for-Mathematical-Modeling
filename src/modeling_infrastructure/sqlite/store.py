@@ -874,7 +874,8 @@ class SQLiteProjectStore:
                 False,
                 {"condition": "project_degraded", "current_state": "DEGRADED"},
             )
-        if not self._paths.modeling.exists():
+        first_bootstrap = not self._paths.modeling.exists()
+        if first_bootstrap:
             try:
                 bootstrap_storage(self._paths.root, self._versions)
             except StorageError as error:
@@ -885,7 +886,19 @@ class SQLiteProjectStore:
                         error.retryable,
                         cast(JsonObject, error.details),
                     ) from error
-        self.start_writer_session()
+        try:
+            self.start_writer_session()
+        except ProjectStoreError as error:
+            cause = error.__cause__
+            if not (
+                first_bootstrap
+                and isinstance(cause, StorageError)
+                and cause.code == "INTEGRITY_FAILURE"
+                and str(cause) == "project storage layout is incomplete or unexpected"
+            ):
+                raise
+            # The first validation closes sidecars left by a competing bootstrap reader.
+            self.start_writer_session()
         try:
             metadata = load_storage_metadata(self._paths.root, self._versions)
         except StorageError as error:

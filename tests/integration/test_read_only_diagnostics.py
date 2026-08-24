@@ -139,7 +139,7 @@ def test_diagnostic_snapshot_opens_no_sqlite_connection_or_project_lock_on_sourc
     with materialize_diagnostic_snapshot(tmp_path) as diagnostic:
         assert diagnostic.project_root != tmp_path
         assert len(sqlite_targets) == 1
-        assert sqlite_targets[0].is_relative_to(diagnostic.project_root)
+        assert sqlite_targets[0].parent.parent.samefile(diagnostic.project_root)
         assert memory_targets == 1
         assert {target.name for target in sqlite_targets} == {"state.sqlite3"}
 

@@ -112,18 +112,12 @@ def _race_first_create_process(
                 CreateProjectRequest(operation_id=operation_id)
             )
         except ModelingError as error:
-            causes = []
-            cause = error.__cause__
-            while cause is not None:
-                causes.append((type(cause).__name__, str(cause)))
-                cause = cause.__cause__
             outcomes.put(
                 (
                     "error",
                     error.response.code,
                     error.response.retryable,
                     error.response.details.model_dump(mode="json"),
-                    tuple(causes),
                 )
             )
         else:
@@ -863,6 +857,48 @@ def test_two_process_first_create_race_publishes_one_complete_project(
     assert idempotency_rows == [(metadata.storage_instance_id, successes[0][2])]
     assert list(tmp_path.glob(".modeling.tmp.*")) == []
     assert b".modeling.tmp." not in (modeling / "project.json").read_bytes()
+
+
+def test_first_create_revalidates_bootstrap_sidecars_before_writer_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches both first-create racers yielding after SQLite reader cleanup."""
+    from modeling_infrastructure.sqlite import store as sqlite_store
+
+    original_bootstrap = sqlite_store.bootstrap_storage
+
+    def leave_closed_reader_sidecars(
+        project_root: Path, versions: VersionSet
+    ) -> StorageMetadata:
+        metadata = original_bootstrap(project_root, versions)
+        modeling = project_root / ".modeling"
+        for name in ("state.sqlite3-wal", "state.sqlite3-shm"):
+            (modeling / name).write_bytes(b"")
+        return metadata
+
+    monkeypatch.setattr(
+        sqlite_store,
+        "bootstrap_storage",
+        leave_closed_reader_sidecars,
+    )
+    composition = build_composition(tmp_path)
+    composition.start()
+    try:
+        result = composition.application.create_project(
+            CreateProjectRequest(operation_id="00000000-0000-4000-8000-000000000055")
+        )
+    finally:
+        composition.close()
+
+    assert result.created is True
+    assert {path.name for path in (tmp_path / ".modeling").iterdir()} == {
+        "artifacts",
+        "project.json",
+        "project.lock",
+        "staging",
+        "state.sqlite3",
+    }
 
 
 def test_one_held_lease_covers_every_create_run_and_validate_mutation(

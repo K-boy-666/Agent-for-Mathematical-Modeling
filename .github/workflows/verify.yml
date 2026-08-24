@@ -19,16 +19,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
-        id: setup-uv
         with:
           version: "0.11.28"
           python-version: "3.11"
           enable-cache: false
       - run: uv sync --locked --group dev
-      - name: Diagnose first integration failure
-        run: uv run --locked --no-sync pytest tests/integration/test_mcp_lifecycle.py::test_two_process_first_create_race_publishes_one_complete_project -vv --tb=short --showlocals
-        env:
-          UV: ${{ steps.setup-uv.outputs.uv-path }}
+      - run: uv run --locked --no-sync modeling verify --milestone m1b
       - uses: actions/upload-artifact@v7
         if: always()
         with:
