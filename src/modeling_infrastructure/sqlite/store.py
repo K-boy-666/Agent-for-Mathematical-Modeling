@@ -87,6 +87,7 @@ from modeling_infrastructure.project_lock import ProjectLock, StorageConflict
 from modeling_infrastructure.project_paths import ProjectPaths
 from modeling_infrastructure.storage import (
     StorageError,
+    StorageMetadata,
     bootstrap_storage,
     load_storage_metadata,
 )
@@ -353,12 +354,12 @@ class SQLiteProjectStore:
         runtime = stable | {"state.sqlite3-shm", "state.sqlite3-wal"}
         return stable <= entries <= runtime
 
-    def start_writer_session(self) -> None:
+    def start_writer_session(self) -> StorageMetadata | None:
         """Acquire and verify existing storage without bootstrapping a new root."""
         if self._project_lock.held:
-            return
+            return None
         if not self._paths.modeling.exists():
-            return
+            return None
         if not self._paths.lock.is_file():
             raise ProjectStoreError(
                 "INTEGRITY_FAILURE",
@@ -376,7 +377,7 @@ class SQLiteProjectStore:
                 {"conflict_type": "project_busy", "retry_after_ms": 250},
             ) from error
         try:
-            load_storage_metadata(self._paths.root, self._versions)
+            metadata = load_storage_metadata(self._paths.root, self._versions)
             inspection = self.inspect_project_state()
             integrity = self.inspect_integrity(deep=False)
             if (
@@ -385,7 +386,7 @@ class SQLiteProjectStore:
                 or integrity.issues
             ):
                 self._degraded = True
-                return
+                return None
         except StorageError as error:
             transient_layout = self._transient_sqlite_layout(error)
             if transient_layout:
@@ -398,7 +399,7 @@ class SQLiteProjectStore:
                 ) from error
             if error.code == "INTEGRITY_FAILURE":
                 self._degraded = True
-                return
+                return None
             self._project_lock.release()
             raise ProjectStoreError(
                 cast(object, error.code),  # type: ignore[arg-type]
@@ -409,6 +410,7 @@ class SQLiteProjectStore:
         except BaseException:
             self._project_lock.release()
             raise
+        return metadata
 
     def close(self) -> None:
         """Release only this store's held writer lease; retain its lock file."""
@@ -887,7 +889,7 @@ class SQLiteProjectStore:
                         cast(JsonObject, error.details),
                     ) from error
         try:
-            self.start_writer_session()
+            metadata = self.start_writer_session()
         except ProjectStoreError as error:
             cause = error.__cause__
             if not (
@@ -898,16 +900,17 @@ class SQLiteProjectStore:
             ):
                 raise
             # The first validation closes sidecars left by a competing bootstrap reader.
-            self.start_writer_session()
-        try:
-            metadata = load_storage_metadata(self._paths.root, self._versions)
-        except StorageError as error:
-            raise ProjectStoreError(
-                cast(object, error.code),  # type: ignore[arg-type]
-                "project storage is unavailable",
-                error.retryable,
-                cast(JsonObject, error.details),
-            ) from error
+            metadata = self.start_writer_session()
+        if metadata is None:
+            try:
+                metadata = load_storage_metadata(self._paths.root, self._versions)
+            except StorageError as error:
+                raise ProjectStoreError(
+                    cast(object, error.code),  # type: ignore[arg-type]
+                    "project storage is unavailable",
+                    error.retryable,
+                    cast(JsonObject, error.details),
+                ) from error
         with self._write(degrade_on_failure=True) as connection:
             replay = self._idempotency_replay(
                 connection,
