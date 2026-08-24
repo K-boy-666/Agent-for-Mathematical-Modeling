@@ -528,6 +528,27 @@ def test_harness_accepts_only_the_finite_real_pinned_uv_output_grammar(
         verification._validate_uv_executable(tmp_path)
 
 
+def test_harness_accepts_official_linux_uv_version_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches rejecting the target-only metadata emitted by official Linux uv."""
+    executable = tmp_path / "uv"
+    executable.write_bytes(b"test executable seam")
+    monkeypatch.setenv("UV", str(executable))
+
+    def linux_version(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            "uv 0.11.28 (x86_64-unknown-linux-gnu)\n",
+            "",
+        )
+
+    monkeypatch.setattr(verification.subprocess, "run", linux_version)
+    assert verification._validate_uv_executable(tmp_path) == executable
+
+
 def test_private_check_runner_fails_closed_on_timeout_and_never_uses_a_shell(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

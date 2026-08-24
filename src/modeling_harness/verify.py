@@ -44,7 +44,7 @@ from modeling_harness.evidence import (
 _UV_VERSION = "0.11.28"
 _UV_VERSION_TIMEOUT_SECONDS = 10
 _UV_VERSION_OUTPUT = re.compile(
-    r"uv 0\.11\.28(?: \(ebf0f43d7 2026-07-07 "
+    r"uv 0\.11\.28(?: \((?:ebf0f43d7 2026-07-07 )?"
     r"(?:x86_64|aarch64)-(?:pc-windows-msvc|unknown-linux-(?:gnu|musl)|apple-darwin)"
     r"\))?\r?\n?\Z"
 )
