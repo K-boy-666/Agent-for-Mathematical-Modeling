@@ -971,6 +971,7 @@ def test_composition_close_failure_overrides_pending_result_or_error_as_cleanup_
     assert "secret" not in stdout.getvalue()
 
 
+@pytest.mark.windows_only
 def test_deep_doctor_runs_owned_root_and_lock_smokes_then_cleans_up(
     tmp_path: Path,
 ) -> None:
@@ -1119,6 +1120,7 @@ def test_deep_root_smoke_rejects_each_type_correct_wrong_result_field(
     assert doctor._run_deep_smoke()[1] == expected
 
 
+@pytest.mark.windows_only
 def test_doctor_inspects_a_real_schema_two_artifact_graph_read_only(
     tmp_path: Path,
 ) -> None:

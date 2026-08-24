@@ -787,6 +787,7 @@ def test_degraded_project_allows_only_health_and_preserves_authoritative_bytes(
     assert database.read_bytes() == before_database
 
 
+@pytest.mark.windows_only
 def test_diagnostic_snapshot_rejects_unsafe_source_members_without_sensitive_error_text(
     tmp_path: Path,
 ) -> None:

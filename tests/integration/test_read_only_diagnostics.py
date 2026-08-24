@@ -29,6 +29,9 @@ from modeling_infrastructure.sqlite.store import SQLiteProjectStore
 from modeling_infrastructure.storage import bootstrap_storage
 
 
+pytestmark = pytest.mark.windows_only
+
+
 EXPECTED_LAYOUT = {"project.json", "project.lock", "state.sqlite3"}
 FINITE_CODES = {
     "snapshot_unstable",
@@ -1788,6 +1791,7 @@ def test_cleanup_blocks_descendant_file_swap_and_preserves_external_sentinel(
         shutil.rmtree(attacked_root)
 
 
+@pytest.mark.cross_platform
 def test_non_windows_public_snapshot_fails_before_owned_temp_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

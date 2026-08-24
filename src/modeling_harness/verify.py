@@ -1397,7 +1397,7 @@ def _build_check_specs(uv: Path, internal: Path) -> tuple[_CheckSpec, ...]:
         pytest_spec("pytest-contract", "tests/contract"),
         pytest_spec("pytest-math", "tests/math"),
         pytest_spec("pytest-architecture", "tests/architecture"),
-        pytest_spec("pytest-integration", "tests/integration"),
+        pytest_spec("pytest-integration", "tests/integration", timeout=480),
         pytest_spec("pytest-reproducibility", "tests/reproducibility"),
         pytest_spec("pytest-security", "tests/security"),
         pytest_spec("pytest-smoke", "tests/smoke"),

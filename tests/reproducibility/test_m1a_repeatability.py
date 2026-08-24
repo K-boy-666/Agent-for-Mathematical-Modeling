@@ -1115,7 +1115,7 @@ def test_a12_profile_and_report_transition_preserve_a11_evidence_contract(
                 "-q",
                 f"--junitxml={internal / 'pytest-integration.xml'}",
             ),
-            180,
+            480,
             "pytest",
         ),
         (

@@ -50,11 +50,16 @@ dev-mode-exact = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "windows_only: requires the supported Windows diagnostic adapter",
+    "cross_platform: keeps a platform boundary test collected on every host",
+]
 
 [tool.ruff]
 target-version = "py311"
 
 [tool.mypy]
 python_version = "3.11"
+platform = "win32"
 strict = true
 files = ["src"]
