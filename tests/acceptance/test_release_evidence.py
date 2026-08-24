@@ -569,6 +569,34 @@ def test_release_bundle_assembles_exact_redacted_tamper_evident_evidence(
     }
 
 
+def test_release_bundle_accepts_current_codex_cli_structured_content(
+    tmp_path: Path,
+) -> None:
+    inputs = _valid_inputs(tmp_path / "inputs")
+    events = [
+        json.loads(line)
+        for line in inputs.codex_transcript.read_text(encoding="utf-8").splitlines()
+    ]
+    for event in events:
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "mcp_tool_call":
+            continue
+        result = item["result"]
+        assert isinstance(result, dict)
+        item["result"] = {
+            "content": [],
+            "structured_content": result["structuredContent"],
+        }
+    inputs.codex_transcript.write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    manifest = assemble_release_bundle(inputs, tmp_path / "bundle")
+
+    assert manifest.commit == COMMIT
+
+
 def test_release_bundle_accepts_distinct_per_run_golden_ids(tmp_path: Path) -> None:
     inputs = _valid_inputs(tmp_path / "inputs")
     replacements = {

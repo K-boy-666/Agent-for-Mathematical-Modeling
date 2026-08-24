@@ -578,6 +578,10 @@ def _structured_result(value: object) -> Mapping[str, object]:
         except (RecursionError, TypeError, ValueError) as error:
             raise EvidenceValidationError("Codex MCP result is invalid") from error
     result = _mapping(value, "Codex MCP result")
+    if "structured_content" in result:
+        if "isError" in result and result["isError"] is not False:
+            raise EvidenceValidationError("Codex MCP result is an error")
+        return _mapping(result["structured_content"], "Codex structured result")
     if result.get("isError") is not False:
         raise EvidenceValidationError("Codex MCP result is an error")
     return _mapping(result.get("structuredContent"), "Codex structured result")
