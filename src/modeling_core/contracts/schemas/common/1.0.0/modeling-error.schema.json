@@ -82,7 +82,7 @@
     "integrityDetails": {
       "type": "object", "additionalProperties": false, "required": ["subject"],
       "properties": {
-        "subject": {"enum": ["project_metadata", "database_relation", "result_hash", "validation_report_hash", "input_snapshot"]},
+        "subject": {"enum": ["project_metadata", "database_relation", "result_hash", "validation_report_hash", "input_snapshot", "artifact_content"]},
         "expected_hash": {"$ref": "#/$defs/hash"},
         "observed_hash": {"$ref": "#/$defs/hash"}
       }

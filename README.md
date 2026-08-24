@@ -25,6 +25,7 @@ uv run --locked --no-sync modeling verify --milestone m1b
 完成声明要求 Windows 与 Ubuntu 对同一提交运行上述命令，退出 0 且必需跳过为 0；
 发布时再附加真实 Codex 宿主烟测。局部能力验证可运行
 `uv run --locked --no-sync modeling verify --capability numerical.root_finding`。
+历史 M1a 承诺仍只是 stable hash smoke only，不等于当前完整 RFC 8785 基线。
 
 ## 文档
 

@@ -85,8 +85,7 @@ def test_context_index_routes_each_task_class_to_a_distinct_minimum_read_set() -
         cells[0]: cells[1:]
         for line in text.splitlines()
         if line.startswith("|")
-        if len(cells := tuple(cell.strip() for cell in line.strip("|").split("|")))
-        == 4
+        if len(cells := tuple(cell.strip() for cell in line.strip("|").split("|"))) == 4
         and cells[0] in ROUTES
     }
     assert set(rows) == set(ROUTES)
@@ -137,7 +136,9 @@ def test_repository_skills_are_triggerable_procedures_not_contract_copies() -> N
         assert "dynamic install" not in text.lower()
 
 
-def test_capability_catalog_is_summary_only_and_links_the_stable_root_contract() -> None:
+def test_capability_catalog_is_summary_only_and_links_the_stable_root_contract() -> (
+    None
+):
     """Catches a capability catalog becoming a plugin market or math duplicate."""
     text = _read("docs/capabilities/index.md")
     assert (

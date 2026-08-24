@@ -508,7 +508,7 @@ def test_validator_rereads_committed_result_and_rejects_tampering(
             )
         )
     assert captured.value.response.code == "INTEGRITY_FAILURE"
-    assert captured.value.response.details.subject == "result_artifact"
+    assert captured.value.response.details.subject == "artifact_content"
 
 
 def test_failed_final_commit_leaves_orphan_artifact(

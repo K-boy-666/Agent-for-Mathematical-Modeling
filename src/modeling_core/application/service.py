@@ -146,6 +146,15 @@ from modeling_core.registry import CapabilityRegistry, RegistryError
 
 _ENTITY_ID = TypeAdapter(EntityId)
 _MAX_RESPONSE_BYTES = 262144
+_OFFICIAL_ASSET_SHA256 = frozenset(
+    {
+        "sha256:e29940eb9eb9382deb8eccb459c73cc47f0080483b8b75f9977830c987162253",
+        "sha256:50a5dd70f04dfb0a57fb2602422dc7999b30aad54ddc02353f5b8f01423fd612",
+        "sha256:c8eff812f5980d955b4f0e587c5f7a357b2571d8d903fcb4913fba77c7354d6d",
+        "sha256:83ed6e0f2ebcdbdcb53e99a3bfebfbd8dc16141f91396eba8806e781d7809c7a",
+        "sha256:cc0abbceff32f425e738a3d9c0534fc3fbab4b2a1d2d86b8dc4d51229fb820bf",
+    }
+)
 
 
 class _CommonFields(TypedDict):
@@ -380,6 +389,11 @@ class ModelingApplication(ApplicationFacade):
 
     def _raise_store(self, error: ProjectStoreError, correlation_id: str) -> NoReturn:
         details: object = error.details
+        if error.code == "INTEGRITY_FAILURE" and error.details.get("subject") in {
+            "result_artifact",
+            "report_artifact",
+        }:
+            details = {**error.details, "subject": "artifact_content"}
         supported_versions = error.details.get("supported_versions")
         if error.code == "UNSUPPORTED_VERSION" and isinstance(supported_versions, list):
             details = {
@@ -1874,14 +1888,6 @@ class ModelingApplication(ApplicationFacade):
         import stat
         from pathlib import Path
 
-        _OFFICIAL_SHA256: set[str] = {
-            "sha256:e29940eb9eb9382deb8eccb459c73cc47f0080483b8b75f9977830c987162253",
-            "sha256:50a5dd70f04dfb0a57fb2602422dc7999b30aad54ddc02353f5b8f01423fd612",
-            "sha256:c8eff812f5980d955b4f0e587c5f7a357b2571d8d903fcb4913fba77c7354d6d",
-            "sha256:83ed6e0f2ebcdbdcb53e99a3bfebfbd8dc16141f91396eba8806e781d7809c7a",
-            "sha256:cc0abbceff32f425e738a3d9c0534fc3fbab4b2a1d2d86b8dc4d51229fb820bf",
-        }
-
         common = self._common()
         correlation_id = common["correlation_id"]
         try:
@@ -1988,7 +1994,7 @@ class ModelingApplication(ApplicationFacade):
                     AssetSnapshotEntry(
                         label=entry.label,
                         sha256=sha256_str,
-                        official_match=sha256_str in _OFFICIAL_SHA256,
+                        official_match=sha256_str in _OFFICIAL_ASSET_SHA256,
                     )
                 )
 

@@ -12,12 +12,12 @@ Tests verify that register_problem_assets:
 from __future__ import annotations
 
 import hashlib
-import shutil
 from pathlib import Path
 
 import pytest
 
 from modeling_core.application.service import ModelingApplication
+from modeling_core.application import service as application_service
 from modeling_core.contracts.errors import ModelingError
 from modeling_core.contracts.tools import (
     AssetPathEntry,
@@ -159,16 +159,20 @@ class TestContentAddressedSnapshots:
         assert result.snapshots[0].sha256 == expected_hash
         assert result.snapshots[0].label == "data"
 
-    def test_official_asset_is_matched(self, tmp_path: Path) -> None:
-        """RED: official asset matching requires the real file to exist."""
+    def test_official_asset_is_matched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         app = _make_app(tmp_path)
         pid = _create_project(app)
-        repo_root = Path.cwd()
-        official_path = repo_root / "A题" / "A题.pdf"
-        if not official_path.is_file():
-            pytest.skip("official asset A题/A题.pdf not found")
-        dest = tmp_path / "A题.pdf"
-        shutil.copy2(official_path, dest)
+        assert application_service._OFFICIAL_ASSET_SHA256 == frozenset(
+            OFFICIAL_HASHES.values()
+        )
+        content = b"deterministic official-match fixture"
+        expected_hash = "sha256:" + hashlib.sha256(content).hexdigest()
+        monkeypatch.setattr(
+            application_service, "_OFFICIAL_ASSET_SHA256", frozenset({expected_hash})
+        )
+        (tmp_path / "A题.pdf").write_bytes(content)
 
         request = RegisterProblemAssetsRequest(
             operation_id="00000000-0000-4000-8000-000000000010",
@@ -178,7 +182,7 @@ class TestContentAddressedSnapshots:
         result = app.register_problem_assets(request)
         assert len(result.snapshots) == 1
         assert result.snapshots[0].official_match is True
-        assert result.snapshots[0].sha256 == OFFICIAL_HASHES["A题/A题.pdf"]
+        assert result.snapshots[0].sha256 == expected_hash
 
     def test_non_official_asset_returns_false_match(self, tmp_path: Path) -> None:
         app = _make_app(tmp_path)

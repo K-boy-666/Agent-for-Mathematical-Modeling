@@ -33,8 +33,11 @@ from modeling_harness.evidence import (
     EvidenceReference,
     RequiredTestNode,
     materialize_m1a_acceptance_map,
+    materialize_m1b_acceptance_map,
     validate_m1a_acceptance_policy,
     validate_m1a_acceptance_report,
+    validate_m1b_acceptance_policy,
+    validate_m1b_acceptance_report,
 )
 
 
@@ -62,10 +65,26 @@ _M1A_CHECK_IDS: Final = (
     "wheel",
     "stdio-golden",
 )
-_M1B_CHECK_IDS: Final = (
+_M1B_EXTRA_CHECK_IDS: Final = (
+    "stable-schema-corpus",
     "canonical-json-conformance",
-    "schema-compatibility",
+    "artifact-store-sqlite-v2",
+    "artifact-workflow",
+    "recovery-rerun",
+    "fault-windows",
+    "m1b-security",
+    "affine-math",
+    "restart-reproducibility",
+    "echo-scaffold",
+    "context-boundaries",
+    "stable-documents",
+    "stdio-restart",
+    "m1b-acceptance",
+    "package-assets",
 )
+_M1B_CHECK_IDS: Final = (*_M1A_CHECK_IDS, *_M1B_EXTRA_CHECK_IDS)
+M1A_CHECK_IDS: Final = _M1A_CHECK_IDS
+M1B_CHECK_IDS: Final = _M1B_CHECK_IDS
 _JUNIT_NODE_LIMIT: Final = 4096
 # Bounded literal covering the real parameterized ids: A6/A11 embed full
 # rejection expressions in pytest ids (current maximum is 4,245 bytes).
@@ -513,6 +532,104 @@ _M1A_ACCEPTANCE_REQUIREMENTS: Final = (
         ),
     ),
 )
+
+
+def _b_requirement(
+    acceptance_id: str,
+    selector: str,
+    check_ids: tuple[str, ...],
+    check_position: int,
+    *,
+    match: Literal["exact", "family"] = "exact",
+) -> AcceptanceRequirement:
+    return AcceptanceRequirement(
+        acceptance_id=acceptance_id,
+        clauses=(
+            AcceptanceClause(
+                clause_id=f"{acceptance_id}-1",
+                required_nodes=(RequiredTestNode(selector=selector, match=match),),
+                check_ids=check_ids,
+                success_evidence=(
+                    EvidenceReference(
+                        artifact="verification-report.json",
+                        json_pointer=f"/checks/{check_position}/status",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+_M1B_ACCEPTANCE_REQUIREMENTS: Final = (
+    *_M1A_ACCEPTANCE_REQUIREMENTS,
+    _b_requirement(
+        "B-01",
+        "tests/contract/test_tool_schemas_v1.py::test_baseline_manifests_exist_and_are_valid",
+        ("stable-schema-corpus",),
+        15,
+    ),
+    _b_requirement(
+        "B-02",
+        "tests/contract/test_rfc8785_vectors.py::TestRFC8785AppendixB::test_b01_zero",
+        ("canonical-json-conformance",),
+        16,
+    ),
+    _b_requirement(
+        "B-03",
+        "tests/integration/test_artifact_workflow.py::test_artifact_workflow_persists_full_traceability_chain",
+        ("artifact-store-sqlite-v2", "artifact-workflow"),
+        18,
+    ),
+    _b_requirement(
+        "B-04",
+        "tests/integration/test_recovery_and_rerun.py::test_previous_session_attempt_converges_once_and_replays_abandoned",
+        ("recovery-rerun", "stdio-restart"),
+        19,
+        match="family",
+    ),
+    _b_requirement(
+        "B-05",
+        "tests/integration/test_fault_recovery.py::test_process_death_recovers_exactly_once_at_each_persistence_window",
+        ("fault-windows",),
+        20,
+        match="family",
+    ),
+    _b_requirement(
+        "B-06",
+        "tests/reproducibility/test_m1b_rerun.py::test_new_replay_rerun_and_restart_rerun_match_declared_invariants",
+        ("restart-reproducibility", "stdio-restart"),
+        23,
+    ),
+    _b_requirement(
+        "B-07",
+        "tests/security/test_m1b_artifact_boundaries.py::test_forged_project_paths_cannot_escape_the_bound_project_root",
+        ("m1b-security", "stdio-restart"),
+        21,
+    ),
+    _b_requirement(
+        "B-08",
+        "tests/architecture/test_echo_extension.py::TestEchoExtension::test_echo_executes_and_validates",
+        ("echo-scaffold",),
+        24,
+    ),
+    _b_requirement(
+        "B-09",
+        "tests/acceptance/test_m1b_acceptance_map.py::test_workflow_runs_one_identical_m1b_command_on_two_os_families",
+        ("m1b-acceptance", "stdio-restart"),
+        28,
+    ),
+    _b_requirement(
+        "B-10",
+        "tests/acceptance/test_documentation_consistency.py::test_stable_document_inventory_exists_and_is_nonempty",
+        (
+            "context-boundaries",
+            "m1b-acceptance",
+            "package-assets",
+            "stable-documents",
+        ),
+        26,
+    ),
+)
 _GOLDEN_NODE = (
     "tests/integration/test_stdio_golden_m1a.py::"
     "test_official_client_completes_m1a_golden_chain_records_protocol_purity_"
@@ -611,6 +728,8 @@ _NON_PYTHON_PACKAGE_ASSETS = frozenset(
         "modeling_cli/templates/codex/config.toml",
         "modeling_infrastructure/sqlite/schema_v1.sql",
         "modeling_infrastructure/sqlite/schema_v2.sql",
+        "modeling_infrastructure/AGENTS.md",
+        "modeling_bootstrap/AGENTS.md",
         "modeling_mcp/AGENTS.md",
     }
 )
@@ -1279,6 +1398,79 @@ def _build_check_specs(uv: Path, internal: Path) -> tuple[_CheckSpec, ...]:
     )
 
 
+def _build_m1b_check_specs(uv: Path, internal: Path) -> tuple[_CheckSpec, ...]:
+    executable = str(uv)
+
+    def pytest_spec(check_id: str, *test_paths: str, timeout: int = 180) -> _CheckSpec:
+        return _CheckSpec(
+            check_id=check_id,
+            argv=(
+                executable,
+                "run",
+                "--locked",
+                "--no-sync",
+                "pytest",
+                *test_paths,
+                "-q",
+                f"--junitxml={internal / f'{check_id}.xml'}",
+            ),
+            timeout_seconds=timeout,
+            kind="pytest",
+        )
+
+    wheel_directory = internal / "wheel"
+    package_check = (
+        "from pathlib import Path; from zipfile import ZipFile; "
+        f"w=next(Path({str(wheel_directory)!r}).glob('*.whl')); "
+        "n=ZipFile(w).namelist(); "
+        "assert any(x.endswith('.schema.json') for x in n); "
+        "assert any(x.endswith('schema_v2.sql') for x in n)"
+    )
+    return (
+        *_build_check_specs(uv, internal),
+        pytest_spec(
+            "stable-schema-corpus",
+            "tests/contract/test_tool_schemas_v1.py",
+            "tests/contract/test_schema_compatibility.py",
+        ),
+        pytest_spec(
+            "canonical-json-conformance",
+            "tests/contract/test_rfc8785_vectors.py",
+        ),
+        pytest_spec(
+            "artifact-store-sqlite-v2",
+            "tests/contract/test_artifact_store.py",
+            "tests/contract/test_sqlite_schema_v2.py",
+        ),
+        pytest_spec("artifact-workflow", "tests/integration/test_artifact_workflow.py"),
+        pytest_spec("recovery-rerun", "tests/integration/test_recovery_and_rerun.py"),
+        pytest_spec("fault-windows", "tests/integration/test_fault_recovery.py"),
+        pytest_spec("m1b-security", "tests/security/test_m1b_artifact_boundaries.py"),
+        pytest_spec("affine-math", "tests/math/test_root_finding_affine_v1.py"),
+        pytest_spec(
+            "restart-reproducibility",
+            "tests/reproducibility/test_m1b_rerun.py",
+        ),
+        pytest_spec("echo-scaffold", "tests/architecture/test_echo_extension.py"),
+        pytest_spec(
+            "context-boundaries", "tests/architecture/test_context_boundaries.py"
+        ),
+        pytest_spec(
+            "stable-documents", "tests/acceptance/test_documentation_consistency.py"
+        ),
+        pytest_spec(
+            "stdio-restart", "tests/integration/test_stdio_restart_m1b.py", timeout=240
+        ),
+        pytest_spec("m1b-acceptance", "tests/acceptance/test_m1b_acceptance_map.py"),
+        _CheckSpec(
+            "package-assets",
+            (sys.executable, "-c", package_check),
+            30,
+            "command",
+        ),
+    )
+
+
 def _json_payload(value: object) -> bytes:
     return canonical_json_bytes(value) + b"\n"  # type: ignore[arg-type]
 
@@ -1324,11 +1516,16 @@ def _serialize_check(check: _CheckResult) -> dict[str, object]:
     }
 
 
-def _environment_report(repository_root: Path, uv: Path) -> dict[str, object]:
+def _environment_report(
+    repository_root: Path,
+    uv: Path,
+    *,
+    include_distribution: bool = False,
+) -> dict[str, object]:
     lock = repository_root / "uv.lock"
     if not lock.is_file():
         raise ValueError("uv.lock is missing")
-    return {
+    report: dict[str, object] = {
         "python_version": platform.python_version(),
         "uv_version": _UV_VERSION,
         "uv_executable_sha256": "sha256:" + hashlib.sha256(uv.read_bytes()).hexdigest(),
@@ -1337,6 +1534,32 @@ def _environment_report(repository_root: Path, uv: Path) -> dict[str, object]:
         "architecture": _architecture_label(),
         "lock_sha256": "sha256:" + hashlib.sha256(lock.read_bytes()).hexdigest(),
     }
+    if include_distribution:
+        report["distribution"] = _distribution_report()
+    return report
+
+
+def _distribution_report() -> dict[str, str]:
+    family = platform.system()
+    if family == "Windows":
+        return {"id": "windows", "version": platform.version()}
+    if family != "Linux":
+        raise ValueError("m1b verification supports only Windows and Linux")
+    values: dict[str, str] = {}
+    for line in (
+        Path("/etc/os-release").read_text(encoding="utf-8")[:16_384].splitlines()
+    ):
+        key, separator, raw_value = line.partition("=")
+        if separator and key in {"ID", "VERSION_ID"}:
+            values[key] = raw_value.strip().strip('"')
+    distribution_id = values.get("ID", "")
+    version = values.get("VERSION_ID", "")
+    if (
+        re.fullmatch(r"[a-z0-9._-]{1,64}", distribution_id) is None
+        or re.fullmatch(r"[A-Za-z0-9._+-]{1,64}", version) is None
+    ):
+        raise ValueError("Linux distribution metadata is unavailable")
+    return {"id": distribution_id, "version": version}
 
 
 def _architecture_label() -> str:
@@ -1403,7 +1626,7 @@ def _replace_failed_golden_artifacts(staging: Path) -> None:
 def _summary(report: dict[str, object]) -> bytes:
     checks = cast(list[dict[str, object]], report["checks"])
     lines = [
-        "# M1a verification",
+        f"# {str(report['milestone']).upper()} verification",
         "",
         f"Status: {report['status']}",
         f"Source fingerprint: {report['source_fingerprint']}",
@@ -1421,11 +1644,40 @@ def _run_m1a_verification(
     check_runner: Callable[..., _CheckResult] = _execute_check,
     incomplete_groups: list[dict[str, object]] | None = None,
 ) -> int:
-    uv = _validate_uv_executable(repository_root)
-    validate_m1a_acceptance_policy(
-        requirements=_M1A_ACCEPTANCE_REQUIREMENTS,
-        allowed_check_ids=_M1A_CHECK_IDS,
+    return _run_milestone_verification(
+        repository_root,
+        milestone="m1a",
+        check_runner=check_runner,
+        incomplete_groups=incomplete_groups,
     )
+
+
+def _run_milestone_verification(
+    repository_root: Path,
+    *,
+    milestone: Literal["m1a", "m1b"],
+    check_runner: Callable[..., _CheckResult] = _execute_check,
+    incomplete_groups: list[dict[str, object]] | None = None,
+) -> int:
+    uv = _validate_uv_executable(repository_root)
+    if milestone == "m1b" and platform.system() not in {"Windows", "Linux"}:
+        raise ValueError("m1b verification supports only Windows and Linux")
+    check_ids: tuple[str, ...]
+    requirements: tuple[AcceptanceRequirement, ...]
+    if milestone == "m1a":
+        check_ids = _M1A_CHECK_IDS
+        requirements = _M1A_ACCEPTANCE_REQUIREMENTS
+        validate_m1a_acceptance_policy(
+            requirements=requirements,
+            allowed_check_ids=check_ids,
+        )
+    else:
+        check_ids = _M1B_CHECK_IDS
+        requirements = _M1B_ACCEPTANCE_REQUIREMENTS
+        validate_m1b_acceptance_policy(
+            requirements=requirements,
+            allowed_check_ids=check_ids,
+        )
     os.environ["UV_OFFLINE"] = "1"
     environment = _offline_environment()
     environment.pop("MODELING_M1A_GOLDEN_EVIDENCE_DIR", None)
@@ -1436,7 +1688,7 @@ def _run_m1a_verification(
     ):
         raise ValueError("source fingerprint is invalid")
 
-    evidence_root = repository_root / "build" / "verification" / "m1a"
+    evidence_root = repository_root / "build" / "verification" / milestone
     evidence_root.mkdir(parents=True, exist_ok=True)
     final = evidence_root / fingerprint_hex
     staging = evidence_root / f".{fingerprint_hex}.staging"
@@ -1447,7 +1699,11 @@ def _run_m1a_verification(
     internal.mkdir()
     (internal / "wheel").mkdir()
 
-    specs = _build_check_specs(uv, internal)
+    specs = (
+        _build_check_specs(uv, internal)
+        if milestone == "m1a"
+        else _build_m1b_check_specs(uv, internal)
+    )
     results: list[_CheckResult] = []
     for spec in specs:
         child_environment = dict(environment)
@@ -1509,7 +1765,9 @@ def _run_m1a_verification(
         {"path": asset.path, "sha256": asset.sha256} for asset in package_assets
     ]
     architecture_document = {
-        "schema_version": "m1a-architecture-report/0.1.0",
+        "schema_version": f"{milestone}-architecture-report/1.0.0"
+        if milestone == "m1b"
+        else "m1a-architecture-report/0.1.0",
         "status": architecture.status,
         "check_id": architecture.check_id,
         "test_counts": _serialize_check(architecture)["test_counts"],
@@ -1521,7 +1779,9 @@ def _run_m1a_verification(
     )
 
     groups = (
-        _a12_incomplete_groups() if incomplete_groups is None else incomplete_groups
+        (_a12_incomplete_groups() if milestone == "m1a" else [])
+        if incomplete_groups is None
+        else incomplete_groups
     )
     status, exit_code = _verification_outcome(results, groups)
     final_inventory = _collect_source_inventory(repository_root)
@@ -1555,12 +1815,20 @@ def _run_m1a_verification(
         base_status: str,
     ) -> tuple[dict[str, object], int]:
         base_report: dict[str, object] = {
-            "schema_version": "m1a-verification-report/0.2.0",
-            "milestone": "m1a",
+            "schema_version": (
+                "m1a-verification-report/0.2.0"
+                if milestone == "m1a"
+                else "m1b-verification-report/1.0.0"
+            ),
+            "milestone": milestone,
             "status": base_status,
             "source_fingerprint": initial_inventory.fingerprint,
             "required_skips": required_skips,
-            "environment": _environment_report(repository_root, uv),
+            "environment": _environment_report(
+                repository_root,
+                uv,
+                include_distribution=milestone == "m1b",
+            ),
             "checks": [_serialize_check(result) for result in results],
             "artifacts": {
                 "source_inventory": "source-inventory.json",
@@ -1572,8 +1840,13 @@ def _run_m1a_verification(
             "golden_ids": _golden_ids(trace_path),
             "incomplete_groups": groups,
         }
-        acceptance_map = materialize_m1a_acceptance_map(
-            requirements=_M1A_ACCEPTANCE_REQUIREMENTS,
+        materialize = (
+            materialize_m1a_acceptance_map
+            if milestone == "m1a"
+            else materialize_m1b_acceptance_map
+        )
+        acceptance_map = materialize(
+            requirements=requirements,
             base_report=base_report,
             artifact_documents=artifact_documents(base_report),
             observed_test_outcomes=observed_test_outcomes,
@@ -1590,7 +1863,10 @@ def _run_m1a_verification(
             "status": final_status,
             "acceptance_map": acceptance_map,
         }
-        validate_m1a_acceptance_report(report_document)
+        if milestone == "m1a":
+            validate_m1a_acceptance_report(report_document)
+        else:
+            validate_m1b_acceptance_report(report_document)
         return report_document, final_exit
 
     report, composed_exit_code = compose_final_report(status)
@@ -1815,10 +2091,9 @@ def _run_m1b_verification(
     repository_root: Path,
     only: list[str] | None = None,
 ) -> int:
-    """Run focused M1b checks."""
+    """Run the full M1b profile or selected development checks."""
     if only is None:
-        print("full m1b verification is not yet implemented", file=sys.stderr)
-        return 2
+        return _run_milestone_verification(repository_root, milestone="m1b")
 
     for check_id in only:
         if check_id not in _M1B_CHECK_IDS:
@@ -1828,18 +2103,29 @@ def _run_m1b_verification(
             )
             return 2
 
-    all_passed = True
-    for check_id in only:
-        if check_id == "canonical-json-conformance":
-            passed = _run_canonical_json_conformance(repository_root)
-        elif check_id == "schema-compatibility":
-            passed = _run_schema_compatibility(repository_root)
-        else:
-            passed = False
-        if not passed:
-            all_passed = False
-
-    return 0 if all_passed else 1
+    uv = _validate_uv_executable(repository_root)
+    with tempfile.TemporaryDirectory(prefix="modeling-m1b-focused-") as temporary:
+        internal = Path(temporary)
+        (internal / "wheel").mkdir()
+        specs = {spec.check_id: spec for spec in _build_m1b_check_specs(uv, internal)}
+        environment = _offline_environment()
+        environment["MODELING_M1A_GOLDEN_EVIDENCE_DIR"] = str(internal)
+        results: list[_CheckResult] = []
+        if "package-assets" in only and "wheel" not in only:
+            results.append(
+                _execute_check(
+                    specs["wheel"], cwd=repository_root, environment=environment
+                )
+            )
+        results.extend(
+            _execute_check(
+                specs[check_id], cwd=repository_root, environment=environment
+            )
+            for check_id in only
+        )
+    for result in results:
+        print(f"{result.check_id} {result.status}", flush=True)
+    return 0 if all(result.status == "PASS" for result in results) else 1
 
 
 def _run_canonical_json_conformance(repository_root: Path) -> bool:

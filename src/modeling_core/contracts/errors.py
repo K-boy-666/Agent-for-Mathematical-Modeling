@@ -134,6 +134,7 @@ class IntegrityFailureDetails(StrictModel):
         "result_hash",
         "validation_report_hash",
         "input_snapshot",
+        "artifact_content",
         "result_artifact",
         "report_artifact",
         "environment_snapshot",

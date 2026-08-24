@@ -115,6 +115,7 @@ M1b 的唯一完整验证命令是：
 uv run --locked --no-sync modeling verify --milestone m1b
 ```
 
+历史 M1a 回归命令是 `uv run --locked --no-sync modeling verify --milestone m1a`。
 局部开发可运行更窄测试，但完成声明必须引用新鲜完整门禁输出。
 验证输出位于被忽略的 `build/verification/`，不是权威项目状态。
 

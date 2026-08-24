@@ -19,6 +19,8 @@ TRANSCRIPT_FILENAME: Final = "stdio-transcript.json"
 TRACE_FILENAME: Final = "golden-trace.json"
 ACCEPTANCE_MAP_SCHEMA_VERSION: Final = "m1a-acceptance-map/0.1.0"
 VERIFICATION_REPORT_SCHEMA_VERSION: Final = "m1a-verification-report/0.2.0"
+M1B_ACCEPTANCE_MAP_SCHEMA_VERSION: Final = "m1b-acceptance-map/1.0.0"
+M1B_VERIFICATION_REPORT_SCHEMA_VERSION: Final = "m1b-verification-report/1.0.0"
 
 JsonObject = dict[str, object]
 
@@ -61,10 +63,23 @@ _ACCEPTANCE_IDS: Final = (
     "A-09",
     "A-10",
 )
+_M1B_ACCEPTANCE_IDS: Final = (
+    *_ACCEPTANCE_IDS,
+    "B-01",
+    "B-02",
+    "B-03",
+    "B-04",
+    "B-05",
+    "B-06",
+    "B-07",
+    "B-08",
+    "B-09",
+    "B-10",
+)
 _OUTCOMES: Final = frozenset({"PASSED", "FAILED", "SKIPPED"})
 _SELECTOR_PATTERN: Final = re.compile(
-    r"tests/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_\-.]+\.py::"
-    r"[A-Za-z0-9_\-.]+(?:\[[^\[\]:{}*]*\])?\Z"
+    r"tests/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_\-.]+\.py"
+    r"(?:::[A-Za-z0-9_\-.]+)+(?:\[[^\[\]:{}*]*\])?\Z"
 )
 _POINTER_LIMIT: Final = 256
 
@@ -427,20 +442,9 @@ class AcceptanceClause:
 
 @dataclass(frozen=True, slots=True)
 class AcceptanceRequirement:
-    """One A-01..A-10 acceptance requirement with its clauses."""
+    """One ordered milestone acceptance requirement with its clauses."""
 
-    acceptance_id: Literal[
-        "A-01",
-        "A-02",
-        "A-03",
-        "A-04",
-        "A-05",
-        "A-06",
-        "A-07",
-        "A-08",
-        "A-09",
-        "A-10",
-    ]
+    acceptance_id: str
     clauses: tuple[AcceptanceClause, ...]
 
 
@@ -478,16 +482,41 @@ def validate_m1a_acceptance_policy(
     allowed_check_ids: Sequence[str],
 ) -> None:
     """Phase 1: validate acceptance policy shape and syntax only."""
+    _validate_acceptance_policy(
+        requirements=requirements,
+        allowed_check_ids=allowed_check_ids,
+        expected_ids=_ACCEPTANCE_IDS,
+    )
+
+
+def validate_m1b_acceptance_policy(
+    *,
+    requirements: Sequence[AcceptanceRequirement],
+    allowed_check_ids: Sequence[str],
+) -> None:
+    """Validate the ordered A-01..B-10 M1b acceptance policy."""
+    _validate_acceptance_policy(
+        requirements=requirements,
+        allowed_check_ids=allowed_check_ids,
+        expected_ids=_M1B_ACCEPTANCE_IDS,
+    )
+
+
+def _validate_acceptance_policy(
+    *,
+    requirements: Sequence[AcceptanceRequirement],
+    allowed_check_ids: Sequence[str],
+    expected_ids: Sequence[str],
+) -> None:
     allowed = tuple(allowed_check_ids)
     if not allowed or len(set(allowed)) != len(allowed):
         raise EvidenceValidationError("allowed check ids must be non-empty and unique")
     identifiers = [requirement.acceptance_id for requirement in requirements]
-    if (
-        len(identifiers) != len(_ACCEPTANCE_IDS)
-        or tuple(identifiers) != _ACCEPTANCE_IDS
+    if len(identifiers) != len(expected_ids) or tuple(identifiers) != tuple(
+        expected_ids
     ):
         raise EvidenceValidationError(
-            "acceptance policy must declare exactly A-01 through A-10 in order"
+            "acceptance policy identifiers are incomplete or out of order"
         )
     seen_clauses: set[str] = set()
     for requirement in requirements:
@@ -592,6 +621,47 @@ def materialize_m1a_acceptance_map(
     ],
 ) -> JsonObject:
     """Phase 2: materialize the acceptance map from current-run evidence."""
+    return _materialize_acceptance_map(
+        requirements=requirements,
+        base_report=base_report,
+        artifact_documents=artifact_documents,
+        observed_test_outcomes=observed_test_outcomes,
+        schema_version=ACCEPTANCE_MAP_SCHEMA_VERSION,
+        completion_id="A-10",
+    )
+
+
+def materialize_m1b_acceptance_map(
+    *,
+    requirements: Sequence[AcceptanceRequirement],
+    base_report: Mapping[str, object],
+    artifact_documents: Mapping[str, object],
+    observed_test_outcomes: Mapping[
+        str, Mapping[str, Literal["PASSED", "FAILED", "SKIPPED"]]
+    ],
+) -> JsonObject:
+    """Materialize the ordered A-01..B-10 M1b acceptance map."""
+    return _materialize_acceptance_map(
+        requirements=requirements,
+        base_report=base_report,
+        artifact_documents=artifact_documents,
+        observed_test_outcomes=observed_test_outcomes,
+        schema_version=M1B_ACCEPTANCE_MAP_SCHEMA_VERSION,
+        completion_id="B-10",
+    )
+
+
+def _materialize_acceptance_map(
+    *,
+    requirements: Sequence[AcceptanceRequirement],
+    base_report: Mapping[str, object],
+    artifact_documents: Mapping[str, object],
+    observed_test_outcomes: Mapping[
+        str, Mapping[str, Literal["PASSED", "FAILED", "SKIPPED"]]
+    ],
+    schema_version: str,
+    completion_id: str,
+) -> JsonObject:
     _validate_phase_two_inputs(base_report, artifact_documents)
     outcomes_by_check: dict[str, dict[str, str]] = {}
     for observed_check, observed_nodes in observed_test_outcomes.items():
@@ -739,9 +809,12 @@ def materialize_m1a_acceptance_map(
             }
         )
 
-    if base_report.get("status") == "FAILED" and entry_status.get("A-10") == "PASS":
+    if (
+        base_report.get("status") == "FAILED"
+        and entry_status.get(completion_id) == "PASS"
+    ):
         for entry in entries:
-            if entry["acceptance_id"] == "A-10":
+            if entry["acceptance_id"] == completion_id:
                 entry["status"] = "FAIL"
                 for pointer in ("/status", "/source_fingerprint"):
                     item: JsonObject = {
@@ -752,7 +825,7 @@ def materialize_m1a_acceptance_map(
                         cast(list[object], entry["evidence"]).append(item)
 
     return {
-        "schema_version": ACCEPTANCE_MAP_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "source_fingerprint": base_report["source_fingerprint"],
         "entries": entries,
     }
@@ -760,13 +833,38 @@ def materialize_m1a_acceptance_map(
 
 def validate_m1a_acceptance_report(report: Mapping[str, object]) -> None:
     """Validate the exact eleven-key report with an embedded acceptance map."""
+    _validate_acceptance_report(
+        report,
+        report_schema_version=VERIFICATION_REPORT_SCHEMA_VERSION,
+        map_schema_version=ACCEPTANCE_MAP_SCHEMA_VERSION,
+        expected_ids=_ACCEPTANCE_IDS,
+    )
+
+
+def validate_m1b_acceptance_report(report: Mapping[str, object]) -> None:
+    """Validate an M1b report and its ordered A-01..B-10 map."""
+    _validate_acceptance_report(
+        report,
+        report_schema_version=M1B_VERIFICATION_REPORT_SCHEMA_VERSION,
+        map_schema_version=M1B_ACCEPTANCE_MAP_SCHEMA_VERSION,
+        expected_ids=_M1B_ACCEPTANCE_IDS,
+    )
+
+
+def _validate_acceptance_report(
+    report: Mapping[str, object],
+    *,
+    report_schema_version: str,
+    map_schema_version: str,
+    expected_ids: Sequence[str],
+) -> None:
     if not isinstance(report, Mapping):
         raise EvidenceValidationError("verification report must be an object")
     if frozenset(report) != _BASE_REPORT_KEYS | {"acceptance_map"}:
         raise EvidenceValidationError(
             "verification report must contain exactly eleven keys"
         )
-    if report["schema_version"] != VERIFICATION_REPORT_SCHEMA_VERSION:
+    if report["schema_version"] != report_schema_version:
         raise EvidenceValidationError("verification report version is invalid")
     acceptance_map = report["acceptance_map"]
     if not isinstance(acceptance_map, Mapping):
@@ -777,13 +875,13 @@ def validate_m1a_acceptance_report(report: Mapping[str, object]) -> None:
         "entries",
     }:
         raise EvidenceValidationError("acceptance map must contain exactly three keys")
-    if acceptance_map["schema_version"] != ACCEPTANCE_MAP_SCHEMA_VERSION:
+    if acceptance_map["schema_version"] != map_schema_version:
         raise EvidenceValidationError("acceptance map version is invalid")
     if acceptance_map["source_fingerprint"] != report["source_fingerprint"]:
         raise EvidenceValidationError("acceptance map fingerprint mismatch")
     entries = acceptance_map["entries"]
-    if not isinstance(entries, list) or len(entries) != len(_ACCEPTANCE_IDS):
-        raise EvidenceValidationError("acceptance map must declare ten entries")
+    if not isinstance(entries, list) or len(entries) != len(expected_ids):
+        raise EvidenceValidationError("acceptance map entry count is invalid")
     for position, entry in enumerate(entries):
         if not isinstance(entry, Mapping):
             raise EvidenceValidationError("acceptance entry must be an object")
@@ -794,7 +892,7 @@ def validate_m1a_acceptance_report(report: Mapping[str, object]) -> None:
             "evidence",
         }:
             raise EvidenceValidationError("acceptance entry keys are invalid")
-        if entry["acceptance_id"] != _ACCEPTANCE_IDS[position]:
+        if entry["acceptance_id"] != expected_ids[position]:
             raise EvidenceValidationError("acceptance entries are out of order")
         if entry["status"] not in ("PASS", "FAIL"):
             raise EvidenceValidationError("acceptance entry status is invalid")
@@ -836,12 +934,17 @@ __all__ = [
     "EvidenceValidationError",
     "GoldenEvidencePaths",
     "JsonObject",
+    "M1B_ACCEPTANCE_MAP_SCHEMA_VERSION",
+    "M1B_VERIFICATION_REPORT_SCHEMA_VERSION",
     "RequiredTestNode",
     "TRACE_SCHEMA_VERSION",
     "TRANSCRIPT_SCHEMA_VERSION",
     "VERIFICATION_REPORT_SCHEMA_VERSION",
     "materialize_m1a_acceptance_map",
+    "materialize_m1b_acceptance_map",
     "validate_m1a_acceptance_policy",
     "validate_m1a_acceptance_report",
+    "validate_m1b_acceptance_policy",
+    "validate_m1b_acceptance_report",
     "write_redacted_golden_evidence",
 ]

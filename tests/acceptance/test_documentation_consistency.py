@@ -63,7 +63,9 @@ def _anchors(path: Path) -> set[str]:
 
 
 def test_stable_document_inventory_exists_and_is_nonempty() -> None:
-    missing = [str(path) for path in (*STABLE_DOCS, *ADR_DOCS) if not (ROOT / path).is_file()]
+    missing = [
+        str(path) for path in (*STABLE_DOCS, *ADR_DOCS) if not (ROOT / path).is_file()
+    ]
     assert not missing, f"missing stable documents: {missing}"
     assert all(_read(path).strip() for path in (*STABLE_DOCS, *ADR_DOCS))
 
@@ -85,7 +87,11 @@ def test_local_links_and_heading_anchors_resolve() -> None:
                 continue
             if not resolved.exists():
                 problems.append(f"{source}: missing {relative_resolved}")
-            elif fragment and resolved.is_file() and unquote(fragment) not in _anchors(relative_resolved):
+            elif (
+                fragment
+                and resolved.is_file()
+                and unquote(fragment) not in _anchors(relative_resolved)
+            ):
                 problems.append(f"{source}: missing anchor {target}")
     assert not problems, "\n".join(problems)
 
@@ -143,7 +149,13 @@ def test_state_security_and_recovery_invariants_are_explicit() -> None:
         "RUNNING → ABANDONED",
     ):
         assert transition in state
-    for term in ("scope_id", "tool_name", "operation_id", "canonical_request_hash", "先发布文件，再提交引用"):
+    for term in (
+        "scope_id",
+        "tool_name",
+        "operation_id",
+        "canonical_request_hash",
+        "先发布文件，再提交引用",
+    ):
         assert term in state
 
     security = _read(Path("docs/architecture/security.md"))
@@ -173,7 +185,12 @@ def test_adrs_have_complete_accepted_record_shape() -> None:
         assert text.startswith("# ")
         assert "- Status: Accepted" in text
         assert "- Date: 2026-07-17" in text
-        for heading in ("## Context", "## Decision", "## Consequences", "## Rejected Alternatives"):
+        for heading in (
+            "## Context",
+            "## Decision",
+            "## Consequences",
+            "## Rejected Alternatives",
+        ):
             assert heading in text, f"{path}: {heading}"
 
 
@@ -185,15 +202,29 @@ def test_host_scope_roadmap_risks_and_release_authority_are_unambiguous() -> Non
 
     assert "Codex 是首个薄适配宿主" in architecture
     assert "Claude Code、TRAE 仅是未来薄适配宿主" in architecture
-    for path in (*Path("src/modeling_core").rglob("*.py"), *Path("src/modeling_infrastructure").rglob("*.py")):
-        assert not re.search(r"Codex|Claude Code|TRAE", path.read_text(encoding="utf-8"), re.IGNORECASE)
+    for path in (
+        *Path("src/modeling_core").rglob("*.py"),
+        *Path("src/modeling_infrastructure").rglob("*.py"),
+    ):
+        assert not re.search(
+            r"Codex|Claude Code|TRAE", path.read_text(encoding="utf-8"), re.IGNORECASE
+        )
 
     assert "48 小时非生产可行性探针" in vision
     assert "M1a 完成替代品" in vision and "不是" in vision
     assert "M1 → M2 → M2.5 → M3" in vision
     assert "M1a 仅承诺固定向量与同环境重复执行的 hash smoke" in vision
     assert "B2/M1b" in vision and "完整 RFC 8785" in vision
-    for item in ("范围增长", "宿主耦合", "求解器/验证器耦合", "状态/制品不一致", "协作式超时", "Schema 漂移", "Windows 路径/进程", "证据不可复现"):
+    for item in (
+        "范围增长",
+        "宿主耦合",
+        "求解器/验证器耦合",
+        "状态/制品不一致",
+        "协作式超时",
+        "Schema 漂移",
+        "Windows 路径/进程",
+        "证据不可复现",
+    ):
         assert item in architecture
 
     for field in ("`Task`", "`Test result`", "`Git diff summary`", "`Commit hash`"):
@@ -219,5 +250,13 @@ def test_external_baselines_and_non_goals_are_owned() -> None:
         assert baseline in combined
 
     vision = _read(Path("docs/product/vision.md"))
-    for non_goal in ("通用硬进程隔离", "OCR", "UI", "多用户服务", "自动论文写作", "动态插件安装", "额外数学能力"):
+    for non_goal in (
+        "通用硬进程隔离",
+        "OCR",
+        "UI",
+        "多用户服务",
+        "自动论文写作",
+        "动态插件安装",
+        "额外数学能力",
+    ):
         assert non_goal in vision
