@@ -1,7 +1,8 @@
 # Math Modeling MCP
 
 本仓库是锁定 Python 3.11 环境的本地数学建模 MCP。
-当前状态是 M1a 可运行纵向切片；不是生产就绪、1.0 兼容基线或 M1 完成。
+当前稳定基线是应用 `0.2.0`、MCP 协议 `2025-11-25`、公共契约 `1.0.0`
+和数据库 Schema `2`；它是可信的本地 M1 基线，不是多用户生产服务。
 
 ## 开始
 
@@ -13,23 +14,26 @@ uv run --locked --no-sync modeling doctor --project-root PATH --deep --json
 
 在 trusted project 中，把
 [Codex 模板](docs/templates/codex/config.toml)复制为 `.codex/config.toml`。
-它只连接六工具 STDIO MCP；核心不依赖 Codex。
+它只连接当前 `TOOL_NAMES` 定义的十工具 STDIO MCP；核心不依赖 Codex。
 
 ## 验证
 
 ```powershell
-uv run --locked --no-sync modeling verify --milestone m1a
+uv run --locked --no-sync modeling verify --milestone m1b
 ```
 
-M1a 只承诺 stable hash smoke only：固定向量与同环境重复执行一致；
-完整 RFC 8785 符合性、跨平台门和 1.0 兼容基线属于 M1b。
+完成声明要求 Windows 与 Ubuntu 对同一提交运行上述命令，退出 0 且必需跳过为 0；
+发布时再附加真实 Codex 宿主烟测。局部能力验证可运行
+`uv run --locked --no-sync modeling verify --capability numerical.root_finding`。
 
 ## 文档
 
 - [Context 与权威路由](docs/context/index.md)
-- [M1 范围和阶段门](docs/product/m1-scope.md)
+- [产品愿景与路线](docs/product/vision.md)
 - [架构概览](docs/architecture/overview.md)
-- [bootstrap 与 doctor](docs/operations/bootstrap-and-doctor.md)
+- [MCP tools 1.0 契约](docs/contracts/mcp-tools-v1.md)
+- [恢复手册](docs/operations/recovery.md)
+- [发布验证](docs/operations/release-verification.md)
 - [M1a-0 历史可行性记录](spikes/m1a_0/README.md)
 
 公开数据形状以打包 JSON Schema 为权威；`docs/contracts/` 只提供语义和源码路由。

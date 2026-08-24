@@ -6,20 +6,20 @@
 ## 使命
 
 交付本地、可追踪、可验证的数学建模 MCP。
-当前里程碑是 M1a 可运行纵向切片，不是生产就绪版本。
+当前里程碑是 M1b 可信本地基线，不是多用户生产服务。
 保持单发行物模块化单体，不为假想的第二实现建框架。
 
 ## 开始前阅读
 
 1. 先读 [Context 索引](docs/context/index.md)。
-2. 再读 [M1 范围](docs/product/m1-scope.md)。
+2. 再读 [产品愿景](docs/product/vision.md)。
 3. 涉及边界时读 [架构概览](docs/architecture/overview.md)。
-4. 涉及公开数据时读对应的 [工具契约](docs/contracts/mcp-tools-v0.md)、
-   [能力契约](docs/contracts/capability-api-v0.md) 或
-   [求根契约](docs/contracts/root-finding-v0.md)。
+4. 涉及公开数据时读对应的 [工具契约](docs/contracts/mcp-tools-v1.md)、
+   [能力契约](docs/contracts/capability-api-v1.md) 或
+   [求根契约](docs/contracts/root-finding-v1.md)。
 5. 涉及本地状态时读 [bootstrap 与 doctor](docs/operations/bootstrap-and-doctor.md)。
-6. 当前规范补充是
-   [A12 接口决议](docs/superpowers/specs/2026-08-11-m1a-a12-interface-resolution.md)。
+6. C1 预览边界读
+   [C1 接口补充](docs/superpowers/specs/2026-07-23-cumcm-2022-a-q1-contest-vertical-slice-design.md)。
 
 ## 权威顺序
 
@@ -47,7 +47,7 @@ Built-in Capability 不直接访问数据库、项目根或宿主。
 MCP 层不得实现数学算法或直接读写 SQLite。
 数学代码留在 `modeling_capabilities`。
 求解器与独立验证器不得导入彼此的数值实现。
-公开工具固定为六个；变更必须先改权威契约和失败测试。
+公开工具以 `modeling_core.contracts.tools.TOOL_NAMES` 为唯一清单；变更必须先改权威契约和失败测试。
 
 ## 能力边界
 
@@ -60,11 +60,10 @@ M1 不实现 External Plugin 发现、安装、权限或 SDK。
 ## Schema、版本与 ADR
 
 跨边界 DTO 使用严格验证并拒绝未知字段。
-0.1 契约只属于 M1a 预览。
-M1b 才拥有 1.0 兼容基线和完整 RFC 8785 符合性。
+0.1 契约只属于 M1a 预览；M1b 的 1.0 是当前兼容基线。
+完整 RFC 8785 符合性与项目向量由 M1b 门禁拥有。
 版本语义变更必须同步 Schema、语料、文档和测试。
-M1a 直接引用批准设计中的架构决策，不复制不完整 ADR。
-新 ADR 属于 M1b，除非用户另行批准。
+稳定决策记录在 `docs/adr/`；变更决策先更新或新增 ADR。
 
 ## 执行纪律
 
@@ -106,14 +105,14 @@ MCP STDOUT 只能包含协议帧。
 持久记录保留项目、输入、能力版本、参数、Attempt、结果、Validation、警告和哈希关系。
 稳定哈希只从规范化数据计算。
 M1a 只声明固定向量与同环境重复执行的稳定 hash smoke。
-不要把 M1a 描述为完整 RFC 8785 符合性。
+M1b 完成声明必须覆盖完整 RFC 8785 通用与项目向量。
 
 ## 验证入口
 
-M1a 的唯一完整验证命令是：
+M1b 的唯一完整验证命令是：
 
 ```powershell
-uv run --locked --no-sync modeling verify --milestone m1a
+uv run --locked --no-sync modeling verify --milestone m1b
 ```
 
 局部开发可运行更窄测试，但完成声明必须引用新鲜完整门禁输出。
@@ -127,11 +126,10 @@ Spike 证明宿主往返，不定义生产核心抽象。
 
 ## 范围护栏
 
-M1a 最多 12 个顶层任务、4 个有序工作包。
-M1a 不增加第二存储、执行后端、事件总线、任务队列或 worker 池。
-内容寻址制品、完整恢复、跨平台门和 1.0 兼容性属于 M1b。
-C1 只能在 M1a Hard Gate 后开始。
-缺少延后项不构成 M1a 未完成，也不得提前实现它们。
+M1 保持单存储、无事件总线、无任务队列或 worker 池。
+C1 只批准短生命周期受控 worker，不构成通用执行后端。
+External Plugin、第二存储和通用工作流仍在范围外。
+范围变化必须先修改批准规格和门禁。
 
 ## 每任务完成记录
 

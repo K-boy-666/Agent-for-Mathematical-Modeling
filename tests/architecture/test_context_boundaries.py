@@ -30,7 +30,7 @@ ROUTES = {
     "schema": ("AGENTS.md", "contracts/"),
     "sqlite-recovery": (
         "modeling_infrastructure/AGENTS.md",
-        "operations/bootstrap-and-doctor.md",
+        "operations/recovery.md",
     ),
     "mcp-stdio": ("modeling_mcp/AGENTS.md", "stdio-diagnostics"),
     "numerical-method": ("modeling_capabilities/AGENTS.md", "numerical-validation"),
@@ -75,7 +75,7 @@ def test_root_rules_stay_a_compact_router_instead_of_a_contract_copy() -> None:
     assert "CREATE TABLE" not in text
     assert "```json" not in text
     assert "pytest " not in text
-    assert text.count("modeling verify --milestone m1a") == 1
+    assert text.count("modeling verify --milestone m1b") == 1
 
 
 def test_context_index_routes_each_task_class_to_a_distinct_minimum_read_set() -> None:
@@ -148,8 +148,8 @@ def test_capability_catalog_is_summary_only_and_links_the_stable_root_contract()
     for fragment in (
         "../../src/modeling_capabilities/root_finding/context.md",
         "../../src/modeling_capabilities/root_finding/descriptor.py",
-        "../contracts/capability-api-v0.md",
-        "../contracts/root-finding-v0.md",
+        "../contracts/capability-api-v1.md",
+        "../contracts/root-finding-v1.md",
         "../../src/modeling_capabilities/root_finding/schemas/1.0.0/",
         "modeling verify --capability numerical.root_finding",
     ):

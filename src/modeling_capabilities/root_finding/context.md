@@ -21,3 +21,25 @@ Canonical input materializes all defaults and persists the parsed AST, never
 the raw expression text. Solver and validator evaluators share the immutable
 syntax and budget contract types, but retain separate traversal, numerical
 dispatch, and arithmetic error paths.
+
+## Numerical method and conditioning
+
+The stable `numerical.root_finding/1.0.0` implementation uses deterministic
+binary64 bisection on a finite interval. Endpoints must bracket a sign change
+unless an endpoint already meets `function_tolerance`. Defaults are `1e-10`
+for absolute, relative, and function tolerances and `100` iterations; the
+contract maximum is 10,000 iterations and 20,000 function evaluations.
+
+Termination occurs at an endpoint, when the residual meets
+`function_tolerance`, or when half the bracket width is at most
+`absolute_tolerance + relative_tolerance * abs(midpoint)`. Discontinuities,
+overflow, non-finite values, multiple roots without a sign change, and
+ill-scaled residuals are caller-visible conditioning limits, not silently
+repaired mathematics. Scale or nondimensionalize the expression and choose a
+finite sign-changing bracket before retrying; the capability performs no
+automatic variable transformation.
+
+Run focused checks with
+`uv run --locked --no-sync modeling verify --capability numerical.root_finding`.
+The independent residual Validator must reject a forged result even when its
+reported hashes are internally consistent.
