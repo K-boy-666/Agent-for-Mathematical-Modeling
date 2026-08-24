@@ -3,7 +3,7 @@
 本文件只补充根规则，作用域是 `modeling_mcp`。
 
 - 本包是 `ApplicationFacade` 的薄 STDIO MCP 适配器。
-- 只暴露权威契约中的六个工具，不在此实现数学或持久化。
+- 只暴露当前权威 `TOOL_NAMES` 中的工具，不在此实现数学或持久化。
 - 输入先经打包 Schema 和严格 DTO 验证，再调用门面。
 - 结果先验证再返回；异常映射为有限、脱敏的稳定错误。
 - STDOUT 只能写 MCP 协议帧；日志写 STDERR。
