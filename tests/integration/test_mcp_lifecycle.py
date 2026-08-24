@@ -112,12 +112,18 @@ def _race_first_create_process(
                 CreateProjectRequest(operation_id=operation_id)
             )
         except ModelingError as error:
+            causes = []
+            cause = error.__cause__
+            while cause is not None:
+                causes.append((type(cause).__name__, str(cause)))
+                cause = cause.__cause__
             outcomes.put(
                 (
                     "error",
                     error.response.code,
                     error.response.retryable,
                     error.response.details.model_dump(mode="json"),
+                    tuple(causes),
                 )
             )
         else:
