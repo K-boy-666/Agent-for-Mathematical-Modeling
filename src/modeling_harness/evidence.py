@@ -155,6 +155,7 @@ _TRACE_KEYS: Final = frozenset(
     }
 )
 _HASH_PATTERN: Final = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_COMMIT_PATTERN: Final = re.compile(r"[0-9a-f]{40}\Z")
 
 
 class EvidenceValidationError(ValueError):
@@ -574,9 +575,15 @@ def _validate_phase_two_inputs(
     if not isinstance(base_report, Mapping):
         raise EvidenceValidationError("base report must be an object")
     keys = frozenset(base_report)
-    if keys != _BASE_REPORT_KEYS:
+    expected_keys = _BASE_REPORT_KEYS
+    if base_report.get("schema_version") == M1B_VERIFICATION_REPORT_SCHEMA_VERSION:
+        expected_keys = expected_keys | {"commit"}
+        commit = base_report.get("commit")
+        if not isinstance(commit, str) or _COMMIT_PATTERN.fullmatch(commit) is None:
+            raise EvidenceValidationError("base report commit is invalid")
+    if keys != expected_keys:
         raise EvidenceValidationError(
-            "base report must contain exactly the ten legacy keys"
+            "base report keys do not match its milestone contract"
         )
     if not isinstance(artifact_documents, Mapping):
         raise EvidenceValidationError("artifact documents must be an object")
@@ -860,9 +867,15 @@ def _validate_acceptance_report(
 ) -> None:
     if not isinstance(report, Mapping):
         raise EvidenceValidationError("verification report must be an object")
-    if frozenset(report) != _BASE_REPORT_KEYS | {"acceptance_map"}:
+    expected_keys = _BASE_REPORT_KEYS | {"acceptance_map"}
+    if report_schema_version == M1B_VERIFICATION_REPORT_SCHEMA_VERSION:
+        expected_keys = expected_keys | {"commit"}
+        commit = report.get("commit")
+        if not isinstance(commit, str) or _COMMIT_PATTERN.fullmatch(commit) is None:
+            raise EvidenceValidationError("verification report commit is invalid")
+    if frozenset(report) != expected_keys:
         raise EvidenceValidationError(
-            "verification report must contain exactly eleven keys"
+            "verification report keys do not match its milestone contract"
         )
     if report["schema_version"] != report_schema_version:
         raise EvidenceValidationError("verification report version is invalid")

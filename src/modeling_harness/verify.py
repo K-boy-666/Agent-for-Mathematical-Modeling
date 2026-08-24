@@ -536,18 +536,21 @@ _M1A_ACCEPTANCE_REQUIREMENTS: Final = (
 
 def _b_requirement(
     acceptance_id: str,
-    selector: str,
+    selector: str | tuple[str, ...],
     check_ids: tuple[str, ...],
     check_position: int,
     *,
     match: Literal["exact", "family"] = "exact",
 ) -> AcceptanceRequirement:
+    selectors = (selector,) if isinstance(selector, str) else selector
     return AcceptanceRequirement(
         acceptance_id=acceptance_id,
         clauses=(
             AcceptanceClause(
                 clause_id=f"{acceptance_id}-1",
-                required_nodes=(RequiredTestNode(selector=selector, match=match),),
+                required_nodes=tuple(
+                    RequiredTestNode(selector=item, match=match) for item in selectors
+                ),
                 check_ids=check_ids,
                 success_evidence=(
                     EvidenceReference(
@@ -614,8 +617,11 @@ _M1B_ACCEPTANCE_REQUIREMENTS: Final = (
     ),
     _b_requirement(
         "B-09",
-        "tests/acceptance/test_m1b_acceptance_map.py::test_workflow_runs_one_identical_m1b_command_on_two_os_families",
-        ("m1b-acceptance", "stdio-restart"),
+        (
+            "tests/acceptance/test_m1b_acceptance_map.py::test_workflow_runs_one_identical_m1b_command_on_two_os_families",
+            "tests/acceptance/test_release_evidence.py::test_release_bundle_assembles_exact_redacted_tamper_evident_evidence",
+        ),
+        ("m1b-acceptance", "pytest-acceptance", "stdio-restart"),
         28,
     ),
     _b_requirement(
@@ -990,6 +996,21 @@ def _collect_source_inventory(repository_root: Path) -> _SourceInventory:
         entries=tuple(entries),
         fingerprint=sha256_json(projection),
     )
+
+
+def _repository_commit(repository_root: Path) -> str:
+    completed = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=repository_root,
+        env=_offline_environment(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    commit = completed.stdout.strip()
+    if completed.returncode != 0 or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+        raise ValueError("repository commit is unavailable")
+    return commit
 
 
 def _is_regular_inventory_path(repository_root: Path, relative: PurePosixPath) -> bool:
@@ -1682,6 +1703,7 @@ def _run_milestone_verification(
     environment = _offline_environment()
     environment.pop("MODELING_M1A_GOLDEN_EVIDENCE_DIR", None)
     initial_inventory = _collect_source_inventory(repository_root)
+    commit = _repository_commit(repository_root) if milestone == "m1b" else None
     fingerprint_hex = initial_inventory.fingerprint.removeprefix("sha256:")
     if len(fingerprint_hex) != 64 or any(
         character not in "0123456789abcdef" for character in fingerprint_hex
@@ -1840,6 +1862,8 @@ def _run_milestone_verification(
             "golden_ids": _golden_ids(trace_path),
             "incomplete_groups": groups,
         }
+        if commit is not None:
+            base_report["commit"] = commit
         materialize = (
             materialize_m1a_acceptance_map
             if milestone == "m1a"

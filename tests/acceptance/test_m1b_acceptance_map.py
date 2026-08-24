@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from modeling_harness import verify as verification
 from modeling_harness.evidence import (
+    EvidenceValidationError,
     M1B_ACCEPTANCE_MAP_SCHEMA_VERSION,
     M1B_VERIFICATION_REPORT_SCHEMA_VERSION,
     validate_m1b_acceptance_policy,
+    validate_m1b_acceptance_report,
 )
 
 
@@ -70,11 +75,56 @@ def test_m1b_acceptance_policy_maps_exactly_a01_through_b10_to_real_tests() -> N
                 test_path = node.selector.split("::", 1)[0]
                 assert (ROOT / test_path).is_file(), node.selector
                 assert "*" not in node.selector
+    b09 = requirements[18]
+    assert {
+        node.selector for clause in b09.clauses for node in clause.required_nodes
+    } == {
+        "tests/acceptance/test_m1b_acceptance_map.py::test_workflow_runs_one_identical_m1b_command_on_two_os_families",
+        "tests/acceptance/test_release_evidence.py::test_release_bundle_assembles_exact_redacted_tamper_evident_evidence",
+    }
 
 
 def test_m1b_report_versions_are_distinct_from_preview_evidence() -> None:
     assert M1B_ACCEPTANCE_MAP_SCHEMA_VERSION == "m1b-acceptance-map/1.0.0"
     assert M1B_VERIFICATION_REPORT_SCHEMA_VERSION == "m1b-verification-report/1.0.0"
+
+
+def test_m1b_report_binds_the_exact_commit_while_m1a_shape_stays_legacy() -> None:
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "--verify", "HEAD"], cwd=ROOT, text=True
+    ).strip()
+    assert verification._repository_commit(ROOT) == commit
+    report = {
+        "schema_version": M1B_VERIFICATION_REPORT_SCHEMA_VERSION,
+        "milestone": "m1b",
+        "status": "PASSED",
+        "source_fingerprint": "sha256:" + "a" * 64,
+        "commit": commit,
+        "required_skips": 0,
+        "environment": {},
+        "checks": [],
+        "artifacts": {},
+        "golden_ids": {},
+        "incomplete_groups": [],
+        "acceptance_map": {
+            "schema_version": M1B_ACCEPTANCE_MAP_SCHEMA_VERSION,
+            "source_fingerprint": "sha256:" + "a" * 64,
+            "entries": [
+                {
+                    "acceptance_id": f"{prefix}-{number:02d}",
+                    "status": "PASS",
+                    "test_nodes": [],
+                    "evidence": [],
+                }
+                for prefix in ("A", "B")
+                for number in range(1, 11)
+            ],
+        },
+    }
+    validate_m1b_acceptance_report(report)
+    report.pop("commit")
+    with pytest.raises(EvidenceValidationError):
+        validate_m1b_acceptance_report(report)
 
 
 def test_workflow_runs_one_identical_m1b_command_on_two_os_families() -> None:

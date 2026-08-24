@@ -31,3 +31,38 @@ CI 只授予 `contents: read`，不使用平台条件测试命令。Owning workf
 这证明首宿主接入，不让 Codex 成为核心测试依赖，也不能替代 Windows/Ubuntu 自动证据。
 
 发布包只有在三层证据精确绑定同一提交和源指纹、无必需 skip、无篡改且清单完整时才可声明 M1 完成。
+
+## 候选提交与 CI 证据
+
+先提交候选，再从该提交的 workflow 下载一份 Windows 和一份 Ubuntu `verification-report.json`；
+两份报告必须是 `m1b-verification-report/1.0.0`，并具有相同的完整 `commit`、
+`source_fingerprint` 和 lock hash。报告所在目录须保留 verify 原子发布的全部七个文件，不能只复制
+JSON 报告。任何源文件、配置、文档或测试变更都会形成新候选，旧 CI 与宿主记录不得混用。
+
+## Codex CLI 原始记录
+
+在该提交的临时可信 checkout 中使用签入模板和真实 Codex CLI。烟测只能调用 `modeling` MCP，
+工具调用集合必须精确等于当前 `TOOL_NAMES`，且至少包含一次成功的根求解与独立 residual 验证；
+不得出现 shell、命令执行或其他工具。`register_problem_assets` 可读取 checkout 内现有的相对路径测试
+语料，随后以同一项目完成 MMIR 写入、确认和导出。保存 `codex exec --ephemeral --json` 的原始
+JSONL；组装器会校验官方 `thread.started`/`item.completed` 记录并只写入脱敏后的工具元数据、
+独立重算 residual、结果哈希和验证报告哈希。
+
+## 组装与复核
+
+```powershell
+uv run --locked --no-sync modeling evidence assemble `
+  --windows-report WINDOWS/verification-report.json `
+  --ubuntu-report UBUNTU/verification-report.json `
+  --codex-transcript codex-transcript.jsonl `
+  --destination build/release-evidence/COMMIT
+
+uv run --locked --no-sync modeling evidence validate `
+  --bundle build/release-evidence/COMMIT `
+  --source-fingerprint sha256:FINGERPRINT
+```
+
+组装不联网、不调用 GitHub、不启动 Codex，也不更新基线。它只接受两个平台全 PASS、0 skip、
+A-01–B-10 完整、当前检查 profile 完整、Codex 工具集合完整且制品哈希一致的输入；所有 JSON
+规范化后写入同级 staging 目录，清单最后写入并原子发布。validate 重新计算每个 payload 的
+SHA-256，并复核提交、指纹、平台、验收映射、黄金数学结果与四方制品哈希关系。
