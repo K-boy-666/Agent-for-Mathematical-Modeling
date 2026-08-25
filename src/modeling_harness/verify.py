@@ -2018,6 +2018,7 @@ def _run_c1_verification(repository_root: Path) -> int:
         "tests/contract/test_c1_coupled_heave_solver.py",
         "tests/contract/test_c1_validators.py",
         "tests/contract/test_c1_export.py",
+        "tests/integration/test_c1_product_workflow.py",
     ]
 
     all_passed = True

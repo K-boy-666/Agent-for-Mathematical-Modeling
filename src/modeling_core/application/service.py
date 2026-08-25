@@ -6,6 +6,7 @@ import base64
 import binascii
 import threading
 import unicodedata
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal, NoReturn, TypedDict, cast
 
@@ -31,6 +32,7 @@ from modeling_core.contracts.capability import (
     ExecutionCancelled,
     ExecutionContext,
     ExecutionDeadlineExceeded,
+    ExecutionOutcome,
     ExecutionResourceLimitExceeded,
     ResultSnapshotView,
     ValidationContext,
@@ -49,20 +51,25 @@ from modeling_core.contracts.errors import (
     UnsupportedVersionDetails,
 )
 from modeling_core.contracts.tools import (
+    AnyValidationReportPayload,
     ArtifactManifest as PublicArtifactManifest,
     AssetSnapshotEntry,
     AttemptTrace,
     CapabilityContract,
+    CanonicalCoupledHeaveInput,
     CanonicalRootFindingInput,
     ConfirmSubproblemMmirRequest,
     ConfirmSubproblemMmirResult,
     CreateProjectRequest,
     CreateProjectResult,
+    CoupledHeaveInput,
+    CoupledHeaveSuccessResultPayload,
     DataSnapshotReference,
     EnvironmentSummary,
     ExecutionOptions,
     ExperimentItems,
     ExperimentRecord,
+    ExportEntry,
     ExportSubproblemRequest,
     ExportSubproblemResult,
     FailureResultPayload,
@@ -86,6 +93,7 @@ from modeling_core.contracts.tools import (
     PutSubproblemMmirResult,
     RegisterProblemAssetsRequest,
     RegisterProblemAssetsResult,
+    ResultPayload,
     ResultTrace,
     RunExperimentErroredResult,
     RunExperimentNumericalFailureResult,
@@ -99,7 +107,6 @@ from modeling_core.contracts.tools import (
     ValidateExperimentResult,
     ValidateExperimentStoppedResult,
     ValidateExperimentSucceededResult,
-    ValidationReportPayload,
     ValidationTrace,
 )
 from modeling_core.contracts.versions import VersionSet
@@ -143,8 +150,16 @@ from modeling_core.ports.project_store import (
     WriteOperation,
 )
 from modeling_core.registry import CapabilityRegistry, RegistryError
+from modeling_core.worker.runner import run_worker
 
 _ENTITY_ID = TypeAdapter(EntityId)
+_CANONICAL_PAYLOAD: TypeAdapter[
+    CanonicalRootFindingInput | CanonicalCoupledHeaveInput
+] = TypeAdapter(CanonicalRootFindingInput | CanonicalCoupledHeaveInput)
+_RESULT_PAYLOAD: TypeAdapter[ResultPayload] = TypeAdapter(ResultPayload)
+_VALIDATION_REPORT: TypeAdapter[AnyValidationReportPayload] = TypeAdapter(
+    AnyValidationReportPayload
+)
 _MAX_RESPONSE_BYTES = 262144
 _OFFICIAL_ASSET_SHA256 = frozenset(
     {
@@ -183,7 +198,11 @@ class _ValidationResultFields(_CommonFields):
     validation_id: str
     attempt_id: str
     result_hash: str
-    validator_id: Literal["numerical.root_finding.residual"]
+    validator_id: Literal[
+        "numerical.root_finding.residual",
+        "dynamics.coupled_heave.linear",
+        "dynamics.coupled_heave.power_law",
+    ]
     validator_implementation_id: str
     validator_implementation_version: str
     policy_version: Literal["0.1.0", "1.0.0"]
@@ -326,6 +345,11 @@ class ModelingApplication(ApplicationFacade):
         artifact_store: ArtifactStore | None = None,
         environment_document: JsonObject | None = None,
         fault_injector: FaultInjector | None = None,
+        subproblem_exporter: Callable[
+            [dict[str, JsonObject], JsonObject],
+            tuple[tuple[str, str, str, bytes], ...],
+        ]
+        | None = None,
     ) -> None:
         self._store = store
         self._registry = registry
@@ -351,6 +375,7 @@ class ModelingApplication(ApplicationFacade):
         self._artifact_store = artifact_store
         self._environment_document = environment_document
         self._faults = fault_injector or NoFaults()
+        self._subproblem_exporter = subproblem_exporter
         schema_version = versions.result_schema_version.rsplit("/", 1)[1]
         self._result_schema_id = (
             "https://schemas.math-modeling-mcp.local/common/"
@@ -932,7 +957,8 @@ class ModelingApplication(ApplicationFacade):
         }
         if attempt.status is AttemptStatus.SUCCEEDED:
             if attempt.result is None or not isinstance(
-                attempt.result.result_payload, SuccessResultPayload
+                attempt.result.result_payload,
+                (SuccessResultPayload, CoupledHeaveSuccessResultPayload),
             ):
                 raise ValueError("successful attempt is missing a success payload")
             return RunExperimentSucceededResult(
@@ -998,6 +1024,31 @@ class ModelingApplication(ApplicationFacade):
                             "condition": "mmir_not_confirmed",
                             "current_state": "unconfirmed",
                         },
+                    )
+            if isinstance(request.payload, CoupledHeaveInput):
+                confirmed = getattr(self, "_confirmed_mmir", {}).get(
+                    request.payload.subproblem_id
+                )
+                if confirmed != request.payload.mmir_revision:
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="PRECONDITION_FAILED",
+                        message="the exact MMIR revision is not confirmed",
+                        details={
+                            "condition": "mmir_not_confirmed",
+                            "current_state": "stale_or_unconfirmed",
+                        },
+                    )
+                registered = getattr(self, "_asset_snapshots", {})
+                if any(
+                    registered.get(item.label) != item
+                    for item in request.payload.asset_snapshots
+                ):
+                    self._raise_error(
+                        correlation_id=correlation_id,
+                        code="INTEGRITY_FAILURE",
+                        message="asset snapshot does not match registered evidence",
+                        details={"subject": "input_snapshot"},
                     )
             rerun_experiment: Experiment | None = None
             recorded_attempt: Attempt | None = None
@@ -1190,11 +1241,12 @@ class ModelingApplication(ApplicationFacade):
                     Literal[
                         "numerical.root_finding.canonical-input/0.1.0",
                         "numerical.root_finding.canonical-input/1.0.0",
+                        "dynamics.coupled_heave.canonical-input/0.1.0",
                     ],
                     canonical.canonical_input_schema_version,
                 ),
-                canonical_payload=CanonicalRootFindingInput.model_validate(
-                    canonical.canonical_payload, strict=True
+                canonical_payload=_CANONICAL_PAYLOAD.validate_json(
+                    canonical_json_bytes(canonical.canonical_payload), strict=True
                 ),
                 canonical_payload_hash=canonical.canonical_payload_hash,
                 model_snapshot_hash=canonical.model_snapshot_hash,
@@ -1275,31 +1327,44 @@ class ModelingApplication(ApplicationFacade):
             terminal_reason: TerminalReason | None = None
             numerical_failure = None
             try:
-                outcome = capability.execute(
-                    canonical,
-                    ExecutionContext(
-                        attempt_id=pending.attempt_id,
-                        randomness=descriptor.randomness,
-                        seed=execution.seed,
-                        deadline=deadline,
-                        clock=self._clock,
-                        cancellation=self._cancellation,
-                        artifact_sink=artifact_sink,
-                    ),
+                execution_context = ExecutionContext(
+                    attempt_id=pending.attempt_id,
+                    randomness=descriptor.randomness,
+                    seed=execution.seed,
+                    deadline=deadline,
+                    clock=self._clock,
+                    cancellation=self._cancellation,
+                    artifact_sink=artifact_sink,
                 )
+                if descriptor.capability_id == "dynamics.coupled_heave":
+                    worker_result = run_worker(
+                        capability_id=descriptor.capability_id,
+                        contract_version=descriptor.contract_version,
+                        canonical_input_json=canonical.model_dump_json(),
+                        execution_context=execution_context,
+                        capability_registry_json=("m1b" if self._schema_two else "m1a"),
+                    )
+                    outcome = ExecutionOutcome(
+                        result_kind=cast(
+                            Literal["success", "numerical_failure"],
+                            worker_result.result_kind,
+                        ),
+                        result_payload=_RESULT_PAYLOAD.validate_json(
+                            canonical_json_bytes(worker_result.result_payload),
+                            strict=True,
+                        ),
+                    )
+                else:
+                    outcome = capability.execute(canonical, execution_context)
                 result_document = cast(
                     JsonObject,
                     outcome.result_payload.model_dump(mode="python"),
                 )
-                strict_result_payload: SuccessResultPayload | FailureResultPayload
-                if outcome.result_kind == "success":
-                    strict_result_payload = SuccessResultPayload.model_validate(
-                        result_document, strict=True
-                    )
-                else:
-                    strict_result_payload = FailureResultPayload.model_validate(
-                        result_document, strict=True
-                    )
+                strict_result_payload = _RESULT_PAYLOAD.validate_python(
+                    result_document, strict=True
+                )
+                if strict_result_payload.result_kind != outcome.result_kind:
+                    raise ValueError("execution outcome payload kind does not match")
                 result_hash = sha256_json(
                     cast(JsonObject, strict_result_payload.model_dump(mode="json"))
                 )
@@ -1529,12 +1594,19 @@ class ModelingApplication(ApplicationFacade):
                 source.experiment.canonical_payload.model_dump(mode="json"),
             )
             observed_input_hash = sha256_json(payload_document)
-            observed_model_hash = sha256_json(
-                {
-                    "language": "math-expr-v1",
-                    "ast": payload_document["expression_ast"],
-                }
-            )
+            if "expression_ast" in payload_document:
+                observed_model_hash = sha256_json(
+                    {
+                        "language": "math-expr-v1",
+                        "ast": payload_document["expression_ast"],
+                    }
+                )
+            elif isinstance(payload_document.get("model"), dict):
+                observed_model_hash = sha256_json(
+                    cast(JsonObject, payload_document["model"])
+                )
+            else:
+                observed_model_hash = ""
             data_documents = [
                 cast(JsonObject, item.model_dump(mode="json"))
                 for item in source.experiment.data_snapshot_references
@@ -1680,7 +1752,11 @@ class ModelingApplication(ApplicationFacade):
                 expected_result_hash=request.expected_result_hash,
                 result_hash=source.attempt.result.result_hash,
                 validator_id=cast(
-                    Literal["numerical.root_finding.residual"],
+                    Literal[
+                        "numerical.root_finding.residual",
+                        "dynamics.coupled_heave.linear",
+                        "dynamics.coupled_heave.power_law",
+                    ],
                     validator.descriptor.validator_id,
                 ),
                 validator_implementation_id=(validator.descriptor.implementation_id),
@@ -1753,7 +1829,7 @@ class ModelingApplication(ApplicationFacade):
                         cancellation=self._cancellation,
                     ),
                 )
-                report_payload = ValidationReportPayload.model_validate(
+                report_payload = _VALIDATION_REPORT.validate_python(
                     raw_report_payload.model_dump(mode="python", warnings="none"),
                     strict=True,
                 )
@@ -1870,6 +1946,37 @@ class ModelingApplication(ApplicationFacade):
                 )
             except ProjectStoreError as error:
                 self._raise_store(error, correlation_id)
+            if (
+                source.experiment.capability_id == "dynamics.coupled_heave"
+                and final_status is ValidationStatus.SUCCEEDED
+                and outcome is ValidationOutcome.PASSED
+                and isinstance(
+                    source.experiment.canonical_payload,
+                    CanonicalCoupledHeaveInput,
+                )
+                and isinstance(
+                    source.attempt.result.result_payload,
+                    CoupledHeaveSuccessResultPayload,
+                )
+            ):
+                mode = source.experiment.canonical_payload.damping_mode
+                if not hasattr(self, "_validation_results"):
+                    self._validation_results: dict[str, bool] = {}
+                    self._c1_results: dict[str, CoupledHeaveSuccessResultPayload] = {}
+                self._validation_results[mode] = True
+                self._c1_results[mode] = source.attempt.result.result_payload
+                if not hasattr(self, "_c1_context"):
+                    self._c1_context: dict[str, JsonObject] = {}
+                self._c1_context[mode] = {
+                    "mmir_revision": source.experiment.canonical_payload.mmir_revision,
+                    "asset_snapshots": [
+                        item.model_dump(mode="json")
+                        for item in source.experiment.canonical_payload.asset_snapshots
+                    ],
+                    "model": source.experiment.canonical_payload.model,
+                    "result_hash": source.attempt.result.result_hash,
+                    "validation_report_hash": stored.validation.validation_report_hash,
+                }
             return self._validation_result(
                 common=common,
                 operation_id=request.operation_id,
@@ -1992,11 +2099,14 @@ class ModelingApplication(ApplicationFacade):
                 sha256_str = f"sha256:{sha256_hex}"
                 snapshots.append(
                     AssetSnapshotEntry(
+                        snapshot_id=self._ids.new_uuid4(),
                         label=entry.label,
                         sha256=sha256_str,
                         official_match=sha256_str in _OFFICIAL_ASSET_SHA256,
                     )
                 )
+
+            self._asset_snapshots = {item.label: item for item in snapshots}
 
             return RegisterProblemAssetsResult(
                 **common,
@@ -2039,7 +2149,11 @@ class ModelingApplication(ApplicationFacade):
             # Store the revision for later confirmation validation
             if not hasattr(self, "_mmir_revisions"):
                 self._mmir_revisions: dict[str, str] = {}
+                self._mmir_contents: dict[str, JsonObject] = {}
             self._mmir_revisions[request.subproblem_id] = mmir_revision
+            self._mmir_contents[request.subproblem_id] = cast(
+                JsonObject, request.mmir.model_dump(mode="json")
+            )
 
             return PutSubproblemMmirResult(
                 **common,
@@ -2160,13 +2274,54 @@ class ModelingApplication(ApplicationFacade):
                     },
                 )
 
+            if self._subproblem_exporter is None or self._artifact_store is None:
+                self._raise_error(
+                    correlation_id=correlation_id,
+                    code="PRECONDITION_FAILED",
+                    message="C1 export publication is unavailable",
+                    details={
+                        "condition": "export_blocked_validation_not_passed",
+                        "current_state": "exporter_unavailable",
+                    },
+                )
+            provenance: JsonObject = {
+                "subproblem_id": request.subproblem_id,
+                "mmir_revision": getattr(self, "_confirmed_mmir", {}).get(
+                    request.subproblem_id
+                ),
+                "mmir": getattr(self, "_mmir_contents", {}).get(request.subproblem_id),
+                "cases": getattr(self, "_c1_context", {}),
+            }
+            generated = self._subproblem_exporter(
+                {
+                    mode: cast(
+                        JsonObject,
+                        payload.data.model_dump(mode="json"),
+                    )
+                    for mode, payload in self._c1_results.items()
+                },
+                provenance,
+            )
+            exports: list[ExportEntry] = []
+            for kind, label, media_type, payload in generated:
+                suffix = "." + label.rsplit(".", 1)[1]
+                manifest = self._artifact_store.publish_bytes(
+                    "export",
+                    payload,
+                    media_type,
+                    cast(Literal[".xlsx", ".svg", ".json"], suffix),
+                )
+                exports.append(
+                    ExportEntry(kind=kind, label=label, sha256=manifest.sha256)
+                )
+
             return ExportSubproblemResult(
                 **common,
                 operation_id=request.operation_id,
                 replayed=False,
                 project_id=request.project_id,
                 subproblem_id=request.subproblem_id,
-                exports=(),
+                exports=tuple(exports),
             )
         finally:
             self._release_write()

@@ -17,8 +17,9 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["label", "sha256", "official_match"],
+        "required": ["snapshot_id", "label", "sha256", "official_match"],
         "properties": {
+          "snapshot_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
           "label": {"type": "string"},
           "sha256": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/hash"},
           "official_match": {"type": "boolean"}

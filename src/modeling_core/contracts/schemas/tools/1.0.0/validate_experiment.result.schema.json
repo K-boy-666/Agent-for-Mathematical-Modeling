@@ -29,11 +29,21 @@
         "root_within_interval": {"type": "boolean"}, "reported_function_value": {"type": "number"}, "recomputed_function_value": {"type": ["number", "null"]}, "absolute_reported_delta": {"type": ["number", "null"]}, "absolute_residual": {"type": ["number", "null"]}, "function_tolerance": {"type": "number"}, "failed_checks": {"type": "array", "items": {"enum": ["root_out_of_interval", "expression_undefined", "non_finite_recomputed_value", "reported_value_mismatch", "residual_exceeds_tolerance"]}, "uniqueItems": true}
       }
     },
+    "dynamicsMetrics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["x_f_rtol", "x_f_atol", "x_o_rtol", "x_o_atol", "energy_closure", "failed_checks"],
+      "properties": {
+        "x_f_rtol": {"type": "number", "minimum": 0}, "x_f_atol": {"type": "number", "minimum": 0},
+        "x_o_rtol": {"type": "number", "minimum": 0}, "x_o_atol": {"type": "number", "minimum": 0},
+        "energy_closure": {"type": "number", "minimum": 0},
+        "failed_checks": {"type": "array", "uniqueItems": true, "items": {"enum": ["x_f_tolerance", "x_o_tolerance", "energy_closure"]}}
+      }
+    },
     "succeeded": {
       "type": "object", "additionalProperties": false,
       "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "validation_id", "attempt_id", "result_hash", "validator_id", "validator_implementation_id", "validator_implementation_version", "policy_version", "policy_hash", "validation_status", "outcome", "metrics", "validation_report_hash", "report_artifact"],
       "properties": {
-        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "validation_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "result_hash": {"$ref": "#/$defs/hash"}, "validator_id": {"const": "numerical.root_finding.residual"}, "validator_implementation_id": {"type": "string"}, "validator_implementation_version": {"type": "string"}, "policy_version": {"const": "1.0.0"}, "policy_hash": {"$ref": "#/$defs/hash"}, "validation_status": {"const": "SUCCEEDED"}, "outcome": {"enum": ["PASSED", "FAILED", "INCONCLUSIVE"]}, "metrics": {"$ref": "#/$defs/metrics"}, "validation_report_hash": {"$ref": "#/$defs/hash"}, "report_artifact": {"$ref": "#/$defs/artifact"}
+        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "validation_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "result_hash": {"$ref": "#/$defs/hash"}, "validator_id": {"enum": ["numerical.root_finding.residual", "dynamics.coupled_heave.linear", "dynamics.coupled_heave.power_law"]}, "validator_implementation_id": {"type": "string"}, "validator_implementation_version": {"type": "string"}, "policy_version": {"enum": ["0.1.0", "1.0.0"]}, "policy_hash": {"$ref": "#/$defs/hash"}, "validation_status": {"const": "SUCCEEDED"}, "outcome": {"enum": ["PASSED", "FAILED", "INCONCLUSIVE"]}, "metrics": {"oneOf": [{"$ref": "#/$defs/metrics"}, {"$ref": "#/$defs/dynamicsMetrics"}]}, "validation_report_hash": {"$ref": "#/$defs/hash"}, "report_artifact": {"$ref": "#/$defs/artifact"}
       }
     },
     "errored": {

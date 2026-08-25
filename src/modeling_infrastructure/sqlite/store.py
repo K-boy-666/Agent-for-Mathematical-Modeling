@@ -22,8 +22,11 @@ from modeling_core.contracts.common import JsonObject, Warning
 from modeling_core.contracts.errors import ErrorResponse
 from modeling_core.contracts.schema_catalog import SchemaCatalog
 from modeling_core.contracts.tools import (
+    AnyValidationReportPayload,
     AttemptStatusCounts,
+    CanonicalCoupledHeaveInput,
     CanonicalRootFindingInput,
+    CoupledHeaveValidationMetrics,
     DataSnapshotReference,
     EnvironmentSummary,
     ExecutionOptions,
@@ -31,7 +34,6 @@ from modeling_core.contracts.tools import (
     NumericalFailureData,
     ResultPayload,
     ValidationMetrics,
-    ValidationReportPayload,
     ValidationStatusCounts,
 )
 from modeling_core.contracts.versions import VersionSet
@@ -97,6 +99,15 @@ if TYPE_CHECKING:
 
 
 _RESULT_PAYLOAD: TypeAdapter[ResultPayload] = TypeAdapter(ResultPayload)
+_CANONICAL_PAYLOAD: TypeAdapter[
+    CanonicalRootFindingInput | CanonicalCoupledHeaveInput
+] = TypeAdapter(CanonicalRootFindingInput | CanonicalCoupledHeaveInput)
+_VALIDATION_METRICS: TypeAdapter[ValidationMetrics | CoupledHeaveValidationMetrics] = (
+    TypeAdapter(ValidationMetrics | CoupledHeaveValidationMetrics)
+)
+_VALIDATION_REPORT: TypeAdapter[AnyValidationReportPayload] = TypeAdapter(
+    AnyValidationReportPayload
+)
 _DATA_REFS = TypeAdapter(tuple[DataSnapshotReference, ...])
 _WARNINGS = TypeAdapter(tuple[Warning, ...])
 _RESULT_SCHEMA_BASE = "https://schemas.math-modeling-mcp.local/common/"
@@ -129,12 +140,14 @@ def _array(value: str) -> list[object]:
     return cast(list[object], decoded)
 
 
-def _validation_metrics(value: str) -> ValidationMetrics:
-    return ValidationMetrics.model_validate_json(value, strict=True)
+def _validation_metrics(
+    value: str,
+) -> ValidationMetrics | CoupledHeaveValidationMetrics:
+    return _VALIDATION_METRICS.validate_json(value, strict=True)
 
 
-def _validation_report(value: str) -> ValidationReportPayload:
-    return ValidationReportPayload.model_validate_json(value, strict=True)
+def _validation_report(value: str) -> AnyValidationReportPayload:
+    return _VALIDATION_REPORT.validate_json(value, strict=True)
 
 
 class SQLiteProjectStore:
@@ -250,7 +263,7 @@ class SQLiteProjectStore:
                 {"subject": "result_artifact"},
             ) from error
         try:
-            return _RESULT_PAYLOAD.validate_python(decoded, strict=True)
+            return _RESULT_PAYLOAD.validate_json(raw, strict=True)
         except (ValueError, TypeError) as error:
             raise ProjectStoreError(
                 "INTEGRITY_FAILURE",
@@ -261,7 +274,7 @@ class SQLiteProjectStore:
 
     def _report_payload_from_artifact(
         self, row: sqlite3.Row
-    ) -> ValidationReportPayload:
+    ) -> AnyValidationReportPayload:
         artifact_id = row["report_artifact_id"]
         byte_size = row["artifact_byte_size"]
         sha256 = row["artifact_sha256"]
@@ -297,7 +310,7 @@ class SQLiteProjectStore:
                 {"subject": "report_artifact"},
             ) from error
         try:
-            return ValidationReportPayload.model_validate_json(raw, strict=True)
+            return _VALIDATION_REPORT.validate_json(raw, strict=True)
         except ValueError as error:
             raise ProjectStoreError(
                 "INTEGRITY_FAILURE",
@@ -545,8 +558,8 @@ class SQLiteProjectStore:
             capability_id=row["capability_id"],
             contract_version=row["contract_version"],
             canonical_input_schema_version=row["canonical_input_schema_version"],
-            canonical_payload=CanonicalRootFindingInput.model_validate(
-                _document(row["canonical_payload"]), strict=True
+            canonical_payload=_CANONICAL_PAYLOAD.validate_json(
+                row["canonical_payload"], strict=True
             ),
             canonical_payload_hash=row["canonical_payload_hash"],
             model_snapshot_hash=row["model_snapshot_hash"],
@@ -564,9 +577,7 @@ class SQLiteProjectStore:
     def _result_from_row(row: sqlite3.Row | None) -> ResultSnapshot | None:
         if row is None or row["result_snapshot_id"] is None:
             return None
-        payload = _RESULT_PAYLOAD.validate_python(
-            _document(row["result_payload_json"]), strict=True
-        )
+        payload = _RESULT_PAYLOAD.validate_json(row["result_payload_json"], strict=True)
         return ResultSnapshot(
             result_snapshot_id=row["result_snapshot_id"],
             attempt_id=row["attempt_id"],

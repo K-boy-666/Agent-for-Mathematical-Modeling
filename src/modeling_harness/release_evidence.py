@@ -608,24 +608,100 @@ def _artifact_identity(value: object, role: str, payload: JsonValue) -> str:
     return artifact_id
 
 
+def _require_c1_chain(calls: Sequence[tuple[str, Mapping[str, object]]]) -> None:
+    runs = {
+        _mapping(result.get("result_summary"), "C1 result summary").get(
+            "damping_mode"
+        ): result
+        for tool, result in calls
+        if tool == "run_experiment"
+        and result.get("capability_id") == "dynamics.coupled_heave"
+        and result.get("attempt_status") == "SUCCEEDED"
+    }
+    validations = {
+        result.get("validator_id"): result
+        for tool, result in calls
+        if tool == "validate_experiment"
+        and result.get("validation_status") == "SUCCEEDED"
+        and result.get("outcome") == "PASSED"
+        and str(result.get("validator_id", "")).startswith("dynamics.coupled_heave.")
+    }
+    if set(runs) != {"linear", "power_law"} or set(validations) != {
+        "dynamics.coupled_heave.linear",
+        "dynamics.coupled_heave.power_law",
+    }:
+        raise EvidenceValidationError(
+            "Codex C1 two-case validation chain is incomplete"
+        )
+    for mode, run in runs.items():
+        validation = validations[f"dynamics.coupled_heave.{mode}"]
+        if validation.get("attempt_id") != run.get("attempt_id") or validation.get(
+            "result_hash"
+        ) != run.get("result_hash"):
+            raise EvidenceValidationError("Codex C1 run and validation disagree")
+    register = next(
+        result for tool, result in calls if tool == "register_problem_assets"
+    )
+    snapshots = register.get("snapshots")
+    if (
+        not isinstance(snapshots, list)
+        or len(snapshots) != 5
+        or any(
+            not isinstance(item, Mapping)
+            or item.get("official_match") is not True
+            or _HASH_PATTERN.fullmatch(str(item.get("sha256", ""))) is None
+            for item in snapshots
+        )
+    ):
+        raise EvidenceValidationError("Codex C1 official asset evidence is incomplete")
+    exported = next(result for tool, result in calls if tool == "export_subproblem")
+    exports = exported.get("exports")
+    expected = {
+        "result1-1.xlsx": "workbook",
+        "result1-2.xlsx": "workbook",
+        "linear-timeseries.svg": "figure",
+        "power-law-timeseries.svg": "figure",
+        "result-card.json": "result_card",
+        "provenance.json": "provenance",
+    }
+    if (
+        not isinstance(exports, list)
+        or {
+            item.get("label"): item.get("kind")
+            for item in exports
+            if isinstance(item, Mapping)
+        }
+        != expected
+    ):
+        raise EvidenceValidationError("Codex C1 export set is incomplete")
+    hashes = {_hash(item.get("sha256"), "C1 export hash") for item in exports}
+    if len(hashes) != len(expected):
+        raise EvidenceValidationError("Codex C1 export hashes are ambiguous")
+
+
 def _golden_result(
     calls: Sequence[tuple[str, Mapping[str, object]]],
 ) -> dict[str, object]:
     counts = {tool: sum(name == tool for name, _ in calls) for tool in TOOL_NAMES}
-    if any(
-        count != 1 and not (tool == "get_project_status" and count == 2)
-        for tool, count in counts.items()
-    ):
-        raise EvidenceValidationError("Codex tool call count is ambiguous")
+    expected_counts = {tool: 1 for tool in TOOL_NAMES}
+    expected_counts.update(
+        {"get_project_status": 2, "run_experiment": 3, "validate_experiment": 3}
+    )
+    if counts != expected_counts:
+        raise EvidenceValidationError("Codex C1 tool call count is ambiguous")
+    _require_c1_chain(calls)
     runs = [
         result
         for tool, result in calls
-        if tool == "run_experiment" and result.get("attempt_status") == "SUCCEEDED"
+        if tool == "run_experiment"
+        and result.get("capability_id") == "numerical.root_finding"
+        and result.get("attempt_status") == "SUCCEEDED"
     ]
     validations = [
         result
         for tool, result in calls
         if tool == "validate_experiment"
+        and result.get("validator_id") == "numerical.root_finding.residual"
         and result.get("validation_status") == "SUCCEEDED"
         and result.get("outcome") == "PASSED"
     ]
@@ -805,12 +881,6 @@ def _golden_result(
         or confirm.get("status") != "CONFIRMED"
         or exported.get("subproblem_id") != subproblem_id
         or not isinstance(exports, list)
-        or not any(
-            isinstance(item, Mapping)
-            and item.get("kind") == "mmir"
-            and item.get("sha256") == mmir_revision
-            for item in exports
-        )
     ):
         raise EvidenceValidationError("Codex MMIR chain disagrees")
 

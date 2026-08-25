@@ -34,6 +34,7 @@ _VALID_ROLES: frozenset[str] = frozenset(
         "validation_report",
         "input_snapshot",
         "environment_snapshot",
+        "export",
     }
 )
 
@@ -218,6 +219,63 @@ class ContentAddressedArtifactStore:
             return self._make_manifest(artifact_id, role, canonical_bytes, schema_id)
         finally:
             _cleanup_staging(staging_path, staging_identity)
+
+    def publish_bytes(
+        self,
+        role: ArtifactRole,
+        payload: bytes,
+        media_type: str,
+        suffix: str,
+    ) -> ArtifactManifest:
+        if role != "export" or suffix not in {".xlsx", ".svg", ".json"}:
+            raise ArtifactStoreError(
+                code="INVALID_ROLE",
+                message="Only approved C1 export bytes may be published",
+            )
+        if not payload or len(payload) > _MAX_PAYLOAD_BYTES:
+            raise ArtifactStoreError(
+                code="PAYLOAD_TOO_LARGE",
+                message="Export payload is empty or exceeds the artifact limit",
+            )
+        staging_dir = self._paths.staging
+        self._require_safe_path(staging_dir, "staging")
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        staging_path = staging_dir / f"{self._session_id}.{uuid.uuid4()}{suffix}"
+        with open(staging_path, "xb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+            staged = os.fstat(handle.fileno())
+        identity = (staged.st_dev, staged.st_ino)
+        try:
+            digest = hashlib.sha256(payload).hexdigest()
+            artifact_id = f"sha256:{digest}"
+            destination = (
+                self._paths.artifacts / "sha256" / digest[:2] / f"{digest}{suffix}"
+            )
+            self._require_safe_path(destination.parent, "artifacts")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            self._require_safe_path(destination.parent, "artifacts")
+            try:
+                os.link(staging_path, destination)
+            except FileExistsError:
+                _verify_existing_or_raise(destination, payload, digest)
+            except OSError as error:
+                raise ArtifactStoreError(
+                    code="RENAME_FAILED",
+                    message="Failed to publish export artifact",
+                ) from error
+            return ArtifactManifest(
+                artifact_id=artifact_id,
+                role="export",
+                media_type=media_type,
+                byte_size=len(payload),
+                sha256=artifact_id,
+                schema_id="c1-export/0.1.0",
+                created_at=_now_utc(),
+            )
+        finally:
+            _cleanup_staging(staging_path, identity)
 
     # ------------------------------------------------------------------
     # read_verified

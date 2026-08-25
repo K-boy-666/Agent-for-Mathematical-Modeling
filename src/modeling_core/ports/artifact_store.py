@@ -11,7 +11,11 @@ from modeling_core.contracts.canonical_json import canonical_json_bytes
 from modeling_core.contracts.common import EntityId, Hash, JsonObject, Timestamp
 
 ArtifactRole = Literal[
-    "result", "validation_report", "input_snapshot", "environment_snapshot"
+    "result",
+    "validation_report",
+    "input_snapshot",
+    "environment_snapshot",
+    "export",
 ]
 
 _MAX_ARTIFACTS_PER_ATTEMPT = 16
@@ -156,6 +160,14 @@ class ArtifactStore(Protocol):
         expected_size: int,
         expected_sha256: str,
     ) -> bytes: ...
+
+    def publish_bytes(
+        self,
+        role: Literal["export"],
+        payload: bytes,
+        media_type: str,
+        suffix: Literal[".xlsx", ".svg", ".json"],
+    ) -> ArtifactManifest: ...
 
     def inspect(
         self,

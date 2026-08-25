@@ -7,12 +7,11 @@ It receives only serialized capability input and returns serialized output.
 from __future__ import annotations
 
 import importlib
-import json
 import time
 from datetime import UTC, datetime
 from typing import Any
 
-from modeling_core.contracts.capability import ExecutionContext
+from modeling_core.contracts.capability import CanonicalInputRecord, ExecutionContext
 from modeling_core.contracts.versions import VersionSet
 from modeling_core.registry import CapabilityRegistry
 
@@ -20,22 +19,41 @@ from modeling_core.registry import CapabilityRegistry
 
 _CAPABILITY_MODULES: dict[str, str] = {
     "numerical.root_finding": "modeling_capabilities.root_finding.solver",
+    "dynamics.coupled_heave": "modeling_capabilities.dynamics.capability",
 }
 
 _CAPABILITY_CLASSES: dict[str, str] = {
     "numerical.root_finding": "BisectionRootFindingCapability",
+    "dynamics.coupled_heave": "CoupledHeaveCapability",
 }
 
+_VALIDATORS = (
+    (
+        "modeling_capabilities.root_finding.validator",
+        "ResidualRootFindingValidator",
+        (),
+    ),
+    ("modeling_capabilities.dynamics.validation", "CoupledHeaveValidator", ("linear",)),
+    (
+        "modeling_capabilities.dynamics.validation",
+        "CoupledHeaveValidator",
+        ("power_law",),
+    ),
+)
 
-def _build_registry() -> CapabilityRegistry:
+
+def _build_registry(release: str) -> CapabilityRegistry:
     """Build a minimal registry with dynamically loaded capabilities."""
-    versions = VersionSet.m1a()
+    versions = VersionSet.m1b() if release == "m1b" else VersionSet.m1a()
     registry = CapabilityRegistry(versions)
     for capability_id, module_path in _CAPABILITY_MODULES.items():
         class_name = _CAPABILITY_CLASSES[capability_id]
         module = importlib.import_module(module_path)
         capability_cls = getattr(module, class_name)
-        registry.register_capability(capability_cls())
+        registry.register_capability(capability_cls(versions))
+    for module_path, class_name, arguments in _VALIDATORS:
+        validator_cls = getattr(importlib.import_module(module_path), class_name)
+        registry.register_validator(validator_cls(*arguments, versions))
     registry.seal(frozenset())
     return registry
 
@@ -75,10 +93,12 @@ def main(input_data: dict[str, Any]) -> dict[str, Any]:
     """
     capability_id = input_data["capability_id"]
     contract_version = input_data["contract_version"]
-    canonical_input = json.loads(input_data["canonical_input_json"])
+    canonical_input = CanonicalInputRecord.model_validate_json(
+        input_data["canonical_input_json"]
+    )
     exec_ctx = input_data["execution_context"]
 
-    registry = _build_registry()
+    registry = _build_registry(input_data["capability_registry_json"])
     capability = registry.resolve(capability_id, contract_version)
 
     clock = _WorkerClock()

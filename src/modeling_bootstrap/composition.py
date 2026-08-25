@@ -18,6 +18,11 @@ from modeling_capabilities.root_finding.solver import (
 from modeling_capabilities.root_finding.validator import (
     ResidualRootFindingValidator,
 )
+from modeling_capabilities.dynamics import (
+    CoupledHeaveCapability,
+    CoupledHeaveValidator,
+)
+from modeling_capabilities.dynamics.exporter import build_c1_exports
 from modeling_core.application.recovery import RecoveryService
 from modeling_core.application.service import ModelingApplication
 from modeling_core.contracts.versions import VersionSet
@@ -128,6 +133,10 @@ def build_composition(
     validator = ResidualRootFindingValidator(versions)
     registry.register_capability(capability)
     registry.register_validator(validator)
+    if versions.database_schema_version == 2:
+        registry.register_capability(CoupledHeaveCapability(versions))
+        registry.register_validator(CoupledHeaveValidator("linear", versions))
+        registry.register_validator(CoupledHeaveValidator("power_law", versions))
     registry_summary = registry.seal(frozenset())
     application = ModelingApplication(
         store=store,
@@ -155,6 +164,9 @@ def build_composition(
             else None
         ),
         fault_injector=faults,
+        subproblem_exporter=(
+            build_c1_exports if versions.database_schema_version == 2 else None
+        ),
     )
     adapter = ModelingMcpAdapter(application, versions)
     server = Server[object, object](

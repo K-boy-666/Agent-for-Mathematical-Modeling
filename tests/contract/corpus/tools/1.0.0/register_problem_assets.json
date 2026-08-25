@@ -25,11 +25,13 @@
       "project_id": "223e4567-e89b-42d3-a456-426614174000",
       "snapshots": [
         {
+          "snapshot_id": "123e4567-e89b-42d3-a456-426614174011",
           "label": "problem_description",
           "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "official_match": false
         },
         {
+          "snapshot_id": "123e4567-e89b-42d3-a456-426614174012",
           "label": "reference_data",
           "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "official_match": false

@@ -17,14 +17,16 @@ from modeling_core.contracts.common import (
 )
 from modeling_core.contracts.errors import ErrorResponse
 from modeling_core.contracts.tools import (
+    AnyValidationReportPayload,
+    CanonicalCoupledHeaveInput,
     CanonicalRootFindingInput,
+    CoupledHeaveValidationMetrics,
     DataSnapshotReference,
     EnvironmentSummary,
     ExecutionOptions,
     NumericalFailureData,
     ResultPayload,
     ValidationMetrics,
-    ValidationReportPayload,
 )
 from modeling_core.domain.states import (
     AttemptStatus,
@@ -89,8 +91,9 @@ class Experiment:
     canonical_input_schema_version: Literal[
         "numerical.root_finding.canonical-input/0.1.0",
         "numerical.root_finding.canonical-input/1.0.0",
+        "dynamics.coupled_heave.canonical-input/0.1.0",
     ]
-    canonical_payload: CanonicalRootFindingInput
+    canonical_payload: CanonicalRootFindingInput | CanonicalCoupledHeaveInput
     canonical_payload_hash: Hash
     model_snapshot_hash: Hash
     data_snapshot_references: tuple[DataSnapshotReference, ...]
@@ -115,13 +118,17 @@ class Experiment:
                 Literal[
                     "numerical.root_finding.canonical-input/0.1.0",
                     "numerical.root_finding.canonical-input/1.0.0",
+                    "dynamics.coupled_heave.canonical-input/0.1.0",
                 ],
             ),
         )
         object.__setattr__(
             self,
             "canonical_payload",
-            _validate(self.canonical_payload, CanonicalRootFindingInput),
+            _validate(
+                self.canonical_payload,
+                CanonicalRootFindingInput | CanonicalCoupledHeaveInput,
+            ),
         )
         object.__setattr__(
             self, "canonical_payload_hash", _validate(self.canonical_payload_hash, Hash)
@@ -329,7 +336,11 @@ class Validation:
     attempt_id: EntityId
     expected_result_hash: Hash
     result_hash: Hash
-    validator_id: Literal["numerical.root_finding.residual"]
+    validator_id: Literal[
+        "numerical.root_finding.residual",
+        "dynamics.coupled_heave.linear",
+        "dynamics.coupled_heave.power_law",
+    ]
     validator_implementation_id: str
     validator_implementation_version: Version
     policy_version: Literal["0.1.0", "1.0.0"]
@@ -340,9 +351,9 @@ class Validation:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     outcome: ValidationOutcome | None = None
-    metrics: ValidationMetrics | None = None
+    metrics: ValidationMetrics | CoupledHeaveValidationMetrics | None = None
     validation_report_hash: Hash | None = None
-    report_payload: ValidationReportPayload | None = None
+    report_payload: AnyValidationReportPayload | None = None
     operational_error: ErrorResponse | None = None
     terminal_reason: TerminalReason | None = None
 
@@ -358,7 +369,14 @@ class Validation:
         object.__setattr__(
             self,
             "validator_id",
-            _validate(self.validator_id, Literal["numerical.root_finding.residual"]),
+            _validate(
+                self.validator_id,
+                Literal[
+                    "numerical.root_finding.residual",
+                    "dynamics.coupled_heave.linear",
+                    "dynamics.coupled_heave.power_law",
+                ],
+            ),
         )
         object.__setattr__(
             self,
@@ -391,7 +409,12 @@ class Validation:
             )
         if self.metrics is not None:
             object.__setattr__(
-                self, "metrics", _validate(self.metrics, ValidationMetrics)
+                self,
+                "metrics",
+                _validate(
+                    self.metrics,
+                    ValidationMetrics | CoupledHeaveValidationMetrics,
+                ),
             )
         if self.validation_report_hash is not None:
             object.__setattr__(
@@ -403,7 +426,7 @@ class Validation:
             object.__setattr__(
                 self,
                 "report_payload",
-                _validate(self.report_payload, ValidationReportPayload),
+                _validate(self.report_payload, AnyValidationReportPayload),
             )
         if self.operational_error is not None:
             object.__setattr__(

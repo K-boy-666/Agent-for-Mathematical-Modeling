@@ -253,7 +253,13 @@ def _pydantic_error_location(
         include_context=False,
         include_input=False,
     )[0]
-    path = _json_pointer(list(first["loc"]))
+    path = _json_pointer(
+        [
+            part
+            for part in first["loc"]
+            if part not in {"RootFindingInput", "CoupledHeaveInput"}
+        ]
+    )
     error_type = first["type"]
     if error_type == "missing":
         return path, "missing_required"

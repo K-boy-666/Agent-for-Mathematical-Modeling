@@ -10,8 +10,8 @@
     "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
     "attempt_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
     "expected_result_hash": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/hash"},
-    "validator_id": {"const": "numerical.root_finding.residual"},
-    "policy_version": {"const": "1.0.0"},
+    "validator_id": {"enum": ["numerical.root_finding.residual", "dynamics.coupled_heave.linear", "dynamics.coupled_heave.power_law"]},
+    "policy_version": {"enum": ["0.1.0", "1.0.0"]},
     "policy": {"type": "object", "additionalProperties": false, "properties": {}},
     "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 60000, "default": 10000}
   }

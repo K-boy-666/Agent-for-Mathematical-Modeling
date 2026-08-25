@@ -112,6 +112,22 @@ class RootFindingInput(StrictModel):
     max_iterations: Annotated[int, Field(ge=1, le=10000)] = 100
 
 
+class AssetSnapshotEntry(StrictModel):
+    snapshot_id: EntityId
+    label: str
+    sha256: Hash
+    official_match: bool
+
+
+class CoupledHeaveInput(StrictModel):
+    subproblem_id: Annotated[str, Field(min_length=1, max_length=128)]
+    mmir_revision: Hash
+    damping_mode: Literal["linear", "power_law"]
+    asset_snapshots: Annotated[
+        tuple[AssetSnapshotEntry, ...], Field(min_length=1, max_length=20)
+    ]
+
+
 class ExecutionOptions(StrictModel):
     timeout_ms: Annotated[int, Field(ge=1, le=60000)] = 10000
     seed: Annotated[int | None, Field(ge=-9007199254740991, le=9007199254740991)] = None
@@ -123,7 +139,7 @@ class RunExperimentRequest(StrictModel):
     mode: Literal["new", "rerun"]
     experiment_id: EntityId | None = None
     capability: CapabilitySelection
-    payload: RootFindingInput
+    payload: RootFindingInput | CoupledHeaveInput
     execution: ExecutionOptions | None = None
 
     @model_validator(mode="after")
@@ -140,7 +156,11 @@ class ValidateExperimentRequest(StrictModel):
     project_id: EntityId
     attempt_id: EntityId
     expected_result_hash: Hash
-    validator_id: Literal["numerical.root_finding.residual"]
+    validator_id: Literal[
+        "numerical.root_finding.residual",
+        "dynamics.coupled_heave.linear",
+        "dynamics.coupled_heave.power_law",
+    ]
     policy_version: Literal["0.1.0", "1.0.0"]
     policy: JsonObject
     timeout_ms: Annotated[int, Field(ge=1, le=60000)] = 10000
@@ -362,6 +382,19 @@ class CanonicalRootFindingInput(StrictModel):
     max_iterations: Annotated[int, Field(ge=1, le=10000)]
 
 
+class CanonicalCoupledHeaveInput(StrictModel):
+    canonical_input_schema_version: Literal[
+        "dynamics.coupled_heave.canonical-input/0.1.0"
+    ]
+    subproblem_id: Annotated[str, Field(min_length=1, max_length=128)]
+    mmir_revision: Hash
+    damping_mode: Literal["linear", "power_law"]
+    asset_snapshots: Annotated[
+        tuple[AssetSnapshotEntry, ...], Field(min_length=1, max_length=20)
+    ]
+    model: JsonObject
+
+
 class DataSnapshotReference(StrictModel):
     snapshot_id: EntityId
     sha256: Hash
@@ -373,7 +406,7 @@ class ExperimentRecord(StrictModel):
     capability_id: str
     contract_version: str
     canonical_input_schema_version: str
-    canonical_payload: CanonicalRootFindingInput
+    canonical_payload: CanonicalRootFindingInput | CanonicalCoupledHeaveInput
     canonical_payload_hash: Hash
     canonicalization_version: Literal["canonical-json/0.1.0", "canonical-json/1.0.0"]
     model_snapshot_hash: Hash
@@ -391,6 +424,15 @@ class ResultSuccessData(StrictModel):
     termination_reason: Literal[
         "endpoint_root", "residual_tolerance", "interval_tolerance"
     ]
+
+
+class CoupledHeaveResultData(StrictModel):
+    damping_mode: Literal["linear", "power_law"]
+    t: Annotated[tuple[float, ...], Field(min_length=898, max_length=898)]
+    x_f: Annotated[tuple[float, ...], Field(min_length=898, max_length=898)]
+    v_f: Annotated[tuple[float, ...], Field(min_length=898, max_length=898)]
+    x_o: Annotated[tuple[float, ...], Field(min_length=898, max_length=898)]
+    v_o: Annotated[tuple[float, ...], Field(min_length=898, max_length=898)]
 
 
 class NumericalFailureData(StrictModel):
@@ -420,9 +462,17 @@ class FailureResultPayload(StrictModel):
     data: NumericalFailureData
 
 
-ResultPayload: TypeAlias = Annotated[
-    SuccessResultPayload | FailureResultPayload, Field(discriminator="result_kind")
-]
+class CoupledHeaveSuccessResultPayload(StrictModel):
+    result_schema_version: Literal["modeling-result/0.1.0", "modeling-result/1.0.0"]
+    capability_id: Literal["dynamics.coupled_heave"]
+    contract_version: Literal["0.1.0"]
+    result_kind: Literal["success"]
+    data: CoupledHeaveResultData
+
+
+ResultPayload: TypeAlias = (
+    SuccessResultPayload | CoupledHeaveSuccessResultPayload | FailureResultPayload
+)
 
 
 class ResultTrace(StrictModel):
@@ -604,13 +654,68 @@ class ValidationReportPayload(StrictModel):
         return self
 
 
+class CoupledHeaveValidationMetrics(StrictModel):
+    x_f_rtol: Annotated[float, Field(ge=0)]
+    x_f_atol: Annotated[float, Field(ge=0)]
+    x_o_rtol: Annotated[float, Field(ge=0)]
+    x_o_atol: Annotated[float, Field(ge=0)]
+    energy_closure: Annotated[float, Field(ge=0)]
+    failed_checks: tuple[
+        Literal[
+            "x_f_tolerance",
+            "x_o_tolerance",
+            "energy_closure",
+        ],
+        ...,
+    ]
+
+
+class CoupledHeaveValidationReportPayload(StrictModel):
+    report_schema_version: Literal[
+        "modeling-validation-report/0.1.0",
+        "modeling-validation-report/1.0.0",
+    ]
+    validator_id: Literal[
+        "dynamics.coupled_heave.linear",
+        "dynamics.coupled_heave.power_law",
+    ]
+    validator_implementation_id: str
+    validator_implementation_version: str
+    policy_version: Literal["0.1.0"]
+    policy: JsonObject
+    policy_hash: Hash
+    capability_id: Literal["dynamics.coupled_heave"]
+    contract_version: Literal["0.1.0"]
+    canonical_payload_hash: Hash
+    model_snapshot_hash: Hash
+    data_snapshot_set_hash: Hash
+    result_hash: Hash
+    outcome: Literal["PASSED", "FAILED", "INCONCLUSIVE"]
+    metrics: CoupledHeaveValidationMetrics
+
+    @model_validator(mode="after")
+    def validate_empty_policy(self) -> CoupledHeaveValidationReportPayload:
+        if self.policy:
+            raise ValueError("C1 validation policy must be empty")
+        return self
+
+
+AnyValidationReportPayload: TypeAlias = (
+    ValidationReportPayload | CoupledHeaveValidationReportPayload
+)
+
+
 class ValidationTrace(StrictModel):
     record_type: Literal["validation"]
     validation_id: EntityId
     attempt_id: EntityId
     expected_result_hash: Hash
     result_hash: Hash
-    validator_id: Literal["numerical.root_finding.residual"]
+    validator_id: Literal[
+        "numerical.root_finding.residual",
+        "dynamics.coupled_heave.linear",
+        "dynamics.coupled_heave.power_law",
+    ]
     validator_implementation_id: str
     validator_implementation_version: str
     policy_version: Literal["0.1.0", "1.0.0"]
@@ -623,9 +728,9 @@ class ValidationTrace(StrictModel):
     started_at: Timestamp | None
     finished_at: Timestamp | None
     outcome: Literal["PASSED", "FAILED", "INCONCLUSIVE"] | None
-    metrics: ValidationMetrics | None
+    metrics: ValidationMetrics | CoupledHeaveValidationMetrics | None
     validation_report_hash: Hash | None
-    report_payload: ValidationReportPayload | None
+    report_payload: AnyValidationReportPayload | None
     operational_error: ErrorResponse | None
     terminal_reason: (
         Literal["deadline_exceeded", "host_cancelled", "server_recovery"] | None
@@ -841,7 +946,7 @@ class RunExperimentSucceededResult(RunResultBase):
     attempt_status: Literal["SUCCEEDED"]
     result_kind: Literal["success"]
     result_hash: Hash
-    result_summary: ResultSuccessData
+    result_summary: ResultSuccessData | CoupledHeaveResultData
     artifacts: tuple[ArtifactManifest, ...] | None = Field(
         default=None,
         min_length=1,
@@ -903,7 +1008,11 @@ class ValidationResultBase(CommonWriteResult):
     validation_id: EntityId
     attempt_id: EntityId
     result_hash: Hash
-    validator_id: Literal["numerical.root_finding.residual"]
+    validator_id: Literal[
+        "numerical.root_finding.residual",
+        "dynamics.coupled_heave.linear",
+        "dynamics.coupled_heave.power_law",
+    ]
     validator_implementation_id: str
     validator_implementation_version: str
     policy_version: Literal["0.1.0", "1.0.0"]
@@ -913,7 +1022,7 @@ class ValidationResultBase(CommonWriteResult):
 class ValidateExperimentSucceededResult(ValidationResultBase):
     validation_status: Literal["SUCCEEDED"]
     outcome: Literal["PASSED", "FAILED", "INCONCLUSIVE"]
-    metrics: ValidationMetrics
+    metrics: ValidationMetrics | CoupledHeaveValidationMetrics
     validation_report_hash: Hash
     report_artifact: ArtifactManifest | None = Field(
         default=None,
@@ -961,12 +1070,6 @@ class RegisterProblemAssetsRequest(StrictModel):
     asset_paths: Annotated[
         tuple[AssetPathEntry, ...], Field(min_length=1, max_length=20)
     ]
-
-
-class AssetSnapshotEntry(StrictModel):
-    label: str
-    sha256: Hash
-    official_match: bool
 
 
 class RegisterProblemAssetsResult(CommonWriteResult):

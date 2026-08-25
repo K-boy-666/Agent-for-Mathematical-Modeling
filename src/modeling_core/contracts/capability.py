@@ -29,10 +29,10 @@ from modeling_core.contracts.common import (
     StrictModel,
 )
 from modeling_core.contracts.tools import (
+    AnyValidationReportPayload,
     CapabilityLimits,
     CanonicalRootFindingInput,
     ResultPayload,
-    ValidationReportPayload,
     ValidatorSummary,
 )
 from modeling_core.ports.artifact_store import ArtifactSink
@@ -534,7 +534,7 @@ class ResultSnapshotView(StrictModel):
     result_payload: ResultPayload
 
 
-ValidationReport: TypeAlias = ValidationReportPayload
+ValidationReport: TypeAlias = AnyValidationReportPayload
 
 
 @runtime_checkable

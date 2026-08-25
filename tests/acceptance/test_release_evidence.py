@@ -312,7 +312,7 @@ def _codex_transcript(path: Path) -> Path:
     return path
 
 
-def _raw_codex_transcript(path: Path) -> Path:
+def _raw_codex_transcript(path: Path, *, include_c1: bool = True) -> Path:
     def artifact(
         hash_value: str, role: str, payload: dict[str, object]
     ) -> dict[str, object]:
@@ -466,7 +466,96 @@ def _raw_codex_transcript(path: Path) -> Path:
         "validation_report_hash": REPORT_HASH,
         "report_artifact": artifact(REPORT_HASH, "validation_report", REPORT_PAYLOAD),
     }
+    c1_calls: list[tuple[str, dict[str, object]]] = []
+    if include_c1:
+        series = [float(index) / 5 for index in range(898)]
+        for index, mode in enumerate(("linear", "power_law"), start=1):
+            data: dict[str, object] = {
+                "damping_mode": mode,
+                "t": series,
+                "x_f": [0.0] * 898,
+                "v_f": [0.0] * 898,
+                "x_o": [0.0] * 898,
+                "v_o": [0.0] * 898,
+            }
+            result_payload: dict[str, object] = {
+                "result_schema_version": "modeling-result/1.0.0",
+                "capability_id": "dynamics.coupled_heave",
+                "contract_version": "0.1.0",
+                "result_kind": "success",
+                "data": data,
+            }
+            result_hash = sha256_json(result_payload)
+            attempt_id = f"30000000-0000-4000-8000-{index:012d}"
+            run = {
+                **common,
+                "operation_id": f"31000000-0000-4000-8000-{index:012d}",
+                "replayed": False,
+                "experiment_id": f"32000000-0000-4000-8000-{index:012d}",
+                "attempt_id": attempt_id,
+                "attempt_status": "SUCCEEDED",
+                "capability_id": "dynamics.coupled_heave",
+                "contract_version": "0.1.0",
+                "implementation_id": "builtin.dynamics.coupled_heave.dop853",
+                "implementation_version": "0.1.0",
+                "randomness": "not_used",
+                "seed": None,
+                "warnings": [],
+                "result_kind": "success",
+                "result_summary": data,
+                "result_hash": result_hash,
+                "artifacts": [artifact(result_hash, "result", result_payload)],
+            }
+            report_payload: dict[str, object] = {
+                "report_schema_version": "modeling-validation-report/1.0.0",
+                "validator_id": f"dynamics.coupled_heave.{mode}",
+                "validator_implementation_id": f"builtin.dynamics.coupled_heave.{mode}",
+                "validator_implementation_version": "0.1.0",
+                "policy_version": "0.1.0",
+                "policy": {},
+                "policy_hash": POLICY_HASH,
+                "capability_id": "dynamics.coupled_heave",
+                "contract_version": "0.1.0",
+                "canonical_payload_hash": HASH,
+                "model_snapshot_hash": HASH,
+                "data_snapshot_set_hash": HASH,
+                "result_hash": result_hash,
+                "outcome": "PASSED",
+                "metrics": {
+                    "x_f_rtol": 0.0,
+                    "x_f_atol": 0.0,
+                    "x_o_rtol": 0.0,
+                    "x_o_atol": 0.0,
+                    "energy_closure": 0.0,
+                    "failed_checks": [],
+                },
+            }
+            report_hash = sha256_json(report_payload)
+            validation = {
+                **common,
+                "operation_id": f"33000000-0000-4000-8000-{index:012d}",
+                "replayed": False,
+                "validation_id": f"34000000-0000-4000-8000-{index:012d}",
+                "attempt_id": attempt_id,
+                "result_hash": result_hash,
+                "validator_id": f"dynamics.coupled_heave.{mode}",
+                "validator_implementation_id": f"builtin.dynamics.coupled_heave.{mode}",
+                "validator_implementation_version": "0.1.0",
+                "policy_version": "0.1.0",
+                "policy_hash": POLICY_HASH,
+                "validation_status": "SUCCEEDED",
+                "outcome": "PASSED",
+                "metrics": report_payload["metrics"],
+                "validation_report_hash": report_hash,
+                "report_artifact": artifact(
+                    report_hash, "validation_report", report_payload
+                ),
+            }
+            c1_calls.extend(
+                (("run_experiment", run), ("validate_experiment", validation))
+            )
     structured_by_tool = {tool: corpus_result(tool) for tool in TOOL_NAMES}
+    status_summary = corpus_result("get_project_status")
     create = structured_by_tool["create_project"]
     create["project_id"] = PROJECT_ID
     structured_by_tool["get_project_status"] = experiment_trace
@@ -482,17 +571,53 @@ def _raw_codex_transcript(path: Path) -> Path:
     put = structured_by_tool["put_subproblem_mmir"]
     confirm = structured_by_tool["confirm_subproblem_mmir"]
     exported = structured_by_tool["export_subproblem"]
+    registered = structured_by_tool["register_problem_assets"]
     confirm["subproblem_id"] = put["subproblem_id"]
     confirm["mmir_revision"] = put["mmir_revision"]
     exported["subproblem_id"] = put["subproblem_id"]
-    exports = exported["exports"]
-    assert isinstance(exports, list) and isinstance(exports[0], dict)
-    exports[0]["sha256"] = put["mmir_revision"]
+    if include_c1:
+        registered["snapshots"] = [
+            {
+                "snapshot_id": f"35000000-0000-4000-8000-{index:012d}",
+                "label": label,
+                "sha256": "sha256:" + f"{index:x}" * 64,
+                "official_match": True,
+            }
+            for index, label in enumerate(
+                ("problem", "attachment-3", "attachment-4", "result-1", "result-2"),
+                start=1,
+            )
+        ]
+        exported["exports"] = [
+            {
+                "kind": kind,
+                "label": label,
+                "sha256": sha256_json({"label": label}),
+            }
+            for label, kind in (
+                ("result1-1.xlsx", "workbook"),
+                ("result1-2.xlsx", "workbook"),
+                ("linear-timeseries.svg", "figure"),
+                ("power-law-timeseries.svg", "figure"),
+                ("result-card.json", "result_card"),
+                ("provenance.json", "provenance"),
+            )
+        ]
     events: list[dict[str, object]] = [
         {"type": "thread.started", "thread_id": "release-smoke"}
     ]
-    for index, tool in enumerate(TOOL_NAMES):
-        structured = structured_by_tool[tool]
+    calls = [(tool, structured_by_tool[tool]) for tool in TOOL_NAMES]
+    if include_c1:
+        export_index = next(
+            index
+            for index, (tool, _) in enumerate(calls)
+            if tool == "export_subproblem"
+        )
+        calls[export_index:export_index] = [
+            ("get_project_status", status_summary),
+            *c1_calls,
+        ]
+    for index, (tool, structured) in enumerate(calls):
         events.append(
             {
                 "type": "item.completed",
@@ -520,11 +645,13 @@ def _raw_codex_transcript(path: Path) -> Path:
     return path
 
 
-def _valid_inputs(root: Path) -> ReleaseEvidenceInputs:
+def _valid_inputs(root: Path, *, include_c1: bool = True) -> ReleaseEvidenceInputs:
     return ReleaseEvidenceInputs(
         windows_report=_platform_report(root, os_family="Windows"),
         ubuntu_report=_platform_report(root, os_family="Linux"),
-        codex_transcript=_raw_codex_transcript(root / "codex-transcript.jsonl"),
+        codex_transcript=_raw_codex_transcript(
+            root / "codex-transcript.jsonl", include_c1=include_c1
+        ),
     )
 
 
@@ -567,6 +694,13 @@ def test_release_bundle_assembles_exact_redacted_tamper_evident_evidence(
             )
         },
     }
+
+
+def test_release_evidence_rejects_root_only_workflow(tmp_path: Path) -> None:
+    inputs = _valid_inputs(tmp_path / "inputs", include_c1=False)
+
+    with pytest.raises(EvidenceValidationError, match="C1"):
+        assemble_release_bundle(inputs, tmp_path / "bundle")
 
 
 def test_release_bundle_accepts_current_codex_cli_structured_content(

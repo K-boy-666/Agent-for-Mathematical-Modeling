@@ -375,7 +375,7 @@ def test_official_client_completes_m1a_golden_chain_records_protocol_purity_and_
                     )
                     assert [
                         item["capability_id"] for item in capabilities["capabilities"]
-                    ] == ["numerical.root_finding"]
+                    ] == ["dynamics.coupled_heave", "numerical.root_finding"]
                     contract = await call(
                         session,
                         "list_capabilities",

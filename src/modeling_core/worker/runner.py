@@ -12,6 +12,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from typing import Any
 
@@ -87,6 +88,8 @@ def run_worker(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=creationflags,
+        start_new_session=sys.platform != "win32",
+        cwd=tempfile.gettempdir(),
         text=False,
     )
 
@@ -111,10 +114,7 @@ def run_worker(
         )
 
     if process.returncode != 0:
-        stderr_text = stderr_bytes.decode("utf-8", errors="replace")[:1024]
-        raise RuntimeError(
-            f"Worker subprocess exited with code {process.returncode}: {stderr_text}"
-        )
+        raise RuntimeError("worker subprocess failed")
 
     try:
         result_data = json.loads(stdout_bytes.decode("utf-8"))

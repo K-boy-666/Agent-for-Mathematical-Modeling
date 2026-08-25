@@ -681,7 +681,7 @@ def test_synthetic_wheel_inventory_is_utf8_ordered_and_hashes_real_payload(
     paths = [asset.path for asset in assets]
     by_path = {asset.path: asset.sha256 for asset in assets}
 
-    assert len(paths) == 166
+    assert len(paths) == 170
     assert paths == sorted(paths, key=lambda value: value.encode("utf-8"))
     assert "modeling_infrastructure/diagnostic_snapshot.py" in by_path
     assert "modeling_cli/doctor.py" in by_path
@@ -715,7 +715,7 @@ def test_synthetic_wheel_inventory_is_utf8_ordered_and_hashes_real_payload(
     assert by_path["modeling_mcp/AGENTS.md"] == (
         "sha256:0e884dcd7467b267b2bdc250097f64c37f8d3bf6dbb9399f2c85f00c6d02d110"
     )
-    assert sum(path.endswith(".py") for path in paths) == 72
+    assert sum(path.endswith(".py") for path in paths) == 76
     assert sum(not path.endswith(".py") for path in paths) == 94
 
 

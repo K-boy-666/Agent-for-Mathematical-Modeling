@@ -1,133 +1,57 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-validation-report.schema.json",
-  "title": "Modeling validation report 0.1.0",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "report_schema_version",
-    "validator_id",
-    "validator_implementation_id",
-    "validator_implementation_version",
-    "policy_version",
-    "policy",
-    "policy_hash",
-    "capability_id",
-    "contract_version",
-    "canonical_payload_hash",
-    "model_snapshot_hash",
-    "data_snapshot_set_hash",
-    "result_hash",
-    "outcome",
-    "metrics"
-  ],
-  "properties": {
-    "report_schema_version": {"const": "modeling-validation-report/1.0.0"},
-    "validator_id": {"const": "numerical.root_finding.residual"},
-    "validator_implementation_id": {"const": "builtin.numerical.root_finding.residual"},
-    "validator_implementation_version": {"const": "0.1.0"},
-    "policy_version": {"const": "1.0.0"},
-    "policy": {
-      "type": "object",
-      "additionalProperties": false,
-      "maxProperties": 0,
-      "properties": {}
-    },
-    "policy_hash": {"const": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"},
-    "capability_id": {"const": "numerical.root_finding"},
-    "contract_version": {"const": "1.0.0"},
-    "canonical_payload_hash": {"$ref": "#/$defs/hash"},
-    "model_snapshot_hash": {"$ref": "#/$defs/hash"},
-    "data_snapshot_set_hash": {"$ref": "#/$defs/hash"},
-    "result_hash": {"$ref": "#/$defs/hash"},
-    "outcome": {"enum": ["PASSED", "FAILED"]},
-    "metrics": {"$ref": "#/$defs/metrics"}
-  },
+  "title": "Modeling validation report 1.0.0",
   "oneOf": [
-    {
-      "properties": {
-        "outcome": {"const": "PASSED"},
-        "metrics": {
-          "properties": {
-            "failed_checks": {"maxItems": 0}
-          }
-        }
-      }
-    },
-    {
-      "properties": {
-        "outcome": {"const": "FAILED"},
-        "metrics": {
-          "properties": {
-            "failed_checks": {"minItems": 1}
-          }
-        }
-      }
-    }
+    {"$ref": "#/$defs/rootReport"},
+    {"$ref": "#/$defs/dynamicsReport"}
   ],
   "$defs": {
-    "hash": {
-      "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
-    },
-    "failedCheck": {
-      "enum": [
-        "root_out_of_interval",
-        "expression_undefined",
-        "non_finite_recomputed_value",
-        "reported_value_mismatch",
-        "residual_exceeds_tolerance"
-      ]
-    },
-    "metrics": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "root_within_interval",
-        "reported_function_value",
-        "recomputed_function_value",
-        "absolute_reported_delta",
-        "absolute_residual",
-        "function_tolerance",
-        "failed_checks"
-      ],
+    "hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "policy": {"type": "object", "additionalProperties": false, "maxProperties": 0},
+    "rootMetrics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["root_within_interval", "reported_function_value", "recomputed_function_value", "absolute_reported_delta", "absolute_residual", "function_tolerance", "failed_checks"],
       "properties": {
-        "root_within_interval": {"type": "boolean"},
-        "reported_function_value": {"type": "number"},
-        "recomputed_function_value": {"type": ["number", "null"]},
-        "absolute_reported_delta": {"type": ["number", "null"], "minimum": 0},
-        "absolute_residual": {"type": ["number", "null"], "minimum": 0},
-        "function_tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-        "failed_checks": {
-          "type": "array",
-          "items": {"$ref": "#/$defs/failedCheck"},
-          "uniqueItems": true,
-          "maxItems": 5
-        }
-      },
-      "oneOf": [
-        {
-          "properties": {
-            "recomputed_function_value": {"type": "null"},
-            "absolute_reported_delta": {"type": "null"},
-            "absolute_residual": {"type": "null"}
-          }
-        },
-        {
-          "properties": {
-            "recomputed_function_value": {"type": "number"},
-            "absolute_reported_delta": {"type": "number"},
-            "absolute_residual": {"type": "number"}
-          }
-        },
-        {
-          "properties": {
-            "recomputed_function_value": {"type": "number"},
-            "absolute_reported_delta": {"type": "null"},
-            "absolute_residual": {"type": "number"}
-          }
-        }
-      ]
+        "root_within_interval": {"type": "boolean"}, "reported_function_value": {"type": "number"},
+        "recomputed_function_value": {"type": ["number", "null"]}, "absolute_reported_delta": {"type": ["number", "null"], "minimum": 0},
+        "absolute_residual": {"type": ["number", "null"], "minimum": 0}, "function_tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "failed_checks": {"type": "array", "uniqueItems": true, "maxItems": 5, "items": {"enum": ["root_out_of_interval", "expression_undefined", "non_finite_recomputed_value", "reported_value_mismatch", "residual_exceeds_tolerance"]}}
+      }
+    },
+    "dynamicsMetrics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["x_f_rtol", "x_f_atol", "x_o_rtol", "x_o_atol", "energy_closure", "failed_checks"],
+      "properties": {
+        "x_f_rtol": {"type": "number", "minimum": 0}, "x_f_atol": {"type": "number", "minimum": 0},
+        "x_o_rtol": {"type": "number", "minimum": 0}, "x_o_atol": {"type": "number", "minimum": 0},
+        "energy_closure": {"type": "number", "minimum": 0},
+        "failed_checks": {"type": "array", "uniqueItems": true, "items": {"enum": ["x_f_tolerance", "x_o_tolerance", "energy_closure"]}}
+      }
+    },
+    "rootReport": {
+      "type": "object", "additionalProperties": false,
+      "required": ["report_schema_version", "validator_id", "validator_implementation_id", "validator_implementation_version", "policy_version", "policy", "policy_hash", "capability_id", "contract_version", "canonical_payload_hash", "model_snapshot_hash", "data_snapshot_set_hash", "result_hash", "outcome", "metrics"],
+      "properties": {
+        "report_schema_version": {"const": "modeling-validation-report/1.0.0"}, "validator_id": {"const": "numerical.root_finding.residual"},
+        "validator_implementation_id": {"const": "builtin.numerical.root_finding.residual"}, "validator_implementation_version": {"const": "0.1.0"},
+        "policy_version": {"const": "1.0.0"}, "policy": {"$ref": "#/$defs/policy"}, "policy_hash": {"const": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"},
+        "capability_id": {"const": "numerical.root_finding"}, "contract_version": {"const": "1.0.0"},
+        "canonical_payload_hash": {"$ref": "#/$defs/hash"}, "model_snapshot_hash": {"$ref": "#/$defs/hash"}, "data_snapshot_set_hash": {"$ref": "#/$defs/hash"}, "result_hash": {"$ref": "#/$defs/hash"},
+        "outcome": {"enum": ["PASSED", "FAILED"]}, "metrics": {"$ref": "#/$defs/rootMetrics"}
+      }
+    },
+    "dynamicsReport": {
+      "type": "object", "additionalProperties": false,
+      "required": ["report_schema_version", "validator_id", "validator_implementation_id", "validator_implementation_version", "policy_version", "policy", "policy_hash", "capability_id", "contract_version", "canonical_payload_hash", "model_snapshot_hash", "data_snapshot_set_hash", "result_hash", "outcome", "metrics"],
+      "properties": {
+        "report_schema_version": {"const": "modeling-validation-report/1.0.0"}, "validator_id": {"enum": ["dynamics.coupled_heave.linear", "dynamics.coupled_heave.power_law"]},
+        "validator_implementation_id": {"type": "string", "minLength": 1}, "validator_implementation_version": {"const": "0.1.0"},
+        "policy_version": {"const": "0.1.0"}, "policy": {"$ref": "#/$defs/policy"}, "policy_hash": {"const": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"},
+        "capability_id": {"const": "dynamics.coupled_heave"}, "contract_version": {"const": "0.1.0"},
+        "canonical_payload_hash": {"$ref": "#/$defs/hash"}, "model_snapshot_hash": {"$ref": "#/$defs/hash"}, "data_snapshot_set_hash": {"$ref": "#/$defs/hash"}, "result_hash": {"$ref": "#/$defs/hash"},
+        "outcome": {"enum": ["PASSED", "FAILED"]}, "metrics": {"$ref": "#/$defs/dynamicsMetrics"}
+      }
     }
   }
 }

@@ -23,10 +23,12 @@ from modeling_core.contracts.tools import (
     HealthCheckRequest,
     ListCapabilitiesSummaryRequest,
     RootFindingInput,
+    ResultSuccessData,
     RunExperimentRequest,
     RunExperimentSucceededResult,
     ValidateExperimentRequest,
     ValidateExperimentSucceededResult,
+    ValidationMetrics,
 )
 from modeling_core.contracts.versions import VersionSet
 from modeling_core.domain.states import ProjectState
@@ -49,7 +51,7 @@ CheckStatus = Literal["PASS", "WARN", "FAIL"]
 
 _SCHEMA_VERSION = "modeling-doctor-report/0.1.0"
 _EXPECTED_SCHEMA_CATALOG_FINGERPRINT = (
-    "sha256:927a26b40a1cf0747a3f79d8ebb44f085cd7bf404ae22c7f957137a0d652bc73"
+    "sha256:257d27c1a3fb3e0df93b0be4b4b61835955b733dbee142faf30d347b5bbe8b2b"
 )
 _EXPECTED_CONFIG = {
     "mcp_servers": {
@@ -334,7 +336,7 @@ def _run_deep_smoke(*, observed_roots: list[Path] | None = None) -> tuple[str, s
                 )
             )
             if isinstance(run, RunExperimentSucceededResult):
-                summary = run.result_summary
+                summary = cast(ResultSuccessData, run.result_summary)
                 solution_root = summary.root
                 reported = summary.function_value
                 recomputed = solution_root * solution_root - 2.0
@@ -366,7 +368,7 @@ def _run_deep_smoke(*, observed_roots: list[Path] | None = None) -> tuple[str, s
                     absolute_delta = abs(recomputed - reported)
                     absolute_residual = abs(recomputed)
                     if isinstance(validation, ValidateExperimentSucceededResult):
-                        metrics = validation.metrics
+                        metrics = cast(ValidationMetrics, validation.metrics)
                         root_code = (
                             "passed"
                             if validation.outcome == "PASSED"

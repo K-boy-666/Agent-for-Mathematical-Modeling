@@ -44,6 +44,19 @@
       "type": "object", "additionalProperties": false, "required": ["root", "function_value", "iterations", "evaluations", "termination_reason"],
       "properties": {"root": {"type": "number"}, "function_value": {"type": "number"}, "iterations": {"type": "integer", "minimum": 0}, "evaluations": {"type": "integer", "minimum": 1, "maximum": 20000}, "termination_reason": {"enum": ["endpoint_root", "residual_tolerance", "interval_tolerance"]}}
     },
+    "dynamicsData": {
+      "type": "object", "additionalProperties": false,
+      "required": ["damping_mode", "t", "x_f", "v_f", "x_o", "v_o"],
+      "properties": {
+        "damping_mode": {"enum": ["linear", "power_law"]},
+        "t": {"$ref": "#/$defs/timeSeries"},
+        "x_f": {"$ref": "#/$defs/timeSeries"},
+        "v_f": {"$ref": "#/$defs/timeSeries"},
+        "x_o": {"$ref": "#/$defs/timeSeries"},
+        "v_o": {"$ref": "#/$defs/timeSeries"}
+      }
+    },
+    "timeSeries": {"type": "array", "minItems": 898, "maxItems": 898, "items": {"type": "number"}},
     "failureData": {
       "type": "object", "additionalProperties": false, "required": ["failure_code", "iterations", "evaluations"],
       "properties": {"failure_code": {"enum": ["no_sign_change", "non_convergence", "domain_error", "non_finite_evaluation"]}, "iterations": {"type": "integer", "minimum": 0}, "evaluations": {"type": "integer", "minimum": 0, "maximum": 20000}}
@@ -52,7 +65,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "experiment_id", "attempt_id", "attempt_status", "capability_id", "contract_version", "implementation_id", "implementation_version", "randomness", "seed", "warnings", "result_kind", "result_hash", "result_summary", "artifacts"],
       "properties": {
-        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "SUCCEEDED"}, "capability_id": {"const": "numerical.root_finding"}, "contract_version": {"const": "1.0.0"}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "result_kind": {"const": "success"}, "result_hash": {"$ref": "#/$defs/hash"}, "result_summary": {"$ref": "#/$defs/successData"}, "artifacts": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/artifact"}}
+        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "SUCCEEDED"}, "capability_id": {"enum": ["numerical.root_finding", "dynamics.coupled_heave"]}, "contract_version": {"enum": ["0.1.0", "1.0.0"]}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "result_kind": {"const": "success"}, "result_hash": {"$ref": "#/$defs/hash"}, "result_summary": {"oneOf": [{"$ref": "#/$defs/successData"}, {"$ref": "#/$defs/dynamicsData"}]}, "artifacts": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/artifact"}}
       }
     },
     "numericalFailure": {
@@ -66,7 +79,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "experiment_id", "attempt_id", "attempt_status", "capability_id", "contract_version", "implementation_id", "implementation_version", "randomness", "seed", "warnings", "system_error"],
       "properties": {
-        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "ERRORED"}, "capability_id": {"const": "numerical.root_finding"}, "contract_version": {"const": "1.0.0"}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "system_error": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json"}
+        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "ERRORED"}, "capability_id": {"enum": ["numerical.root_finding", "dynamics.coupled_heave"]}, "contract_version": {"enum": ["0.1.0", "1.0.0"]}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "system_error": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json"}
       }
     },
     "timedOut": {"$ref": "#/$defs/stoppedTimedOut"},
@@ -75,14 +88,14 @@
       "type": "object", "additionalProperties": false,
       "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "experiment_id", "attempt_id", "attempt_status", "capability_id", "contract_version", "implementation_id", "implementation_version", "randomness", "seed", "warnings", "terminal_reason"],
       "properties": {
-        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "TIMED_OUT"}, "capability_id": {"const": "numerical.root_finding"}, "contract_version": {"const": "1.0.0"}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "terminal_reason": {"const": "deadline_exceeded"}
+        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "TIMED_OUT"}, "capability_id": {"enum": ["numerical.root_finding", "dynamics.coupled_heave"]}, "contract_version": {"enum": ["0.1.0", "1.0.0"]}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "terminal_reason": {"const": "deadline_exceeded"}
       }
     },
     "stoppedAbandoned": {
       "type": "object", "additionalProperties": false,
       "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "experiment_id", "attempt_id", "attempt_status", "capability_id", "contract_version", "implementation_id", "implementation_version", "randomness", "seed", "warnings", "terminal_reason"],
       "properties": {
-        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "ABANDONED"}, "capability_id": {"const": "numerical.root_finding"}, "contract_version": {"const": "1.0.0"}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "terminal_reason": {"enum": ["host_cancelled", "server_recovery"]}
+        "tool_contract_version": {"const": "modeling-tools/1.0.0"}, "correlation_id": {"$ref": "#/$defs/entityId"}, "server_time": {"$ref": "#/$defs/timestamp"}, "operation_id": {"$ref": "#/$defs/entityId"}, "replayed": {"type": "boolean"}, "experiment_id": {"$ref": "#/$defs/entityId"}, "attempt_id": {"$ref": "#/$defs/entityId"}, "attempt_status": {"const": "ABANDONED"}, "capability_id": {"enum": ["numerical.root_finding", "dynamics.coupled_heave"]}, "contract_version": {"enum": ["0.1.0", "1.0.0"]}, "implementation_id": {"type": "string"}, "implementation_version": {"type": "string"}, "randomness": {"const": "not_used"}, "seed": {"type": "null"}, "warnings": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/warning"}}, "terminal_reason": {"enum": ["host_cancelled", "server_recovery"]}
       }
     }
   }
