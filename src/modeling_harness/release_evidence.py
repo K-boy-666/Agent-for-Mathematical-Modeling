@@ -42,7 +42,7 @@ _SECRET_VALUE_PATTERN: Final = re.compile(
     re.IGNORECASE,
 )
 _EMBEDDED_PATH_PATTERN: Final = re.compile(
-    r"(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+[\\/]|(?:^|[^A-Za-z0-9_:/])/(?!/)[^\s]*)"
+    r"(?:(?<![A-Za-z0-9_])[A-Za-z]:[\\/]|\\\\[^\\\s]+[\\/]|(?:^|[\s\[=(,:])/(?![/\s])[^\s]*)"
 )
 _MAX_FILE_BYTES: Final = 8 * 1024 * 1024
 _MAX_BUNDLE_BYTES: Final = 64 * 1024 * 1024

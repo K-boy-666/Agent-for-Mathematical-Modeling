@@ -703,6 +703,17 @@ def test_release_evidence_rejects_root_only_workflow(tmp_path: Path) -> None:
         assemble_release_bundle(inputs, tmp_path / "bundle")
 
 
+@pytest.mark.parametrize(
+    "node",
+    (
+        "tests/unit/test_expression.py::test_failure[1 / 0]",
+        "tests/contract/test_schema.py::test_reference[https://example.test/schema#/$defs/id]",
+    ),
+)
+def test_release_redaction_allows_non_path_slashes_in_pytest_nodes(node: str) -> None:
+    release_module._scan_redacted({"test_nodes": [node]})
+
+
 def test_release_bundle_accepts_current_codex_cli_structured_content(
     tmp_path: Path,
 ) -> None:
