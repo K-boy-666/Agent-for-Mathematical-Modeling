@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/1.0.0/validate_experiment.error.schema.json",
+  "title": "validate_experiment error 0.1.0",
+  "allOf": [
+    {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json"},
+    {"properties": {"code": {"enum": ["INVALID_REQUEST", "NOT_FOUND", "UNSUPPORTED_VERSION", "CONFLICT", "PRECONDITION_FAILED", "SECURITY_VIOLATION", "RESOURCE_LIMIT_EXCEEDED", "INTEGRITY_FAILURE", "INTERNAL_ERROR"]}}}
+  ]
+}

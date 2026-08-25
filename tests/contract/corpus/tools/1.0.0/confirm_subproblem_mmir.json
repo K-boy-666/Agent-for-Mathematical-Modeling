@@ -1,0 +1,74 @@
+[
+  {
+    "label": "valid_request",
+    "kind": "request",
+    "valid": true,
+    "instance": {
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "project_id": "223e4567-e89b-42d3-a456-426614174000",
+      "subproblem_id": "sub-001",
+      "mmir_revision": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  {
+    "label": "valid_result",
+    "kind": "result",
+    "valid": true,
+    "instance": {
+      "tool_contract_version": "modeling-tools/1.0.0",
+      "correlation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "server_time": "2026-07-23T12:34:56.789Z",
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "replayed": false,
+      "project_id": "223e4567-e89b-42d3-a456-426614174000",
+      "subproblem_id": "sub-001",
+      "mmir_revision": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "status": "CONFIRMED"
+    }
+  },
+  {
+    "label": "valid_error",
+    "kind": "error",
+    "valid": true,
+    "instance": {
+      "error_schema_version": "modeling-error/1.0.0",
+      "code": "INTEGRITY_FAILURE",
+      "message": "mmir revision mismatch",
+      "retryable": false,
+      "correlation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "details": {
+        "subject": "input_snapshot",
+        "expected_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "observed_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    }
+  },
+  {
+    "label": "unknown_field",
+    "kind": "request",
+    "valid": false,
+    "instance": {
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "project_id": "223e4567-e89b-42d3-a456-426614174000",
+      "subproblem_id": "sub-001",
+      "mmir_revision": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "extra": true
+    }
+  },
+  {
+    "label": "invalid_type",
+    "kind": "result",
+    "valid": false,
+    "instance": {
+      "tool_contract_version": "modeling-tools/1.0.0",
+      "correlation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "server_time": "2026-07-23T12:34:56.789Z",
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000",
+      "replayed": false,
+      "project_id": "223e4567-e89b-42d3-a456-426614174000",
+      "subproblem_id": "sub-001",
+      "mmir_revision": 1,
+      "status": "CONFIRMED"
+    }
+  }
+]

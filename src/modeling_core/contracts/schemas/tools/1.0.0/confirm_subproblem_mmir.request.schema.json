@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/1.0.0/confirm_subproblem_mmir.request.schema.json",
+  "title": "confirm_subproblem_mmir request 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation_id", "project_id", "subproblem_id", "mmir_revision"],
+  "properties": {
+    "operation_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+    "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/entityId"},
+    "subproblem_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "mmir_revision": {"$ref": "https://schemas.math-modeling-mcp.local/common/1.0.0/modeling-error.schema.json#/$defs/hash"}
+  }
+}

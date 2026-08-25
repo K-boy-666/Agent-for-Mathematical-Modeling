@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/0.1.0/create_project.result.schema.json",
+  "title": "create_project result 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "project_id", "display_name", "project_format_version", "project_state", "created", "created_at"],
+  "properties": {
+    "tool_contract_version": {"const": "modeling-tools/0.1.0"},
+    "correlation_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"},
+    "server_time": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/timestamp"},
+    "operation_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"},
+    "replayed": {"type": "boolean"},
+    "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"},
+    "display_name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project_format_version": {"const": "modeling-project/0.1.0"},
+    "project_state": {"const": "READY"},
+    "created": {"type": "boolean"},
+    "created_at": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/timestamp"}
+  }
+}

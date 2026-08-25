@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/capabilities/root-finding/1.0.0/success-data.schema.json",
+  "title": "numerical.root_finding success data 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "root",
+    "function_value",
+    "iterations",
+    "evaluations",
+    "termination_reason"
+  ],
+  "properties": {
+    "root": {"type": "number"},
+    "function_value": {"type": "number"},
+    "iterations": {"type": "integer", "minimum": 0, "maximum": 10000},
+    "evaluations": {"type": "integer", "minimum": 1, "maximum": 20000},
+    "termination_reason": {
+      "enum": [
+        "endpoint_root",
+        "residual_tolerance",
+        "interval_tolerance"
+      ]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/0.1.0/register_problem_assets.result.schema.json",
+  "title": "register_problem_assets result 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tool_contract_version", "correlation_id", "server_time", "operation_id", "replayed", "project_id", "snapshots"],
+  "properties": {
+    "tool_contract_version": {"const": "modeling-tools/0.1.0"},
+    "correlation_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"},
+    "server_time": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/timestamp"},
+    "operation_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"},
+    "replayed": {"type": "boolean"},
+    "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"},
+    "snapshots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["snapshot_id", "label", "sha256", "official_match"],
+        "properties": {
+          "snapshot_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"},
+          "label": {"type": "string"},
+          "sha256": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/hash"},
+          "official_match": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

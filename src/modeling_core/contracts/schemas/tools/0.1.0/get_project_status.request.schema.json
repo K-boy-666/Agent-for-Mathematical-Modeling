@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/tools/0.1.0/get_project_status.request.schema.json",
+  "title": "get_project_status request 0.1.0",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"},
+        "view": {"const": "summary"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "view", "experiment_id"],
+      "properties": {
+        "project_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"},
+        "view": {"const": "experiment"},
+        "experiment_id": {"$ref": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-error.schema.json#/$defs/entityId"}
+      }
+    }
+  ]
+}

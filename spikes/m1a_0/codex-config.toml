@@ -1,0 +1,11 @@
+[mcp_servers.modeling_spike]
+command = "uv"
+args = ["run", "--locked", "--no-sync", "python", "spikes/m1a_0/server.py"]
+cwd = "__M1A0_REPOSITORY_ROOT__"
+required = true
+startup_timeout_sec = 10
+tool_timeout_sec = 30
+enabled_tools = ["root_finding"]
+
+[mcp_servers.modeling_spike.tools.root_finding]
+approval_mode = "approve"

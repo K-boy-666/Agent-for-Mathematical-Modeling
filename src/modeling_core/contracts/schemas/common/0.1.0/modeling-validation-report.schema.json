@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/common/0.1.0/modeling-validation-report.schema.json",
+  "title": "Modeling validation report 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "report_schema_version",
+    "validator_id",
+    "validator_implementation_id",
+    "validator_implementation_version",
+    "policy_version",
+    "policy",
+    "policy_hash",
+    "capability_id",
+    "contract_version",
+    "canonical_payload_hash",
+    "model_snapshot_hash",
+    "data_snapshot_set_hash",
+    "result_hash",
+    "outcome",
+    "metrics"
+  ],
+  "properties": {
+    "report_schema_version": {"const": "modeling-validation-report/0.1.0"},
+    "validator_id": {"const": "numerical.root_finding.residual"},
+    "validator_implementation_id": {"const": "builtin.numerical.root_finding.residual"},
+    "validator_implementation_version": {"const": "0.1.0"},
+    "policy_version": {"const": "0.1.0"},
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0,
+      "properties": {}
+    },
+    "policy_hash": {"const": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"},
+    "capability_id": {"const": "numerical.root_finding"},
+    "contract_version": {"const": "0.1.0"},
+    "canonical_payload_hash": {"$ref": "#/$defs/hash"},
+    "model_snapshot_hash": {"$ref": "#/$defs/hash"},
+    "data_snapshot_set_hash": {"$ref": "#/$defs/hash"},
+    "result_hash": {"$ref": "#/$defs/hash"},
+    "outcome": {"enum": ["PASSED", "FAILED"]},
+    "metrics": {"$ref": "#/$defs/metrics"}
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "outcome": {"const": "PASSED"},
+        "metrics": {
+          "properties": {
+            "failed_checks": {"maxItems": 0}
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "outcome": {"const": "FAILED"},
+        "metrics": {
+          "properties": {
+            "failed_checks": {"minItems": 1}
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "failedCheck": {
+      "enum": [
+        "root_out_of_interval",
+        "expression_undefined",
+        "non_finite_recomputed_value",
+        "reported_value_mismatch",
+        "residual_exceeds_tolerance"
+      ]
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_within_interval",
+        "reported_function_value",
+        "recomputed_function_value",
+        "absolute_reported_delta",
+        "absolute_residual",
+        "function_tolerance",
+        "failed_checks"
+      ],
+      "properties": {
+        "root_within_interval": {"type": "boolean"},
+        "reported_function_value": {"type": "number"},
+        "recomputed_function_value": {"type": ["number", "null"]},
+        "absolute_reported_delta": {"type": ["number", "null"], "minimum": 0},
+        "absolute_residual": {"type": ["number", "null"], "minimum": 0},
+        "function_tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "failed_checks": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/failedCheck"},
+          "uniqueItems": true,
+          "maxItems": 5
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "recomputed_function_value": {"type": "null"},
+            "absolute_reported_delta": {"type": "null"},
+            "absolute_residual": {"type": "null"}
+          }
+        },
+        {
+          "properties": {
+            "recomputed_function_value": {"type": "number"},
+            "absolute_reported_delta": {"type": "number"},
+            "absolute_residual": {"type": "number"}
+          }
+        },
+        {
+          "properties": {
+            "recomputed_function_value": {"type": "number"},
+            "absolute_reported_delta": {"type": "null"},
+            "absolute_residual": {"type": "number"}
+          }
+        }
+      ]
+    }
+  }
+}

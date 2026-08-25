@@ -1,0 +1,142 @@
+[
+  {
+    "label": "valid_minimal_input",
+    "kind": "input",
+    "valid": true,
+    "instance": {
+      "expression": "x*x-2",
+      "lower": 0,
+      "upper": 2
+    }
+  },
+  {
+    "label": "valid_explicit_input",
+    "kind": "input",
+    "valid": true,
+    "instance": {
+      "expression": "sin(x)",
+      "lower": -1.0,
+      "upper": 1.0,
+      "absolute_tolerance": 1e-10,
+      "relative_tolerance": 1e-10,
+      "function_tolerance": 1e-10,
+      "max_iterations": 100
+    }
+  },
+  {
+    "label": "input_unknown_field",
+    "kind": "input",
+    "valid": false,
+    "instance": {
+      "expression": "x",
+      "lower": -1,
+      "upper": 1,
+      "unknown": true
+    }
+  },
+  {
+    "label": "input_missing_expression",
+    "kind": "input",
+    "valid": false,
+    "instance": {
+      "lower": -1,
+      "upper": 1
+    }
+  },
+  {
+    "label": "valid_canonical_input",
+    "kind": "canonical-input",
+    "valid": true,
+    "instance": {
+      "canonical_input_schema_version": "numerical.root_finding.canonical-input/1.0.0",
+      "expression_ast": {
+        "kind": "binary",
+        "op": "subtract",
+        "left": {
+          "kind": "binary",
+          "op": "multiply",
+          "left": {"kind": "variable", "name": "x"},
+          "right": {"kind": "variable", "name": "x"}
+        },
+        "right": {"kind": "number", "value": 2.0}
+      },
+      "lower": 0.0,
+      "upper": 2.0,
+      "absolute_tolerance": 1e-10,
+      "relative_tolerance": 1e-10,
+      "function_tolerance": 1e-10,
+      "max_iterations": 100
+    }
+  },
+  {
+    "label": "canonical_input_contains_raw_expression",
+    "kind": "canonical-input",
+    "valid": false,
+    "instance": {
+      "canonical_input_schema_version": "numerical.root_finding.canonical-input/1.0.0",
+      "expression_ast": {"kind": "variable", "name": "x"},
+      "expression": "x",
+      "lower": -1.0,
+      "upper": 1.0,
+      "absolute_tolerance": 1e-10,
+      "relative_tolerance": 1e-10,
+      "function_tolerance": 1e-10,
+      "max_iterations": 100
+    }
+  },
+  {
+    "label": "canonical_input_unknown_ast_field",
+    "kind": "canonical-input",
+    "valid": false,
+    "instance": {
+      "canonical_input_schema_version": "numerical.root_finding.canonical-input/1.0.0",
+      "expression_ast": {"kind": "variable", "name": "x", "unknown": true},
+      "lower": -1.0,
+      "upper": 1.0,
+      "absolute_tolerance": 1e-10,
+      "relative_tolerance": 1e-10,
+      "function_tolerance": 1e-10,
+      "max_iterations": 100
+    }
+  },
+  {
+    "label": "canonical_input_variable_power_exponent",
+    "kind": "canonical-input",
+    "valid": false,
+    "instance": {
+      "canonical_input_schema_version": "numerical.root_finding.canonical-input/1.0.0",
+      "expression_ast": {
+        "kind": "binary",
+        "op": "power",
+        "left": {"kind": "variable", "name": "x"},
+        "right": {"kind": "variable", "name": "x"}
+      },
+      "lower": -1.0,
+      "upper": 1.0,
+      "absolute_tolerance": 1e-10,
+      "relative_tolerance": 1e-10,
+      "function_tolerance": 1e-10,
+      "max_iterations": 100
+    }
+  },
+  {
+    "label": "canonical_input_power_exponent_out_of_range",
+    "kind": "canonical-input",
+    "valid": false,
+    "instance": {
+      "canonical_input_schema_version": "numerical.root_finding.canonical-input/1.0.0",
+      "expression_ast": {
+        "kind": "binary",
+        "op": "power",
+        "left": {"kind": "variable", "name": "x"},
+        "right": {"kind": "number", "value": 1025.0}
+      },
+      "lower": -1.0,
+      "upper": 1.0,
+      "absolute_tolerance": 1e-10,
+      "relative_tolerance": 1e-10,
+      "function_tolerance": 1e-10,
+      "max_iterations": 100
+    }
+  }
+]

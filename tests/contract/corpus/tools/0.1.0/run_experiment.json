@@ -1,0 +1,24 @@
+[
+  {
+    "label": "valid_request", "kind": "request", "valid": true,
+    "instance": {
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000", "project_id": "223e4567-e89b-42d3-a456-426614174000",
+      "mode": "new", "capability": {"capability_id": "numerical.root_finding", "contract_version": "0.1.0"},
+      "payload": {"expression": "x", "lower": -1.0, "upper": 1.0}
+    }
+  },
+  {
+    "label": "valid_result", "kind": "result", "valid": true,
+    "instance": {
+      "tool_contract_version": "modeling-tools/0.1.0", "correlation_id": "123e4567-e89b-42d3-a456-426614174000", "server_time": "2026-07-23T12:34:56.789Z",
+      "operation_id": "123e4567-e89b-42d3-a456-426614174000", "replayed": false,
+      "experiment_id": "223e4567-e89b-42d3-a456-426614174000", "attempt_id": "323e4567-e89b-42d3-a456-426614174000",
+      "attempt_status": "TIMED_OUT", "capability_id": "numerical.root_finding", "contract_version": "0.1.0",
+      "implementation_id": "builtin.numerical.root_finding.bisection", "implementation_version": "0.1.0",
+      "randomness": "not_used", "seed": null, "warnings": [], "terminal_reason": "deadline_exceeded"
+    }
+  },
+  {"label": "valid_error", "kind": "error", "valid": true, "instance": {"error_schema_version": "modeling-error/0.1.0", "code": "SECURITY_VIOLATION", "message": "forbidden expression", "retryable": false, "correlation_id": "123e4567-e89b-42d3-a456-426614174000", "details": {"rule": "math_expr_forbidden_syntax"}}},
+  {"label": "unknown_field", "kind": "request", "valid": false, "instance": {"operation_id": "123e4567-e89b-42d3-a456-426614174000", "project_id": "223e4567-e89b-42d3-a456-426614174000", "mode": "new", "capability": {"capability_id": "numerical.root_finding", "contract_version": "0.1.0"}, "payload": {"expression": "x", "lower": -1, "upper": 1}, "experiment_id": "323e4567-e89b-42d3-a456-426614174000"}},
+  {"label": "invalid_type", "kind": "request", "valid": false, "instance": {"operation_id": "123e4567-e89b-42d3-a456-426614174000", "project_id": "223e4567-e89b-42d3-a456-426614174000", "mode": "new", "capability": {"capability_id": "numerical.root_finding", "contract_version": "0.1.0"}, "payload": {"expression": "x", "lower": "bad", "upper": 1}}}
+]

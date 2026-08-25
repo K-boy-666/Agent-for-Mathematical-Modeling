@@ -1,0 +1,19 @@
+[mcp_servers.modeling]
+command = "uv"
+args = ["run", "--locked", "--no-sync", "modeling-mcp", "--project-root", "."]
+cwd = "."
+required = true
+startup_timeout_sec = 10
+tool_timeout_sec = 65
+enabled_tools = [
+  "health_check",
+  "create_project",
+  "get_project_status",
+  "list_capabilities",
+  "run_experiment",
+  "validate_experiment",
+  "register_problem_assets",
+  "put_subproblem_mmir",
+  "confirm_subproblem_mmir",
+  "export_subproblem",
+]

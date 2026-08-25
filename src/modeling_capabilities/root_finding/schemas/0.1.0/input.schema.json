@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.math-modeling-mcp.local/capabilities/root-finding/0.1.0/input.schema.json",
+  "title": "numerical.root_finding input 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["expression", "lower", "upper"],
+  "properties": {
+    "expression": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "lower": {"type": "number"},
+    "upper": {"type": "number"},
+    "absolute_tolerance": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1,
+      "default": 1e-10
+    },
+    "relative_tolerance": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1,
+      "default": 1e-10
+    },
+    "function_tolerance": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1,
+      "default": 1e-10
+    },
+    "max_iterations": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000,
+      "default": 100
+    }
+  }
+}
